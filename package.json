@@ -17,6 +17,9 @@
       "./packages/workflow-kit/src/extensions/commit/index.ts",
       "./packages/workflow-kit/src/extensions/notify/index.ts",
       "./packages/web-kit/index.ts"
+    ],
+    "themes": [
+      "./themes/gruvbox.json"
     ]
   },
   "peerDependencies": {

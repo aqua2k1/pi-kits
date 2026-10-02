@@ -96,6 +96,27 @@ test("four kits explicitly declare nine independent runtime entries", () => {
   );
 });
 
+test("repository declares an independent valid Gruvbox theme", async () => {
+  const repository = JSON.parse(
+    readFileSync(join(root, "package.json"), "utf8"),
+  );
+  assert.deepEqual(repository.pi.themes, ["./themes/gruvbox.json"]);
+  const theme = JSON.parse(
+    readFileSync(resolve(root, repository.pi.themes[0]), "utf8"),
+  );
+  assert.equal(theme.name, "gruvbox");
+  const { validateThemeJson } = await import(
+    new URL(
+      "../node_modules/@earendil-works/pi-coding-agent/dist/modes/interactive/theme/theme-json.js",
+      import.meta.url,
+    ).href
+  );
+  assert.doesNotThrow(() => validateThemeJson("gruvbox", theme));
+  for (const color of Object.values(theme.colors)) {
+    assert.ok(typeof color === "string" && color in theme.vars);
+  }
+});
+
 for (const [name, paths] of [
   ["individual kits", kits.map((kit) => join(root, "packages", `${kit}-kit`))],
   ["Git repository root", [root]],
@@ -126,7 +147,12 @@ test("Git package loads with production-only workspace dependencies", (t) => {
   const dir = mkdtempSync(join(tmpdir(), "pi-kits-production-"));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
   const checkout = join(dir, "checkout");
-  for (const entry of ["package.json", "package-lock.json", "packages"]) {
+  for (const entry of [
+    "package.json",
+    "package-lock.json",
+    "packages",
+    "themes",
+  ]) {
     cpSync(join(root, entry), join(checkout, entry), {
       recursive: true,
       filter: (path) => basename(path) !== "node_modules",
