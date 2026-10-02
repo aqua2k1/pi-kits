@@ -9,12 +9,16 @@
 
 import { existsSync } from "node:fs";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { readPiKitsConfig } from "@pi-kits/config";
 import { Type } from "typebox";
 import { doOpen, isUrl, resolveTarget } from "../lib/desktop-open.ts";
 
 // ── Extension ──────────────────────────────────────────────────────────
 
 export default function (pi: ExtensionAPI) {
+  const config = readPiKitsConfig().workspace;
+  if (!config.enabled || !config.open.enabled) return;
+
   // Shared implementation
   async function openTarget(
     args: string | undefined,

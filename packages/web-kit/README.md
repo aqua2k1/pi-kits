@@ -8,7 +8,8 @@ two Pi tools:
 - `web_fetch` — fetches a specific HTTP(S) URL through native Node HTTP, or
   reads GitHub repositories through `gh api` and shallow clone.
 
-The package has no additional runtime dependencies beyond the Pi-provided peers
+The package uses the workspace runtime dependency `@pi-kits/config` and the
+Pi-provided peers
 `@earendil-works/pi-ai`, `@earendil-works/pi-coding-agent`, and `typebox`. Node
 `>=22.19.0` is required.
 
@@ -87,8 +88,9 @@ pi --no-extensions -e ./packages/web-kit
 This package was copied from the local `web-tools` extension. The old
 `@juicesharp/rpiv-web-tools` package is not part of the configuration. The package
 rename does not change the `web_search` / `web_fetch` tool names, `/web-tools`
-command, configuration filename, or temporary/cache paths. Avoid loading the
-original extension and this package together, as they register the same names.
+command, or temporary/cache paths. Configuration now uses `pi-kits.json`. Avoid
+loading the original extension and this package together, as they register the
+same names.
 
 ## Development
 
@@ -115,28 +117,35 @@ GitHub access. Live `/web-tools test` diagnostics do require the configured
 provider and authentication; GitHub runtime operations require local `gh`/`git`.
 
 See [architecture](docs/architecture.md), [configuration](docs/configuration.md),
-and the original [web-tools research notes](docs/web-tools-research.md). Historical
-names and configuration migration descriptions in the research notes are retained.
+and the [web-tools research notes](docs/web-tools-research.md).
 
 ## Configuration
 
 Configuration is read and validated once when the extension loads:
 
 ```text
-~/.pi/agent/web-tools-config.json
+~/.pi/agent/pi-kits.json
 ```
 
 A malformed configuration prevents the extension from registering instead of
 failing later when a tool is called. Reload the extension after changing the
 configuration file or environment variables.
 
-The file has separate `search` and `fetch` sections. Copy the example:
+The unified file has a `web` section containing `search` and `fetch`. Copy the
+root example:
 
 ```bash
 mkdir -p ~/.pi/agent
-cp packages/web-kit/web-tools-config.example.json \
-  ~/.pi/agent/web-tools-config.json
+cp pi-kits.example.json \
+  ~/.pi/agent/pi-kits.json
 ```
+
+`pi-kits.json` is the only configuration file. A missing file or omitted `web`
+uses defaults; malformed or unreadable files fail without fallback. The kit does
+not read `web-tools-config.json`. `web.enabled`, `web.search.enabled`, and
+`web.fetch.enabled` default to `true`. Setting `web.enabled: false` skips tools, commands, and spool cleanup;
+individual switches skip their tool (and fetch cleanup) while retaining
+`/web-tools` diagnostics.
 
 SearXNG URL and optional key remain environment-only:
 
@@ -145,6 +154,7 @@ export SEARXNG_URL="http://localhost:8080"
 export SEARXNG_API_KEY="..."
 ```
 
+Codex authentication remains owned by Pi; do not put credentials in JSON.
 GitHub authentication is owned by the local `gh` CLI:
 
 ```bash

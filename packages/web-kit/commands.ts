@@ -8,9 +8,10 @@ import {
   normalizeProviderName,
   type ResolvedWebSearchConfig,
   type ResolvedWebToolsConfig,
-  readConfig,
+  type readConfig,
+  readConfigSnapshot,
   resolveConfig,
-  type WebToolsFileConfig,
+  type WebToolsConfigFileSnapshot,
 } from "./config.ts";
 import { errorMessageForCode, toWebSearchError } from "./core/errors.ts";
 import type { WebSearchProviderName } from "./core/types.ts";
@@ -23,8 +24,9 @@ const COMMAND_ARGUMENTS = ["status", "test searxng", "test codex-alpha-search"];
 const DEFAULT_SEARCH_QUERY = "pi web search connectivity";
 type ConfigSource = "env" | "config" | "default" | "none";
 
-export interface WebToolsConfigSnapshot {
-  readonly rawConfig: WebToolsFileConfig;
+export interface WebToolsConfigSnapshot
+  extends Partial<Omit<WebToolsConfigFileSnapshot, "rawConfig">> {
+  readonly rawConfig: WebToolsConfigFileSnapshot["rawConfig"];
   readonly resolvedConfig: ResolvedWebToolsConfig;
 }
 
@@ -53,11 +55,13 @@ function source(
 }
 
 function statusText(
-  raw: WebToolsFileConfig,
-  config: ResolvedWebToolsConfig,
+  snapshot: WebToolsConfigSnapshot,
   ctx: ExtensionCommandContext,
   env: NodeJS.ProcessEnv,
 ): string {
+  const { rawConfig: raw, resolvedConfig: config } = snapshot;
+  const searchEnabled = config.enabled && config.search.enabled;
+  const fetchEnabled = config.enabled && config.fetch.enabled;
   const search = raw.search ?? {};
   const routing = search.routing ?? {};
   const fallbackSource = routing.fallback === undefined ? "default" : "config";
@@ -77,9 +81,13 @@ function statusText(
   }
   return [
     "Web tools configuration:",
-    `  config file: ${getConfigPath()}`,
+    `  config file: ${snapshot.configPath ?? getConfigPath()}`,
+    `  config source: ${snapshot.source ?? "injected"}`,
+    `  web: ${config.enabled ? "enabled" : "disabled"}`,
+    `  web_search: ${searchEnabled ? "enabled" : "disabled"}`,
+    `  web_fetch: ${fetchEnabled ? "enabled" : "disabled"}`,
     `  search provider: ${PROVIDER_LABELS[config.search.provider]} (${source(undefined, routing.provider, true)})`,
-    `  search fallback: ${config.search.fallback ? "enabled" : "disabled"} (${fallbackSource})`,
+    `  search fallback: ${searchEnabled && config.search.fallback ? "enabled" : "disabled"} (${fallbackSource})`,
     `  search fallback provider: ${PROVIDER_LABELS[fallbackProvider]} (${fallbackProviderSource})`,
     `  search timeout: ${config.search.timeoutMs} ms`,
     `  search default max results: ${config.search.maxResults}`,
@@ -88,12 +96,12 @@ function statusText(
     `  Codex model: configured (${source(undefined, search.codex?.model, true)})`,
     `  Codex authentication: ${auth}`,
     `  fetch timeout: ${config.fetch.timeoutMs} ms`,
-    `  GitHub fetch: ${config.fetch.github.enabled ? "enabled" : "disabled"}`,
+    `  GitHub fetch: ${fetchEnabled && config.fetch.github.enabled ? "enabled" : "disabled"}`,
     `  GitHub mode: ${config.fetch.github.mode}`,
     `  GitHub clone threshold: ${config.fetch.github.maxRepoSizeMB} MiB`,
     `  GitHub clone timeout: ${config.fetch.github.cloneTimeoutSeconds} s`,
     "",
-    "Search settings are under search; fetch settings are under fetch.",
+    "Settings are under web.search and web.fetch in pi-kits.json.",
     "SearXNG URL and credentials are read from environment variables.",
     "GitHub uses gh api or shallow clone when the local commands are available.",
   ].join("\n");
@@ -128,8 +136,16 @@ async function loadSnapshot(
   env: NodeJS.ProcessEnv,
 ): Promise<WebToolsConfigSnapshot> {
   if (provided.config) return provided.config;
-  const rawConfig = await (provided.readConfig ?? readConfig)(getConfigPath());
-  return { rawConfig, resolvedConfig: resolveConfig(rawConfig, env) };
+  const snapshot = provided.readConfig
+    ? {
+        rawConfig: await provided.readConfig(getConfigPath()),
+        source: "injected" as const,
+      }
+    : await readConfigSnapshot();
+  return {
+    ...snapshot,
+    resolvedConfig: resolveConfig(snapshot.rawConfig, env),
+  };
 }
 
 export function registerWebToolsCommand(
@@ -157,11 +173,7 @@ export function registerWebToolsCommand(
       try {
         const [command, providerValue] = args.trim().split(/\s+/, 2);
         if (command === "status") {
-          const { rawConfig, resolvedConfig } = await snapshot();
-          ctx.ui.notify(
-            statusText(rawConfig, resolvedConfig, ctx, env),
-            "info",
-          );
+          ctx.ui.notify(statusText(await snapshot(), ctx, env), "info");
         } else if (command === "test") {
           const provider = normalizeProviderName(providerValue);
           if (!provider) {
@@ -172,6 +184,10 @@ export function registerWebToolsCommand(
             return;
           }
           const { resolvedConfig } = await snapshot();
+          if (!resolvedConfig.enabled || !resolvedConfig.search.enabled) {
+            ctx.ui.notify("Web search is disabled by configuration.", "info");
+            return;
+          }
           await testProvider(ctx, provider, resolvedConfig, search);
         } else {
           ctx.ui.notify(

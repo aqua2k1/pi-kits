@@ -1,0 +1,20 @@
+{
+  "name": "@pi-kits/config",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./index.ts",
+    "./schema": "./schema.ts"
+  },
+  "files": [
+    "index.ts",
+    "schema.ts"
+  ],
+  "peerDependencies": {
+    "typebox": "*"
+  },
+  "scripts": {
+    "test": "node --import tsx --test *.test.ts"
+  }
+}

@@ -26,6 +26,7 @@ import type {
   ExtensionAPI,
   ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
+import { readPiKitsConfig } from "@pi-kits/config";
 import { readonlyPreview } from "../lib/readonly-preview.ts";
 
 /** Max chars of the reply snippet shown in the selector. */
@@ -181,7 +182,7 @@ function renderRecordBody(
 
 async function openPreview(
   ctx: ExtensionContext,
-  options: { includeThinking: boolean; latestOnly: boolean },
+  options: { includeThinking: boolean; latestOnly: boolean; editor: string },
 ): Promise<void> {
   if (!ctx.isIdle()) {
     ctx.ui.notify("回复尚未结束，请稍后再试", "info");
@@ -230,6 +231,7 @@ async function openPreview(
   const result = await readonlyPreview(ctx, {
     prefix: "pi-preview-",
     extension: "md",
+    editor: options.editor,
     body,
   });
   if (result.kind === "not-found") {
@@ -243,6 +245,9 @@ async function openPreview(
 }
 
 export default function (pi: ExtensionAPI) {
+  const config = readPiKitsConfig().workspace;
+  if (!config.enabled || !config.preview.enabled) return;
+
   pi.registerCommand("preview", {
     description:
       "Preview a past reply in neovim (read-only). Usage: /preview [--thinking]",
@@ -262,6 +267,7 @@ export default function (pi: ExtensionAPI) {
       await openPreview(ctx, {
         includeThinking: parsed.includeThinking,
         latestOnly: false,
+        editor: config.terminal.editor,
       });
     },
   });
@@ -269,7 +275,11 @@ export default function (pi: ExtensionAPI) {
   pi.registerShortcut("alt+p", {
     description: "Open the latest reply preview in neovim (read-only)",
     handler: async (ctx) => {
-      await openPreview(ctx, { includeThinking: false, latestOnly: true });
+      await openPreview(ctx, {
+        includeThinking: false,
+        latestOnly: true,
+        editor: config.terminal.editor,
+      });
     },
   });
 }

@@ -1,0 +1,352 @@
+{
+  "type": "object",
+  "properties": {
+    "$schema": {
+      "type": "string"
+    },
+    "workspace": {
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "default": true
+        },
+        "terminal": {
+          "type": "object",
+          "properties": {
+            "enabled": {
+              "type": "boolean",
+              "default": true
+            },
+            "editor": {
+              "type": "string",
+              "minLength": 1,
+              "pattern": "\\S",
+              "default": "nvim"
+            },
+            "gitUI": {
+              "type": "string",
+              "minLength": 1,
+              "pattern": "\\S",
+              "default": "lazygit"
+            },
+            "fileManager": {
+              "type": "string",
+              "minLength": 1,
+              "pattern": "\\S",
+              "default": "yazi"
+            }
+          },
+          "additionalProperties": false
+        },
+        "open": {
+          "type": "object",
+          "properties": {
+            "enabled": {
+              "type": "boolean",
+              "default": true
+            }
+          },
+          "additionalProperties": false
+        },
+        "preview": {
+          "type": "object",
+          "properties": {
+            "enabled": {
+              "type": "boolean",
+              "default": true
+            }
+          },
+          "additionalProperties": false
+        },
+        "contextPreview": {
+          "type": "object",
+          "properties": {
+            "enabled": {
+              "type": "boolean",
+              "default": true
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "usage": {
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "default": true
+        },
+        "providerUsage": {
+          "type": "object",
+          "properties": {
+            "enabled": {
+              "type": "boolean",
+              "default": true
+            },
+            "intervalMs": {
+              "type": "integer",
+              "minimum": 1000,
+              "maximum": 2147483647,
+              "default": 600000
+            },
+            "timeoutMs": {
+              "type": "integer",
+              "minimum": 100,
+              "maximum": 300000,
+              "default": 15000
+            }
+          },
+          "additionalProperties": false
+        },
+        "stats": {
+          "type": "object",
+          "properties": {
+            "enabled": {
+              "type": "boolean",
+              "default": true
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "workflow": {
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "default": true
+        },
+        "commit": {
+          "type": "object",
+          "properties": {
+            "enabled": {
+              "type": "boolean",
+              "default": true
+            },
+            "model": {
+              "type": "string",
+              "minLength": 1,
+              "pattern": "\\S"
+            },
+            "lastModel": {
+              "type": "string",
+              "minLength": 1,
+              "pattern": "\\S"
+            },
+            "thinking": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "const": "off"
+                },
+                {
+                  "type": "string",
+                  "const": "minimal"
+                },
+                {
+                  "type": "string",
+                  "const": "low"
+                },
+                {
+                  "type": "string",
+                  "const": "medium"
+                },
+                {
+                  "type": "string",
+                  "const": "high"
+                },
+                {
+                  "type": "string",
+                  "const": "xhigh"
+                },
+                {
+                  "type": "string",
+                  "const": "max"
+                }
+              ]
+            },
+            "timeoutMs": {
+              "type": "integer",
+              "minimum": 1000,
+              "maximum": 2147483647,
+              "default": 120000
+            },
+            "rememberModel": {
+              "type": "boolean",
+              "default": true
+            }
+          },
+          "additionalProperties": false
+        },
+        "notify": {
+          "type": "object",
+          "properties": {
+            "enabled": {
+              "type": "boolean",
+              "default": true
+            },
+            "quietPeriodMs": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 60000,
+              "default": 1000
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "web": {
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "default": true
+        },
+        "search": {
+          "type": "object",
+          "properties": {
+            "enabled": {
+              "type": "boolean",
+              "default": true
+            },
+            "routing": {
+              "type": "object",
+              "properties": {
+                "provider": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "const": "searxng"
+                    },
+                    {
+                      "type": "string",
+                      "const": "codex-alpha-search"
+                    },
+                    {
+                      "type": "string",
+                      "const": "codex"
+                    }
+                  ]
+                },
+                "fallback": {
+                  "type": "boolean"
+                },
+                "fallbackProvider": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "const": "searxng"
+                    },
+                    {
+                      "type": "string",
+                      "const": "codex-alpha-search"
+                    },
+                    {
+                      "type": "string",
+                      "const": "codex"
+                    }
+                  ]
+                }
+              },
+              "additionalProperties": false
+            },
+            "timeoutMs": {
+              "type": "integer",
+              "minimum": 1000,
+              "maximum": 120000,
+              "default": 15000
+            },
+            "maxResults": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 10,
+              "default": 5
+            },
+            "codex": {
+              "type": "object",
+              "properties": {
+                "model": {
+                  "type": "string",
+                  "pattern": "^[a-zA-Z0-9._-]+$",
+                  "minLength": 1,
+                  "maxLength": 128,
+                  "default": "gpt-5.4"
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "additionalProperties": false
+        },
+        "fetch": {
+          "type": "object",
+          "properties": {
+            "enabled": {
+              "type": "boolean",
+              "default": true
+            },
+            "timeoutMs": {
+              "type": "integer",
+              "minimum": 1000,
+              "maximum": 120000,
+              "default": 15000
+            },
+            "github": {
+              "type": "object",
+              "properties": {
+                "enabled": {
+                  "type": "boolean"
+                },
+                "mode": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "const": "auto"
+                    },
+                    {
+                      "type": "string",
+                      "const": "clone"
+                    },
+                    {
+                      "type": "string",
+                      "const": "api"
+                    }
+                  ]
+                },
+                "maxRepoSizeMB": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 10240
+                },
+                "cloneTimeoutSeconds": {
+                  "type": "integer",
+                  "minimum": 5,
+                  "maximum": 600
+                },
+                "clonePath": {
+                  "type": "string",
+                  "minLength": 1,
+                  "pattern": "\\S"
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/aqua2k1/pi-kits/main/pi-kits.schema.json",
+  "title": "Pi Kits configuration",
+  "additionalProperties": false
+}

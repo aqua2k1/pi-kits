@@ -7,7 +7,8 @@ import { fetchWeb, searchWeb } from "./composition.ts";
 import {
   type ResolvedWebFetchConfig,
   type ResolvedWebSearchConfig,
-  readConfig,
+  type readConfig,
+  readConfigSnapshot,
   resolveConfig,
 } from "./config.ts";
 import { toWebSearchError } from "./core/errors.ts";
@@ -193,6 +194,7 @@ export function registerWebFetchTool(
 
 export interface WebToolsExtensionDependencies {
   readConfig?: typeof readConfig;
+  cleanupExpiredSpools?: typeof cleanupExpiredSpools;
   env?: NodeJS.ProcessEnv;
 }
 
@@ -204,17 +206,35 @@ export default async function webToolsExtension(
     // Resolve the file and environment once. Every registered capability receives
     // the same startup snapshot so commands cannot drift from the tools.
     const env = { ...(dependencies.env ?? process.env) };
-    const rawConfig = await (dependencies.readConfig ?? readConfig)();
+    const snapshot = dependencies.readConfig
+      ? {
+          rawConfig: await dependencies.readConfig(),
+          source: "injected" as const,
+        }
+      : await readConfigSnapshot();
+    const { rawConfig } = snapshot;
     const resolvedConfig = resolveConfig(rawConfig, env);
-    const fetchRuntime = createFetchRuntime();
-    await cleanupExpiredSpools(undefined, fetchRuntime.now?.());
-    registerWebSearchTool(pi, { searchConfig: resolvedConfig.search });
-    registerWebFetchTool(pi, {
-      fetchConfig: resolvedConfig.fetch,
-      fetchRuntime,
-    });
+    if (!resolvedConfig.enabled) return;
+    const fetchRuntime = resolvedConfig.fetch.enabled
+      ? createFetchRuntime()
+      : undefined;
+    if (fetchRuntime) {
+      await (dependencies.cleanupExpiredSpools ?? cleanupExpiredSpools)(
+        undefined,
+        fetchRuntime.now?.(),
+      );
+    }
+    if (resolvedConfig.search.enabled) {
+      registerWebSearchTool(pi, { searchConfig: resolvedConfig.search });
+    }
+    if (fetchRuntime) {
+      registerWebFetchTool(pi, {
+        fetchConfig: resolvedConfig.fetch,
+        fetchRuntime,
+      });
+    }
     registerWebToolsCommand(pi, {
-      config: { rawConfig, resolvedConfig },
+      config: { ...snapshot, resolvedConfig },
       env,
       search: searchWeb,
     });

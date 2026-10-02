@@ -55,3 +55,21 @@ test("non-TUI preview never writes or launches", async () => {
   );
   assert.deepEqual(result, { kind: "unavailable" });
 });
+
+test("readonly preview accepts the configured vim-compatible editor", async () => {
+  const result = await readonlyPreview(
+    ctx,
+    {
+      prefix: "pi-preview-test-",
+      extension: "md",
+      body: "hello",
+      editor: "vim",
+    },
+    async (_ctx, command, options) => {
+      assert.equal(command, "vim");
+      assert.equal(options?.args?.[0], "-R");
+      return { kind: "exited", status: 0, signal: null };
+    },
+  );
+  assert.equal(result.kind, "exited");
+});

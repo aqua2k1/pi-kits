@@ -14,6 +14,7 @@ import type {
   ExtensionAPI,
   ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
+import { readPiKitsConfig } from "@pi-kits/config";
 import { runTerminalApp } from "../lib/terminal-app.ts";
 
 async function runSuspended(
@@ -58,26 +59,29 @@ async function runSuspended(
 }
 
 export default function (pi: ExtensionAPI) {
+  const config = readPiKitsConfig().workspace;
+  if (!config.enabled || !config.terminal.enabled) return;
+
   pi.registerCommand("vim", {
     description: "Open nvim (optionally with a file path)",
     handler: async (args, ctx) => {
       // Strip leading @ (leftover from file completion trigger) and trim
       const file = args?.trim().replace(/^@+/, "") || "";
-      await runSuspended(ctx, "nvim", file ? [file] : []);
+      await runSuspended(ctx, config.terminal.editor, file ? [file] : []);
     },
   });
 
   pi.registerCommand("lg", {
     description: "Open lazygit in the current directory",
     handler: async (_args, ctx) => {
-      await runSuspended(ctx, "lazygit");
+      await runSuspended(ctx, config.terminal.gitUI);
     },
   });
 
   pi.registerCommand("fm", {
     description: "Open yazi in the current directory",
     handler: async (_args, ctx) => {
-      await runSuspended(ctx, "yazi");
+      await runSuspended(ctx, config.terminal.fileManager);
     },
   });
 }

@@ -1,4 +1,5 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { readPiKitsConfig } from "@pi-kits/config";
 import { notify } from "../../lib/notifications/index.ts";
 
 export const NOTIFICATION_QUIET_PERIOD_MS = 1_000;
@@ -19,6 +20,7 @@ const defaultDependencies: CompletionNotificationDependencies = {
 export function registerCompletionNotification(
   pi: ExtensionAPI,
   dependencies: CompletionNotificationDependencies = defaultDependencies,
+  quietPeriodMs = NOTIFICATION_QUIET_PERIOD_MS,
 ): void {
   let cancelPendingNotification: (() => void) | undefined;
 
@@ -58,11 +60,17 @@ export function registerCompletionNotification(
         // Notification delivery is best-effort and must never fail the task.
         return;
       }
-    }, NOTIFICATION_QUIET_PERIOD_MS);
+    }, quietPeriodMs);
     cancelPendingNotification = isPending ? cancelScheduled : undefined;
   });
 }
 
 export default function notifyExtension(pi: ExtensionAPI): void {
-  registerCompletionNotification(pi);
+  const { workflow } = readPiKitsConfig();
+  if (!workflow.enabled || !workflow.notify.enabled) return;
+  registerCompletionNotification(
+    pi,
+    defaultDependencies,
+    workflow.notify.quietPeriodMs,
+  );
 }

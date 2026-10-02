@@ -4,6 +4,7 @@ import {
   type ExtensionCommandContext,
   getAgentDir,
 } from "@earendil-works/pi-coding-agent";
+import { readPiKitsConfig } from "@pi-kits/config";
 import {
   findSessionFiles,
   type StatsSnapshot,
@@ -53,6 +54,9 @@ async function collectStats(
 }
 
 export default function (pi: ExtensionAPI) {
+  const { usage } = readPiKitsConfig();
+  if (!usage.enabled || !usage.stats.enabled) return;
+
   pi.registerCommand("stats", {
     description: "查看按日期和模型聚合的 token 总量与费用",
     handler: async (_args, ctx) => {

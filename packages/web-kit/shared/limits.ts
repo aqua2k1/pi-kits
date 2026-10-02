@@ -1,13 +1,12 @@
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { WEB_DEFAULTS } from "@pi-kits/config";
 
-export const DEFAULT_SEARCH_TIMEOUT_MS = 15_000;
+export const DEFAULT_SEARCH_TIMEOUT_MS = WEB_DEFAULTS.searchTimeoutMs;
 export const MIN_SEARCH_TIMEOUT_MS = 1_000;
 export const MAX_SEARCH_TIMEOUT_MS = 120_000;
-export const DEFAULT_FETCH_TIMEOUT_MS = 15_000;
+export const DEFAULT_FETCH_TIMEOUT_MS = WEB_DEFAULTS.fetchTimeoutMs;
 export const MIN_FETCH_TIMEOUT_MS = 1_000;
 export const MAX_FETCH_TIMEOUT_MS = 120_000;
-export const DEFAULT_MAX_RESULTS = 5;
+export const DEFAULT_MAX_RESULTS = WEB_DEFAULTS.maxResults;
 export const MIN_MAX_RESULTS = 1;
 export const MAX_MAX_RESULTS = 10;
 export const MAX_QUERY_LENGTH = 2_000;
@@ -30,11 +29,12 @@ export const MAX_GITHUB_TREE_ENTRIES = 200;
 export const MAX_GITHUB_README_BYTES = 8 * 1_024;
 export const MAX_GITHUB_SESSION_CLONES = 32;
 export const TEMP_SPOOL_TTL_MS = 24 * 60 * 60 * 1_000;
-export const DEFAULT_GITHUB_ENABLED = true;
-export const DEFAULT_GITHUB_MAX_REPO_SIZE_MB = 350;
+export const DEFAULT_GITHUB_ENABLED = WEB_DEFAULTS.githubEnabled;
+export const DEFAULT_GITHUB_MAX_REPO_SIZE_MB = WEB_DEFAULTS.githubMaxRepoSizeMB;
 export const MIN_GITHUB_REPO_SIZE_MB = 1;
 export const MAX_GITHUB_REPO_SIZE_MB = 10_240;
-export const DEFAULT_GITHUB_CLONE_TIMEOUT_SECONDS = 30;
+export const DEFAULT_GITHUB_CLONE_TIMEOUT_SECONDS =
+  WEB_DEFAULTS.githubCloneTimeoutSeconds;
 export const MIN_GITHUB_CLONE_TIMEOUT_SECONDS = 5;
 export const MAX_GITHUB_CLONE_TIMEOUT_SECONDS = 600;
-export const DEFAULT_GITHUB_CLONE_PATH = join(tmpdir(), "pi-web-tools-github");
+export const DEFAULT_GITHUB_CLONE_PATH = WEB_DEFAULTS.githubClonePath;

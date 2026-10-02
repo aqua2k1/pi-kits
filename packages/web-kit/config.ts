@@ -1,6 +1,9 @@
 import { readFile } from "node:fs/promises";
-import { join } from "node:path";
-import { getAgentDir } from "@earendil-works/pi-coding-agent";
+import {
+  getPiKitsConfigPath,
+  parsePiKitsFile,
+  WEB_DEFAULTS,
+} from "@pi-kits/config";
 import { errorMessageForCode, WebSearchError } from "./core/errors.ts";
 import {
   WEB_SEARCH_PROVIDER_NAMES,
@@ -29,8 +32,6 @@ import {
 } from "./shared/limits.ts";
 import { isRecord } from "./shared/results.ts";
 
-export const WEB_TOOLS_CONFIG_FILE = "web-tools-config.json";
-
 export interface WebSearchRouteConfig {
   provider?: string;
   fallback?: boolean;
@@ -38,6 +39,7 @@ export interface WebSearchRouteConfig {
 }
 
 export interface WebSearchFileConfig {
+  enabled?: boolean;
   routing?: WebSearchRouteConfig;
   timeoutMs?: number;
   maxResults?: number;
@@ -55,16 +57,19 @@ export interface GitHubFileConfig {
 }
 
 export interface WebFetchFileConfig {
+  enabled?: boolean;
   timeoutMs?: number;
   github?: GitHubFileConfig;
 }
 
 export interface WebToolsFileConfig {
+  enabled?: boolean;
   search?: WebSearchFileConfig;
   fetch?: WebFetchFileConfig;
 }
 
 export interface ResolvedWebSearchConfig {
+  enabled: boolean;
   provider: WebSearchProviderName;
   fallback: boolean;
   fallbackProvider?: WebSearchProviderName;
@@ -84,11 +89,13 @@ export interface ResolvedGitHubFetchConfig {
 }
 
 export interface ResolvedWebFetchConfig {
+  enabled: boolean;
   timeoutMs: number;
   github: ResolvedGitHubFetchConfig;
 }
 
 export interface ResolvedWebToolsConfig {
+  enabled: boolean;
   search: ResolvedWebSearchConfig;
   fetch: ResolvedWebFetchConfig;
 }
@@ -121,6 +128,8 @@ function parseSearchConfig(
   source: Record<string, unknown>,
 ): WebSearchFileConfig {
   const config: WebSearchFileConfig = {};
+  const enabled = readField<boolean>(source, "enabled", "boolean");
+  if (enabled !== undefined) config.enabled = enabled;
   const timeoutMs = readField<number>(source, "timeoutMs", "number");
   const maxResults = readField<number>(source, "maxResults", "number");
   if (timeoutMs !== undefined) config.timeoutMs = timeoutMs;
@@ -165,6 +174,8 @@ function parseSearchConfig(
 
 function parseFetchConfig(source: Record<string, unknown>): WebFetchFileConfig {
   const config: WebFetchFileConfig = {};
+  const enabled = readField<boolean>(source, "enabled", "boolean");
+  if (enabled !== undefined) config.enabled = enabled;
   const timeoutMs = readField<number>(source, "timeoutMs", "number");
   if (timeoutMs !== undefined) config.timeoutMs = timeoutMs;
 
@@ -194,6 +205,7 @@ function parseFetchConfig(source: Record<string, unknown>): WebFetchFileConfig {
   return config;
 }
 
+/** Parse the internal web section, not a complete configuration file. */
 export function parseConfig(text: string): WebToolsFileConfig {
   let raw: unknown;
   try {
@@ -217,6 +229,8 @@ export function parseConfig(text: string): WebToolsFileConfig {
   }
 
   const config: WebToolsFileConfig = {};
+  const enabled = readField<boolean>(raw, "enabled", "boolean");
+  if (enabled !== undefined) config.enabled = enabled;
   if (Object.hasOwn(raw, "search")) {
     if (!isRecord(raw.search)) invalidField("search");
     config.search = parseSearchConfig(raw.search);
@@ -228,15 +242,27 @@ export function parseConfig(text: string): WebToolsFileConfig {
   return config;
 }
 
-export function getConfigPath(agentDir: string = getAgentDir()): string {
-  return join(agentDir, WEB_TOOLS_CONFIG_FILE);
+export function getConfigPath(agentDir?: string): string {
+  return getPiKitsConfigPath(agentDir);
 }
 
-export async function readConfig(
+export interface WebToolsConfigFileSnapshot {
+  rawConfig: WebToolsFileConfig;
+  configPath: string;
+  source: "pi-kits" | "defaults" | "injected";
+}
+
+/** Read only the specified unified file; an absent file uses defaults. */
+export async function readConfigSnapshot(
   path: string = getConfigPath(),
-): Promise<WebToolsFileConfig> {
+): Promise<WebToolsConfigFileSnapshot> {
   try {
-    return parseConfig(await readFile(path, "utf8"));
+    const file = parsePiKitsFile(await readFile(path, "utf8"));
+    return {
+      rawConfig: parseConfig(JSON.stringify(file.web ?? {})),
+      configPath: path,
+      source: "pi-kits",
+    };
   } catch (error) {
     if (
       typeof error === "object" &&
@@ -244,11 +270,17 @@ export async function readConfig(
       "code" in error &&
       error.code === "ENOENT"
     ) {
-      return {};
+      return { rawConfig: {}, configPath: path, source: "defaults" };
     }
     if (error instanceof WebSearchError) throw error;
-    return invalid("Web tools configuration could not be read.");
+    return invalid("Web tools configuration could not be read or is invalid.");
   }
+}
+
+export async function readConfig(
+  path: string = getConfigPath(),
+): Promise<WebToolsFileConfig> {
+  return (await readConfigSnapshot(path)).rawConfig;
 }
 
 function parseInteger(
@@ -289,7 +321,7 @@ export function resolveSearchConfig(
   const configuredProvider = stringValue(routing.provider);
   const provider = configuredProvider
     ? normalizeProviderName(configuredProvider)
-    : "searxng";
+    : WEB_DEFAULTS.provider;
   if (!provider) {
     return invalid(
       `${INVALID_CONFIG} search.routing.provider must be searxng or codex-alpha-search.`,
@@ -328,6 +360,7 @@ export function resolveSearchConfig(
   const codexModel = stringValue(config.codex?.model) ?? CODEX_DEFAULT_MODEL;
 
   return {
+    enabled: config.enabled ?? true,
     provider,
     fallback: routing.fallback ?? false,
     ...(fallbackProvider ? { fallbackProvider } : {}),
@@ -349,7 +382,7 @@ export function resolveFetchConfig(
     MAX_FETCH_TIMEOUT_MS,
   );
   const github = config.github ?? {};
-  const mode = github.mode ?? "auto";
+  const mode = github.mode ?? WEB_DEFAULTS.githubMode;
   if (mode !== "auto" && mode !== "clone" && mode !== "api") {
     return invalid(`${INVALID_CONFIG} fetch.github.mode is invalid.`);
   }
@@ -368,6 +401,7 @@ export function resolveFetchConfig(
   const configuredClonePath = stringValue(github.clonePath);
 
   return {
+    enabled: config.enabled ?? true,
     timeoutMs,
     github: {
       enabled: github.enabled ?? DEFAULT_GITHUB_ENABLED,
@@ -384,6 +418,7 @@ export function resolveConfig(
   env: NodeJS.ProcessEnv = process.env,
 ): ResolvedWebToolsConfig {
   return {
+    enabled: config.enabled ?? true,
     search: resolveSearchConfig(config.search, env),
     fetch: resolveFetchConfig(config.fetch),
   };

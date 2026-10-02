@@ -13,6 +13,12 @@ Pi manifest 显式列出四个入口，可独立启用/关闭。`src/lib` 中的
 
 终端交接及预览需要 TUI 模式；RPC/print 不启动 nvim。临时预览文件权限为 0600，使用完成后清理。默认应用启动与终端交接是两套独立机制，保持原 macOS/Windows/WSL/Linux 平台策略。
 
+## 配置
+
+使用 agent 目录下统一的 `pi-kits.json` 中的 `workspace` 段。`enabled` 可关闭整组，`terminal`、`open`、`preview`、`contextPreview` 的 `enabled` 可关闭单项注册。`terminal.editor`（默认 nvim）、`gitUI`（lazygit）、`fileManager`（yazi）设置直接执行的程序，不是 shell 命令。预览共用 `editor`，要求兼容 `-R` 参数。
+
+完整字段见 [配置示例](../../pi-kits.example.json)。修改后执行 `/reload`。
+
 ## 验证
 
 在仓库根目录安装依赖后：

@@ -2,8 +2,8 @@
 
 `pi-web-kit` lives in `packages/web-kit`. Its explicit Pi manifest declares
 `./index.ts` as the only extension entry point; the existing implementation and
-test layout is retained without a `src` move. `/web-tools`, configuration
-filenames, and temporary/cache paths remain unchanged.
+test layout is retained without a `src` move. `/web-tools` and temporary/cache
+paths remain unchanged; configuration uses the shared `pi-kits.json`.
 
 The package owns two independent capabilities:
 
@@ -31,7 +31,7 @@ Pi host
     └── /web-tools command
 
 Boundary
-├── config.ts       -> web-tools-config.json, split into search/fetch
+├── config.ts       -> @pi-kits/config, web.search/web.fetch resolution
 ├── composition.ts  -> lazy search/fetch assembly
 └── fetch/format.ts -> bounded preview and local path metadata
 
@@ -60,8 +60,7 @@ Shared
 
 ```text
 web_fetch(url, raw)
-├─ readConfig()
-├─ resolveConfig(raw, env)
+├─ startup snapshot (readConfigSnapshot + resolveConfig)
 ├─ fetchWeb(request, config.fetch, runtime, signal)
 │  └─ WebFetchRouter.fetch()
 │     ├─ normalizeFetchRequest()
@@ -147,12 +146,17 @@ file or environment requires an extension reload.
 The single configuration file is:
 
 ```text
-~/.pi/agent/web-tools-config.json
+~/.pi/agent/pi-kits.json
 ```
 
-Persistent settings are namespaced under `search` and `fetch`. SearXNG URL/key
-and GitHub credentials stay outside JSON: SearXNG uses environment variables,
-and GitHub uses the local `gh` credential store.
+Persistent settings are namespaced under `web.search` and `web.fetch`. The
+shared package validates the unified file; web-kit retains routing and fetch
+semantic validation. Missing files and omitted `web` use defaults; invalid or
+unreadable files fail without fallback. All enabled switches default to true;
+`web.enabled: false` returns before registration and cleanup, and disabled fetch
+skips spool cleanup. SearXNG URL/key and GitHub credentials stay outside JSON:
+SearXNG uses environment variables, and GitHub uses the local `gh` credential
+store.
 
 The implementation assumes a trusted, single-user local agent. It rejects
 non-HTTP(S) URLs, bounds response and command output, and uses basic temporary

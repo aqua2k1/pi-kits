@@ -360,3 +360,42 @@ test("config read failures are classified during extension loading", async () =>
   );
   assert.deepEqual(names, []);
 });
+
+for (const scenario of [
+  { config: { enabled: false }, names: [], cleanups: 0 },
+  {
+    config: { search: { enabled: false } },
+    names: ["web_fetch", "web-tools"],
+    cleanups: 1,
+  },
+  {
+    config: { fetch: { enabled: false } },
+    names: ["web_search", "web-tools"],
+    cleanups: 0,
+  },
+  {
+    config: { search: { enabled: false }, fetch: { enabled: false } },
+    names: ["web-tools"],
+    cleanups: 0,
+  },
+]) {
+  test(`startup enabled switches: ${JSON.stringify(scenario.config)}`, async () => {
+    const names: string[] = [];
+    let cleanups = 0;
+    await webToolsExtension(
+      {
+        registerTool: (tool: ToolDefinition) => names.push(tool.name),
+        registerCommand: (name: string) => names.push(name),
+      } as unknown as ExtensionAPI,
+      {
+        readConfig: async () => scenario.config,
+        env: {},
+        cleanupExpiredSpools: async () => {
+          cleanups += 1;
+        },
+      },
+    );
+    assert.deepEqual(names, scenario.names);
+    assert.equal(cleanups, scenario.cleanups);
+  });
+}

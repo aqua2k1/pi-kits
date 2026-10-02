@@ -7,15 +7,19 @@ import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import {
   chmodSync,
+  existsSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
   rmSync,
+  statSync,
   writeFileSync,
 } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { test } from "node:test";
+import { getPiKitsConfigPath } from "@pi-kits/config";
+import { useAgentDir } from "../../test-utils/agent-dir.ts";
 import {
   buildPiArgs,
   buildTask,
@@ -25,6 +29,7 @@ import {
   getStagedDiff,
   getStagedFiles,
   gitCommit,
+  lastModelPath,
   orderModelOptions,
   parseStagedOutput,
   readLastModel,
@@ -270,58 +275,92 @@ test("orderModelOptions: absent first only prepends with prependIfMissing", () =
 
 // ---- last model memory --------------------------------------------------------
 
-/** Set PI_CODING_AGENT_DIR for a test, restore afterwards. */
-async function withAgentDir(
-  dir: string,
-  fn: () => Promise<void>,
-): Promise<void> {
-  const prev = process.env.PI_CODING_AGENT_DIR;
-  process.env.PI_CODING_AGENT_DIR = dir;
-  try {
-    await fn();
-  } finally {
-    if (prev === undefined) delete process.env.PI_CODING_AGENT_DIR;
-    else process.env.PI_CODING_AGENT_DIR = prev;
+test("last model: write → read round-trip in unified configuration", (t) => {
+  const dir = useAgentDir(t);
+  assert.equal(lastModelPath(), getPiKitsConfigPath(dir));
+  assert.equal(readLastModel(), undefined);
+  writeLastModel("opencode-go/deepseek-v4-flash");
+  assert.equal(readLastModel(), "opencode-go/deepseek-v4-flash");
+  const raw = JSON.parse(readFileSync(lastModelPath(), "utf8"));
+  assert.deepEqual(raw, {
+    workflow: { commit: { lastModel: "opencode-go/deepseek-v4-flash" } },
+  });
+  if (process.platform !== "win32") {
+    assert.equal(statSync(lastModelPath()).mode & 0o777, 0o600);
   }
-}
+  assert.equal(
+    existsSync(path.join(dir, "extensions", "commit", "last_model.json")),
+    false,
+  );
+});
 
-test("last model: write → read round-trip, single last_model field", async () => {
-  const dir = mkdtempSync(path.join(os.tmpdir(), "commit-last-"));
-  try {
-    await withAgentDir(dir, async () => {
-      assert.equal(readLastModel(), undefined);
-      writeLastModel("opencode-go/deepseek-v4-flash");
-      assert.equal(readLastModel(), "opencode-go/deepseek-v4-flash");
-      const raw = JSON.parse(
-        readFileSync(
-          path.join(dir, "extensions", "commit", "last_model.json"),
-          "utf8",
-        ),
-      );
-      assert.deepEqual(raw, { last_model: "opencode-go/deepseek-v4-flash" });
-    });
-  } finally {
-    rmSync(dir, { recursive: true, force: true });
+test("last model: missing configuration or unset field → undefined", (t) => {
+  const dir = useAgentDir(t);
+  assert.equal(readLastModel(), undefined);
+  for (const raw of [{}, { workflow: {} }, { workflow: { commit: {} } }]) {
+    writeFileSync(getPiKitsConfigPath(dir), JSON.stringify(raw));
+    assert.equal(readLastModel(), undefined);
   }
 });
 
-test("last model: missing/empty/null/malformed → undefined", async () => {
-  const dir = mkdtempSync(path.join(os.tmpdir(), "commit-last-"));
-  try {
-    await withAgentDir(dir, async () => {
-      assert.equal(readLastModel(), undefined); // file missing
-      const target = path.join(dir, "extensions", "commit", "last_model.json");
-      mkdirSync(path.dirname(target), { recursive: true });
-      writeFileSync(target, '{"last_model": ""}');
-      assert.equal(readLastModel(), undefined);
-      writeFileSync(target, '{"last_model": null}');
-      assert.equal(readLastModel(), undefined);
-      writeFileSync(target, "{not json");
-      assert.equal(readLastModel(), undefined);
-    });
-  } finally {
-    rmSync(dir, { recursive: true, force: true });
+test("last model: invalid unified configuration throws without overwriting it", (t) => {
+  const dir = useAgentDir(t);
+  const target = getPiKitsConfigPath(dir);
+  for (const invalid of [
+    "{not json",
+    '{"workflow":{"commit":{"lastModel":""}}}',
+    '{"workflow":{"commit":{"lastModel":null}}}',
+    '{"workflow":{"commit":{"lastModel":123}}}',
+    '{"usage":{"enabled":"invalid"}}',
+  ]) {
+    writeFileSync(target, invalid);
+    assert.throws(() => readLastModel(), /Invalid pi-kits.json/);
+    assert.throws(() => writeLastModel("p/new"), /Invalid pi-kits.json/);
+    assert.equal(readFileSync(target, "utf8"), invalid);
   }
+});
+
+test("last model: writes preserve other kit sections and workflow settings", (t) => {
+  const raw = {
+    workspace: { terminal: { editor: "vim" } },
+    usage: { stats: { enabled: false } },
+    web: { search: { maxResults: 3 } },
+    workflow: {
+      enabled: true,
+      notify: { enabled: false, quietPeriodMs: 75 },
+      commit: {
+        model: "p/configured",
+        thinking: "high",
+        timeoutMs: 4_321,
+        rememberModel: true,
+        lastModel: "p/old",
+      },
+    },
+  };
+  const dir = useAgentDir(t, raw);
+  writeLastModel("p/new", dir);
+  assert.deepEqual(JSON.parse(readFileSync(lastModelPath(dir), "utf8")), {
+    ...raw,
+    workflow: {
+      ...raw.workflow,
+      commit: { ...raw.workflow.commit, lastModel: "p/new" },
+    },
+  });
+});
+
+test("last model: legacy state is ignored, never migrated or modified", (t) => {
+  const dir = useAgentDir(t);
+  const legacy = path.join(dir, "extensions", "commit", "last_model.json");
+  const contents = '{"last_model":"legacy/model"}';
+  mkdirSync(path.dirname(legacy), { recursive: true });
+  writeFileSync(legacy, contents);
+  assert.equal(readLastModel(), undefined);
+  assert.equal(existsSync(lastModelPath()), false);
+  writeLastModel("p/new");
+  assert.equal(readLastModel(), "p/new");
+  assert.equal(readFileSync(legacy, "utf8"), contents);
+  writeFileSync(legacy, "{invalid legacy json");
+  assert.equal(readLastModel(), "p/new");
 });
 
 // ---- getAgentDir --------------------------------------------------------------

@@ -22,13 +22,12 @@ import type {
   ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
+import { readPiKitsConfig } from "@pi-kits/config";
 import { chatgptSource } from "./chatgpt.js";
 import { deepseekSource } from "./deepseek.js";
 import {
   HttpError,
-  INTERVAL_MS,
   type Registry,
-  TIMEOUT_MS,
   type Ui,
   type UsageData,
   WIDGET_ID,
@@ -42,6 +41,10 @@ const sources: WidgetSource[] = [deepseekSource, chatgptSource];
 // ---------------------------------------------------------------------------
 
 export default function (pi: ExtensionAPI) {
+  const { usage } = readPiKitsConfig();
+  if (!usage.enabled || !usage.providerUsage.enabled) return;
+  const { intervalMs, timeoutMs } = usage.providerUsage;
+
   let ui: Ui | null = null;
   let registry: Registry | null = null;
   let active = false;
@@ -144,7 +147,7 @@ export default function (pi: ExtensionAPI) {
       if (!caches.has(currentSource.provider))
         setLine({ line: currentSource.placeholder, windows: [] });
 
-      timeout = setTimeout(() => controller.abort(), TIMEOUT_MS);
+      timeout = setTimeout(() => controller.abort(), timeoutMs);
       const data = await currentSource.fetch(apiKey, controller.signal);
       if (!isCurrent()) return;
 
@@ -189,7 +192,7 @@ export default function (pi: ExtensionAPI) {
     if (timer) clearInterval(timer);
     timer = setInterval(() => {
       void refresh();
-    }, INTERVAL_MS);
+    }, intervalMs);
     void refresh();
   }
 

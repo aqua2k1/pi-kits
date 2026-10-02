@@ -32,3 +32,20 @@
 ```sh
 pi install https://github.com/aqua2k1/pi-kits.git
 ```
+
+### Configuration
+
+所有 kit 共用 `~/.pi/agent/pi-kits.json`（跟随 `PI_CODING_AGENT_DIR`）。配置可只写需要覆盖的字段，省略时保持默认行为；修改后执行 `/reload`。
+
+```json
+{
+  "workspace": { "terminal": { "editor": "nvim", "fileManager": "yazi" } },
+  "usage": { "providerUsage": { "intervalMs": 600000 } },
+  "workflow": { "notify": { "enabled": false } },
+  "web": { "search": { "routing": { "provider": "searxng" } } }
+}
+```
+
+完整字段见 [配置示例](pi-kits.example.json) 与 [JSON Schema](pi-kits.schema.json)。各组和功能的 `enabled` 默认为 `true`；请求缓存仍需手动开启。凭据继续使用 Pi 或环境变量，不写入配置文件。
+
+commit 模型记忆保存在 `workflow.commit.lastModel`，可用 `rememberModel: false` 禁用。仅支持 `pi-kits.json`，不读取或迁移旧配置文件。

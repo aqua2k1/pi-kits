@@ -59,20 +59,22 @@ fixed argument arrays and no shell.
 All persistent settings use one file:
 
 ```text
-~/.pi/agent/web-tools-config.json
+~/.pi/agent/pi-kits.json
 ```
 
 The file is namespaced:
 
 ```json
 {
-  "search": {},
-  "fetch": {}
+  "web": {
+    "search": {},
+    "fetch": {}
+  }
 }
 ```
 
 SearXNG URL/key remain environment-only. GitHub credentials remain owned by the
-local `gh` CLI. The old `web-search-config.json` format is not read or migrated.
+local `gh` CLI. Missing files use defaults; invalid files fail without fallback.
 
 ## Local persistence
 

@@ -212,3 +212,49 @@ test("/web-tools command errors remain classified and safe", async () => {
   assert.match(notifications[0] ?? "", /\[network\]/);
   assert.doesNotMatch(notifications[0] ?? "", /synthetic-raw-config-error/);
 });
+
+test("/web-tools status: shows unified source and disabled tools; tests cannot bypass disable", async () => {
+  const rawConfig: WebToolsFileConfig = {
+    search: { enabled: false, routing: { fallback: true } },
+    fetch: { enabled: false, github: { enabled: true } },
+  };
+  const command = capture({
+    config: {
+      rawConfig,
+      resolvedConfig: resolveConfig(rawConfig, {}),
+      configPath: "/synthetic/agent/pi-kits.json",
+      source: "pi-kits",
+    },
+    search: async () => {
+      assert.fail("disabled search must not run");
+    },
+  });
+  const { ctx, notifications } = context();
+  await command.handler("status", ctx);
+  const status = notifications[0] ?? "";
+  assert.match(status, /config file: \/synthetic\/agent\/pi-kits\.json/);
+  assert.match(status, /config source: pi-kits/);
+  assert.match(status, /web: enabled/);
+  assert.match(status, /web_search: disabled/);
+  assert.match(status, /web_fetch: disabled/);
+  assert.match(status, /search fallback: disabled/);
+  assert.match(status, /GitHub fetch: disabled/);
+  await command.handler("test searxng", ctx);
+  assert.equal(notifications[1], "Web search is disabled by configuration.");
+});
+
+test("/web-tools status: reports defaults when the unified file is missing", async () => {
+  const command = capture({
+    config: {
+      rawConfig: {},
+      resolvedConfig: resolveConfig({}, {}),
+      configPath: "/synthetic/agent/pi-kits.json",
+      source: "defaults",
+    },
+  });
+  const { ctx, notifications } = context();
+  await command.handler("status", ctx);
+  assert.match(notifications[0] ?? "", /config source: defaults/);
+  assert.match(notifications[0] ?? "", /web_search: enabled/);
+  assert.match(notifications[0] ?? "", /web_fetch: enabled/);
+});

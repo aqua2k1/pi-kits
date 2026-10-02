@@ -30,7 +30,7 @@ export type Action = (typeof ACTIONS)[number];
  * Pick the generation model — searchable fuzzy picker in TUI (type to
  * filter via pi-tui's fuzzyFilter), plain select elsewhere. `first` leads
  * the list; when `prependIfMissing`, an absent `first` is added at the top
- * (used for the remembered last model, which must always lead).
+ * (used for configured and remembered models, which must always lead).
  */
 export async function chooseModel(
   ctx: ExtensionCommandContext,

@@ -15,6 +15,9 @@
     "test": "node --import tsx --test '*.test.ts' 'core/*.test.ts' 'shared/*.test.ts' 'fetch/*.test.ts' 'providers/*/*.test.ts'",
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
+  "dependencies": {
+    "@pi-kits/config": "0.1.0"
+  },
   "peerDependencies": {
     "@earendil-works/pi-ai": "*",
     "@earendil-works/pi-coding-agent": "*",
@@ -30,7 +33,6 @@
     "providers",
     "shared",
     "docs",
-    "README.md",
-    "web-tools-config.example.json"
+    "README.md"
   ]
 }

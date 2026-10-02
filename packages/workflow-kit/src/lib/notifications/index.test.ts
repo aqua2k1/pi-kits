@@ -36,6 +36,9 @@ test("pure notification API loads without Pi, extension registration, timers or 
   // extension entry. A loader rejects both host packages and extension modules.
   const loader = `
 export async function resolve(specifier, context, nextResolve) {
+  if (specifier === "@pi-kits/config") {
+    throw new Error("Pure API imported configuration");
+  }
   if (specifier.startsWith("@earendil-works/pi-")) {
     throw new Error("Pure API imported a Pi host package: " + specifier);
   }

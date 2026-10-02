@@ -7,9 +7,14 @@
  */
 
 import { execFileSync, spawn } from "node:child_process";
-import fs from "node:fs";
-import os from "node:os";
-import path from "node:path";
+import {
+  getAgentDir,
+  getPiKitsConfigPath,
+  readPiKitsConfig,
+  updatePiKitsConfig,
+} from "@pi-kits/config";
+
+export { getAgentDir } from "@pi-kits/config";
 
 // ---- pi CLI generation ------------------------------------------------------
 //
@@ -203,61 +208,42 @@ export function stripCodeFences(text: string): string {
 
 // ---- last model memory ------------------------------------------------------
 //
-// Remembers the last model chosen for /commit so the next run can lead the
-// picker with it. Keep the original agent-dir location for compatibility;
-// runtime state never lives in this package's installation directory.
+// Remembers the last model chosen for /commit in the single configuration file.
+// Legacy extensions/commit/last_model.json is never read, written, or migrated.
 
-/** Agent dir honouring PI_CODING_AGENT_DIR (same expansion as pi-subagents). */
-export function getAgentDir(): string {
-  const configured = process.env.PI_CODING_AGENT_DIR;
-  if (configured === "~") return os.homedir();
-  if (configured?.startsWith("~/")) {
-    return path.join(os.homedir(), configured.slice(2));
-  }
-  return configured || path.join(os.homedir(), ".pi", "agent");
-}
-
-const LAST_MODEL_FILENAME = "last_model.json";
-
-/** <agentDir>/extensions/commit/last_model.json */
+/** <agentDir>/pi-kits.json */
 export function lastModelPath(agentDir: string = getAgentDir()): string {
-  return path.join(agentDir, "extensions", "commit", LAST_MODEL_FILENAME);
+  return getPiKitsConfigPath(agentDir);
 }
 
-/** Last model used by /commit, or undefined when unset/missing/empty. */
+/** Last chosen model, or undefined when unset. Invalid configuration throws. */
 export function readLastModel(
   agentDir: string = getAgentDir(),
 ): string | undefined {
-  try {
-    const raw = JSON.parse(
-      fs.readFileSync(lastModelPath(agentDir), "utf8"),
-    ) as {
-      last_model?: unknown;
-    };
-    const value = raw?.last_model;
-    return typeof value === "string" && value.length > 0 ? value : undefined;
-  } catch {
-    return undefined;
-  }
+  return readPiKitsConfig(agentDir).workflow.commit.lastModel;
 }
 
-/** Persist the last chosen model (single last_model field). */
+/** Atomically update workflow.commit.lastModel, preserving other configuration. */
 export function writeLastModel(
   model: string,
   agentDir: string = getAgentDir(),
 ): void {
-  fs.mkdirSync(path.dirname(lastModelPath(agentDir)), { recursive: true });
-  fs.writeFileSync(
-    lastModelPath(agentDir),
-    `${JSON.stringify({ last_model: model }, null, 2)}\n`,
-    "utf8",
+  updatePiKitsConfig(
+    (raw) => ({
+      ...raw,
+      workflow: {
+        ...raw.workflow,
+        commit: { ...raw.workflow?.commit, lastModel: model },
+      },
+    }),
+    agentDir,
   );
 }
 
 /**
  * Deduplicated model labels with `first` moved to the front. When
  * prependIfMissing, a `first` absent from the list is added at the top — used
- * for last_model, which must always lead the picker.
+ * for configured or remembered models, which should always lead the picker.
  */
 export function orderModelOptions(
   labels: string[],

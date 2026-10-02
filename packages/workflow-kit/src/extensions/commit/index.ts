@@ -5,9 +5,9 @@
  *   1. Collect staged files (git diff --cached --name-status) and confirm with the user.
  *   2. Pick the generation model — searchable fuzzy picker in TUI (pi's own
  *      ui api: ctx.ui.custom + pi-tui fuzzyFilter), plain select elsewhere.
- *      The last used model (<agent-dir>/extensions/commit/last_model.json)
- *      leads the list, else the current model. Every pick updates
- *      last_model.json.
+ *      The configured model leads, then the last used model
+ *      (pi-kits.json workflow.commit.lastModel), then the current model.
+ *      Model memory is read and updated only when rememberModel is enabled.
  *   3. Generate a Conventional Commits message with a `pi -p` child process:
  *      rules are embedded in core.ts (formerly agents/commit.md, deleted),
  *      the staged diff is piped on stdin, and the child runs tool-less.
@@ -22,6 +22,7 @@ import type {
   ExtensionAPI,
   ExtensionCommandContext,
 } from "@earendil-works/pi-coding-agent";
+import { readPiKitsConfig } from "@pi-kits/config";
 import { notify } from "../../lib/notifications/index.ts";
 import {
   buildTask,
@@ -44,6 +45,10 @@ function currentModelLabel(ctx: ExtensionCommandContext): string | undefined {
 }
 
 export default function (pi: ExtensionAPI) {
+  const { workflow } = readPiKitsConfig();
+  const config = workflow.commit;
+  if (!workflow.enabled || !config.enabled) return;
+
   let quitAfterStartupCommit = false;
 
   pi.registerFlag("commit", {
@@ -94,15 +99,19 @@ export default function (pi: ExtensionAPI) {
         return;
       }
 
-      // 3. Pick the generation model; the last pick leads, else the current model.
-      const lastModel = readLastModel();
-      const first = lastModel ?? currentModelLabel(ctx);
-      const model = await chooseModel(ctx, first, lastModel !== undefined);
+      // 3. Configured model leads, then optional remembered model, then current.
+      const lastModel = config.rememberModel ? readLastModel() : undefined;
+      const first = config.model ?? lastModel ?? currentModelLabel(ctx);
+      const model = await chooseModel(
+        ctx,
+        first,
+        config.model !== undefined || lastModel !== undefined,
+      );
       if (!model) {
         ctx.ui.notify("已取消,未提交", "info");
         return;
       }
-      writeLastModel(model);
+      if (config.rememberModel) writeLastModel(model);
 
       // 4. Generate (regenerate loops), confirm, then commit.
       for (;;) {
@@ -111,6 +120,8 @@ export default function (pi: ExtensionAPI) {
         try {
           const result = await runPiGenerate({
             model,
+            thinking: config.thinking,
+            timeoutMs: config.timeoutMs,
             task: buildTask(files, getStagedDiff(ctx.cwd)),
             cwd: ctx.cwd,
           });
@@ -123,7 +134,7 @@ export default function (pi: ExtensionAPI) {
           return;
         }
         ctx.ui.setStatus("commit", undefined);
-        notify("pi", "commit message done!");
+        if (workflow.notify.enabled) notify("pi", "commit message done!");
 
         const action = await chooseAction(ctx, message);
         if (action === undefined || action === "取消") {

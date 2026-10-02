@@ -16,6 +16,7 @@
  */
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { readPiKitsConfig } from "@pi-kits/config";
 import { readonlyPreview } from "../lib/readonly-preview.ts";
 
 const HELP_TEXT = [
@@ -33,6 +34,9 @@ const HELP_TEXT = [
 ].join("\n");
 
 export default function (pi: ExtensionAPI) {
+  const config = readPiKitsConfig().workspace;
+  if (!config.enabled || !config.contextPreview.enabled) return;
+
   let enabled = false;
   let lastPayload: unknown = null;
 
@@ -97,6 +101,7 @@ export default function (pi: ExtensionAPI) {
       const result = await readonlyPreview(ctx, {
         prefix: "pi-context-preview-",
         extension: "json",
+        editor: config.terminal.editor,
         body,
       });
       if (result.kind === "not-found") {

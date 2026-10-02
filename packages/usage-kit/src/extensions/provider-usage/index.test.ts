@@ -5,6 +5,7 @@ import type {
   ExtensionCommandContext,
   ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
+import { useAgentDir } from "../../test-utils/agent-dir.ts";
 import { chatgptSource } from "./chatgpt.js";
 import providerUsage from "./index.js";
 import { INTERVAL_MS, WIDGET_ID } from "./source.js";
@@ -17,7 +18,8 @@ const flush = () => new Promise<void>((resolve) => setImmediate(resolve));
 
 // The host double records only public Pi calls and network requests. It does
 // not access closure state, private helpers, fetch generations or cache keys.
-function host(t: TestContext) {
+function host(t: TestContext, config?: unknown) {
+  useAgentDir(t, config);
   t.mock.timers.enable({ apis: ["setInterval", "setTimeout"] });
   const events = new Map<string, Handler[]>();
   const commands = new Map<string, Command>();
@@ -134,8 +136,8 @@ function host(t: TestContext) {
     setAuthenticated: (value: boolean) => {
       authenticated = value;
     },
-    async tick() {
-      t.mock.timers.tick(INTERVAL_MS);
+    async tick(ms = INTERVAL_MS) {
+      t.mock.timers.tick(ms);
       await flush();
     },
     async usage() {
@@ -299,4 +301,43 @@ test("switching DeepSeek to Codex never sends a pending old credential to the ne
   await assert.doesNotReject(oldRefresh);
   await flush();
   assert.match(h.text(), /ChatGPT.*10%/);
+});
+
+for (const usage of [
+  { enabled: false },
+  { providerUsage: { enabled: false } },
+]) {
+  test(`disabled usage ${JSON.stringify(usage)} registers nothing`, async (t) => {
+    const h = host(t, { usage });
+    assert.equal(h.events.size, 0);
+    assert.equal(h.commands.size, 0);
+    await h.emit("session_start", "deepseek");
+    await h.tick();
+    assert.deepEqual(h.requests, []);
+    assert.deepEqual(h.credentials, []);
+  });
+}
+
+test("provider polling and request timeout use configured durations", async (t) => {
+  const h = host(t, {
+    usage: { providerUsage: { intervalMs: 2_000, timeoutMs: 250 } },
+  });
+  await h.emit("session_start", "deepseek");
+  assert.equal(h.requests.length, 1);
+  await h.tick(1_999);
+  assert.equal(h.requests.length, 1);
+
+  const response = deferred<void>();
+  t.after(() => response.resolve());
+  h.setFetchDelay(response.promise);
+  await h.tick(1);
+  assert.equal(h.requests.length, 2);
+  const request = h.requestDetails.at(-1);
+  assert.ok(request);
+  await h.tick(249);
+  assert.equal(request.signal.aborted, false);
+  await h.tick(1);
+  assert.equal(request.signal.aborted, true);
+  response.resolve();
+  await flush();
 });

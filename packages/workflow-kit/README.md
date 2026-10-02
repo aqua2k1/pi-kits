@@ -28,11 +28,22 @@ cancel, or submit it with `git commit -m`.
 a successful startup-triggered commit; cancellations and failures do not exit.
 Non-interactive modes do not execute the commit flow.
 
-Model memory intentionally retains the original location:
-`<agent-dir>/extensions/commit/last_model.json`. This is user runtime state, not
-a file in the installed package, and honors `PI_CODING_AGENT_DIR` (including
-`~` expansion). Existing model choices remain compatible. The original runtime
-`last_model.json` is not copied into this package.
+Model memory is stored in `workflow.commit.lastModel` inside
+`<agent-dir>/pi-kits.json`, honoring `PI_CODING_AGENT_DIR` (including `~`
+expansion). Updates preserve other configuration fields. Legacy
+`extensions/commit/last_model.json` is ignored and never migrated or modified.
+
+## Configuration
+
+Use the `workflow` section of agent-dir `pi-kits.json`; edit then `/reload`.
+`enabled` disables the kit, while `commit.enabled` and `notify.enabled` gate
+individual entries. `commit.model` sets the first picker option, ahead of model
+memory and the current model; `thinking` and `timeoutMs` configure generation.
+`rememberModel: false` disables reading/writing `commit.lastModel`; the factory
+still reads configuration to apply feature switches and generation settings.
+`notify.quietPeriodMs` controls the idle delay (default 1000 ms); disabling notify
+also suppresses commit's completion notification. The pure API remains independent
+of configuration. See the [configuration example](../../pi-kits.example.json).
 
 ## Pure notification API
 
@@ -59,7 +70,8 @@ Architecture:
 - `src/extensions/notify/index.ts`: Pi lifecycle wiring only.
 
 The completion adapter uses the same API to send `Pi: Task completed.` only in
-TUI after `agent_settled` has remained idle for one second. Pending notifications
+TUI after `agent_settled` has remained idle for the configured quiet period
+(one second by default). Pending notifications
 are cancelled on input, `before_agent_start`, `agent_start`, or session shutdown.
 The idle state is checked again before delivery; notifier errors are contained.
 

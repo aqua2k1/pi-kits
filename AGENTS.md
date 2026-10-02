@@ -5,6 +5,8 @@
 Four Pi kits live under `packages/`: workspace, usage, workflow, and web.
 Keep extension entry points explicit in both root and kit Pi manifests.
 Shared helpers must not register commands, tools, or lifecycle handlers.
+Settings live in agent-dir `pi-kits.json`; use `@pi-kits/config` for validation
+and defaults. Keep the exported JSON schema and example in sync.
 
 ## Validation
 

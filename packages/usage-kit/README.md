@@ -25,7 +25,7 @@ personal installation, to avoid duplicate widgets, polling, and commands.
 ## Provider usage
 
 `/usage` refreshes the below-editor widget on demand. It also refreshes every
-10 minutes while a supported provider is active:
+10 minutes by default while a supported provider is active:
 
 - `deepseek`: account balance, with a warning when any currency balance is below
   20.
@@ -35,7 +35,12 @@ personal installation, to avoid duplicate widgets, polling, and commands.
 
 Credentials continue to come from Pi's model registry. Missing credentials stop
 polling and hide the widget; failed refreshes preserve cached usage as stale.
-No package-specific settings or authentication paths are introduced.
+Settings use the `usage` section of agent-dir `pi-kits.json`. Its `enabled`
+switch disables the kit; `providerUsage.enabled` and `stats.enabled` disable
+individual entries. `providerUsage.intervalMs` and `timeoutMs` control polling
+and request timing. Defaults are 600000 and 15000 ms; edit then `/reload`.
+See the [configuration example](../../pi-kits.example.json). No new
+authentication paths are introduced.
 
 ## Session statistics
 
@@ -53,8 +58,8 @@ implementation; it has not been moved to a shared kit.
 
 ## Tests
 
-The original five test files and the original stats subdirectory `package.json`
-are retained. The package test script uses the workspace's `tsx` loader:
+The original tests are retained alongside configuration and lifecycle regression
+tests. The package test script uses the workspace's `tsx` loader:
 
 ```sh
 npm test --workspace pi-usage-kit

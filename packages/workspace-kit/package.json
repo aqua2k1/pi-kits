@@ -17,6 +17,9 @@
   "scripts": {
     "test": "node --import tsx --test src/lib/*.test.ts src/extensions/*.test.ts"
   },
+  "dependencies": {
+    "@pi-kits/config": "0.1.0"
+  },
   "peerDependencies": {
     "@earendil-works/pi-coding-agent": "*",
     "typebox": "*"

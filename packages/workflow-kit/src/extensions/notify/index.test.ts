@@ -5,7 +5,8 @@ import type {
   ExtensionAPI,
   ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
-import {
+import { useAgentDir } from "../../test-utils/agent-dir.ts";
+import notifyExtension, {
   type CompletionNotificationDependencies,
   NOTIFICATION_QUIET_PERIOD_MS,
   registerCompletionNotification,
@@ -221,4 +222,52 @@ test("registerCompletionNotification: a new settled event replaces the pending t
   assert.equal(cancellations, 1);
   await handler("session_shutdown")({ type: "session_shutdown" }, context());
   assert.equal(cancellations, 2);
+});
+
+for (const workflow of [{ enabled: false }, { notify: { enabled: false } }]) {
+  test(`disabled notify ${JSON.stringify(workflow)} has no hook or timer side effects`, (t) => {
+    useAgentDir(t, { workflow });
+    t.mock.method(globalThis, "setTimeout", () => {
+      assert.fail("Disabled notifications must not schedule timers");
+    });
+    notifyExtension({
+      on() {
+        assert.fail("Disabled notifications must not register hooks");
+      },
+      registerCommand() {
+        assert.fail("Disabled notifications must not register commands");
+      },
+      registerFlag() {
+        assert.fail("Disabled notifications must not register flags");
+      },
+    } as unknown as ExtensionAPI);
+  });
+}
+
+test("notify factory passes the configured quiet period to its lifecycle timer", async (t) => {
+  useAgentDir(t, { workflow: { notify: { quietPeriodMs: 75 } } });
+  const handlers = new Map<string, EventHandler>();
+  const delays: number[] = [];
+  t.mock.method(
+    globalThis,
+    "setTimeout",
+    (_callback: () => void, delay: number) => {
+      delays.push(delay);
+      return 1;
+    },
+  );
+  t.mock.method(globalThis, "clearTimeout", () => undefined);
+  notifyExtension({
+    on(name: string, handler: EventHandler) {
+      handlers.set(name, handler);
+    },
+  } as unknown as ExtensionAPI);
+  const settled = handlers.get("agent_settled");
+  assert.ok(settled);
+  await settled({ type: "agent_settled" }, context());
+  assert.deepEqual(delays, [75]);
+  await handlers.get("session_shutdown")?.(
+    { type: "session_shutdown" },
+    context(),
+  );
 });

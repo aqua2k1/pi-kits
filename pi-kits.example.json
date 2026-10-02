@@ -1,0 +1,52 @@
+{
+  "$schema": "https://raw.githubusercontent.com/aqua2k1/pi-kits/main/pi-kits.schema.json",
+  "workspace": {
+    "enabled": true,
+    "terminal": {
+      "enabled": true,
+      "editor": "nvim",
+      "gitUI": "lazygit",
+      "fileManager": "yazi"
+    },
+    "open": { "enabled": true },
+    "preview": { "enabled": true },
+    "contextPreview": { "enabled": true }
+  },
+  "usage": {
+    "enabled": true,
+    "providerUsage": {
+      "enabled": true,
+      "intervalMs": 600000,
+      "timeoutMs": 15000
+    },
+    "stats": { "enabled": true }
+  },
+  "workflow": {
+    "enabled": true,
+    "commit": {
+      "enabled": true,
+      "timeoutMs": 120000,
+      "rememberModel": true
+    },
+    "notify": { "enabled": true, "quietPeriodMs": 1000 }
+  },
+  "web": {
+    "enabled": true,
+    "search": {
+      "enabled": true,
+      "routing": { "provider": "searxng", "fallback": false },
+      "timeoutMs": 15000,
+      "maxResults": 5
+    },
+    "fetch": {
+      "enabled": true,
+      "timeoutMs": 15000,
+      "github": {
+        "enabled": true,
+        "mode": "auto",
+        "maxRepoSizeMB": 350,
+        "cloneTimeoutSeconds": 30
+      }
+    }
+  }
+}

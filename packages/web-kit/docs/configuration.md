@@ -1,13 +1,13 @@
 # Pi web kit configuration
 
-`pi-web-kit` uses one read-only JSON file with separate `search` and `fetch`
-sections. The package rename preserves `/web-tools` and all configuration paths. Pi remains the owner of Codex OAuth credentials, and `gh` remains the
-owner of GitHub authentication.
+`pi-web-kit` reads the unified `pi-kits.json` file through `@pi-kits/config`.
+Its `web` section contains separate `search` and `fetch` settings. Pi owns Codex
+OAuth credentials, and `gh` owns GitHub authentication.
 
 ## File
 
 ```text
-~/.pi/agent/web-tools-config.json
+~/.pi/agent/pi-kits.json
 ```
 
 The extension uses Pi's agent directory (`getAgentDir()`). Set
@@ -18,36 +18,48 @@ Copy the example from the `pi-kits` repository root:
 
 ```bash
 mkdir -p ~/.pi/agent
-cp packages/web-kit/web-tools-config.example.json \
-  ~/.pi/agent/web-tools-config.json
+cp pi-kits.example.json \
+  ~/.pi/agent/pi-kits.json
 ```
 
-A missing file uses defaults. Malformed or unreadable files fail with a
-classified error.
+Only `pi-kits.json` is read. A missing file or omitted `web` uses defaults.
+Malformed or unreadable files fail with a classified error, without fallback.
+The kit does not read `web-tools-config.json`.
+
+`web.enabled`, `web.search.enabled`, and `web.fetch.enabled` default to `true`.
+Disabling `web` skips all tools, commands, and spool cleanup. Disabling a
+capability skips its tool; disabled fetch also skips cleanup. `/web-tools`
+remains available for diagnostics when `web` is enabled, and reports disabled
+states without running disabled search tests.
 
 ## Complete example
 
 ```json
 {
-  "search": {
-    "routing": {
-      "provider": "searxng",
-      "fallback": false,
-      "fallbackProvider": "codex-alpha-search"
-    },
-    "timeoutMs": 15000,
-    "maxResults": 5,
-    "codex": {
-      "model": "gpt-5.4"
-    }
-  },
-  "fetch": {
-    "timeoutMs": 15000,
-    "github": {
+  "web": {
+    "enabled": true,
+    "search": {
       "enabled": true,
-      "mode": "auto",
-      "maxRepoSizeMB": 350,
-      "cloneTimeoutSeconds": 30
+      "routing": {
+        "provider": "searxng",
+        "fallback": false,
+        "fallbackProvider": "codex-alpha-search"
+      },
+      "timeoutMs": 15000,
+      "maxResults": 5,
+      "codex": {
+        "model": "gpt-5.4"
+      }
+    },
+    "fetch": {
+      "enabled": true,
+      "timeoutMs": 15000,
+      "github": {
+        "enabled": true,
+        "mode": "auto",
+        "maxRepoSizeMB": 350,
+        "cloneTimeoutSeconds": 30
+      }
     }
   }
 }
@@ -57,12 +69,12 @@ classified error.
 
 | Path | Type | Default | Meaning |
 | --- | --- | --- | --- |
-| `search.routing.provider` | string | `searxng` | `searxng` or `codex-alpha-search`; `codex` is an alias. |
-| `search.routing.fallback` | boolean | `false` | Enable provider fallback. |
-| `search.routing.fallbackProvider` | string | other provider | Provider used after an eligible failure. |
-| `search.timeoutMs` | integer | `15000` | Search attempt timeout, range `1000`–`120000`. |
-| `search.maxResults` | integer | `5` | Default result count, range `1`–`10`. |
-| `search.codex.model` | string | `gpt-5.4` | Model sent to Codex `alpha/search`. |
+| `web.search.routing.provider` | string | `searxng` | `searxng` or `codex-alpha-search`; `codex` is an alias. |
+| `web.search.routing.fallback` | boolean | `false` | Enable provider fallback. |
+| `web.search.routing.fallbackProvider` | string | other provider | Provider used after an eligible failure. |
+| `web.search.timeoutMs` | integer | `15000` | Search attempt timeout, range `1000`–`120000`. |
+| `web.search.maxResults` | integer | `5` | Default result count, range `1`–`10`. |
+| `web.search.codex.model` | string | `gpt-5.4` | Model sent to Codex `alpha/search`. |
 
 SearXNG URL and key are not accepted in JSON. Use:
 
@@ -75,12 +87,12 @@ export SEARXNG_API_KEY="..."
 
 | Path | Type | Default | Meaning |
 | --- | --- | --- | --- |
-| `fetch.timeoutMs` | integer | `15000` | Native HTTP/API timeout, range `1000`–`120000`. |
-| `fetch.github.enabled` | boolean | `true` | Enable GitHub URL handling. |
-| `fetch.github.mode` | string | `auto` | `auto`, `clone` or `api`. |
-| `fetch.github.maxRepoSizeMB` | integer | `350` | In `auto`, larger repositories prefer API access. |
-| `fetch.github.cloneTimeoutSeconds` | integer | `30` | Clone timeout, range `5`–`600`. |
-| `fetch.github.clonePath` | string | system temp directory | Root directory for shallow clones. |
+| `web.fetch.timeoutMs` | integer | `15000` | Native HTTP/API timeout, range `1000`–`120000`. |
+| `web.fetch.github.enabled` | boolean | `true` | Enable GitHub URL handling. |
+| `web.fetch.github.mode` | string | `auto` | `auto`, `clone` or `api`. |
+| `web.fetch.github.maxRepoSizeMB` | integer | `350` | In `auto`, larger repositories prefer API access. |
+| `web.fetch.github.cloneTimeoutSeconds` | integer | `30` | Clone timeout, range `5`–`600`. |
+| `web.fetch.github.clonePath` | string | system temp directory | Root directory for shallow clones. |
 
 The final fetched text is always limited to 50 MiB. That hard limit is not
 configurable.

@@ -1,6 +1,7 @@
+import { WEB_DEFAULTS } from "@pi-kits/config";
 import { WebSearchError } from "../../core/errors.ts";
 
-export const CODEX_DEFAULT_MODEL = "gpt-5.4";
+export const CODEX_DEFAULT_MODEL = WEB_DEFAULTS.codexModel;
 
 export function normalizeCodexModel(raw = CODEX_DEFAULT_MODEL): string {
   const model = raw.trim();

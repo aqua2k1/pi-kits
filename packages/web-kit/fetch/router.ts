@@ -72,6 +72,7 @@ export class WebFetchRouter {
     runtime: FetchRuntime = createFetchRuntime(),
   ) {
     this.config = {
+      enabled: config.enabled,
       timeoutMs: config.timeoutMs,
       github: { ...config.github },
     };

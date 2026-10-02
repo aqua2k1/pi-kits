@@ -26,5 +26,8 @@
       "./src/extensions/stats/index.ts"
     ]
   },
-  "private": true
+  "private": true,
+  "dependencies": {
+    "@pi-kits/config": "0.1.0"
+  }
 }

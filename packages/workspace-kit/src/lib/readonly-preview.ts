@@ -7,7 +7,12 @@ import { runTerminalApp, type TerminalAppResult } from "./terminal-app.ts";
 /** Keep temporary preview data outside the session; clean up even on launch failure. */
 export async function readonlyPreview(
   ctx: ExtensionContext,
-  options: { prefix: string; extension: "md" | "json"; body: string },
+  options: {
+    prefix: string;
+    extension: "md" | "json";
+    body: string;
+    editor?: string;
+  },
   launch: typeof runTerminalApp = runTerminalApp,
 ): Promise<TerminalAppResult> {
   if (ctx.mode !== "tui") return { kind: "unavailable" };
@@ -23,7 +28,10 @@ export async function readonlyPreview(
       `${options.prefix}${sessionId}-${stamp}.${options.extension}`,
     );
     writeFileSync(file, `${options.body}\n`, { encoding: "utf8", mode: 0o600 });
-    return await launch(ctx, "nvim", { args: ["-R", file], clearScreen: true });
+    return await launch(ctx, options.editor ?? "nvim", {
+      args: ["-R", file],
+      clearScreen: true,
+    });
   } finally {
     try {
       rmSync(dir, { recursive: true, force: true });
