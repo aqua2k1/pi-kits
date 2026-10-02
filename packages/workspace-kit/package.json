@@ -1,0 +1,31 @@
+{
+  "name": "pi-workspace-kit",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "keywords": [
+    "pi-package"
+  ],
+  "pi": {
+    "extensions": [
+      "./src/extensions/terminal.ts",
+      "./src/extensions/open.ts",
+      "./src/extensions/preview.ts",
+      "./src/extensions/context-preview.ts"
+    ]
+  },
+  "scripts": {
+    "test": "node --import tsx --test src/lib/*.test.ts src/extensions/*.test.ts"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*",
+    "typebox": "*"
+  },
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "files": [
+    "src",
+    "README.md"
+  ]
+}

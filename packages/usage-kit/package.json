@@ -1,0 +1,30 @@
+{
+  "name": "pi-usage-kit",
+  "version": "0.1.0",
+  "description": "Provider usage widgets and session token/cost statistics for Pi",
+  "type": "module",
+  "keywords": [
+    "pi-package"
+  ],
+  "files": [
+    "src",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "scripts": {
+    "test": "node --import tsx --test src/extensions/provider-usage/*.test.ts src/extensions/stats/*.test.ts"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*",
+    "@earendil-works/pi-tui": "*"
+  },
+  "pi": {
+    "extensions": [
+      "./src/extensions/provider-usage/index.ts",
+      "./src/extensions/stats/index.ts"
+    ]
+  },
+  "private": true
+}

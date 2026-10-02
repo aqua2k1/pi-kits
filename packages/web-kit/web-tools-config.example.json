@@ -1,0 +1,23 @@
+{
+  "search": {
+    "routing": {
+      "provider": "searxng",
+      "fallback": false,
+      "fallbackProvider": "codex-alpha-search"
+    },
+    "timeoutMs": 15000,
+    "maxResults": 5,
+    "codex": {
+      "model": "gpt-5.4"
+    }
+  },
+  "fetch": {
+    "timeoutMs": 15000,
+    "github": {
+      "enabled": true,
+      "mode": "auto",
+      "maxRepoSizeMB": 350,
+      "cloneTimeoutSeconds": 30
+    }
+  }
+}
