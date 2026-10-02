@@ -11,21 +11,21 @@ test("ChatGPT fetch returns usage and countdowns for every reported window", asy
       label: "5h",
       seconds: 5 * 60 * 60,
       percent: 10,
-      remaining: "2h",
+      remaining: "2h0m",
       ms: 7_200_000,
     },
     {
       label: "weekly",
       seconds: 7 * 24 * 60 * 60,
       percent: 20,
-      remaining: "3d",
+      remaining: "3d0h",
       ms: 259_200_000,
     },
     {
       label: "monthly",
       seconds: 30 * 24 * 60 * 60,
       percent: 30,
-      remaining: "24d",
+      remaining: "24d0h",
       ms: 2_073_600_000,
     },
   ];
@@ -58,6 +58,40 @@ test("ChatGPT fetch returns usage and countdowns for every reported window", asy
   for (const { remaining } of windows) {
     assert.match(result.line, new RegExp(`\\b${remaining}\\b`));
   }
+});
+
+test("ChatGPT countdowns keep two units including zero values", async (t) => {
+  const now = 1_700_000_000_000;
+  t.mock.method(Date, "now", () => now);
+  t.mock.method(globalThis, "fetch", async () =>
+    Response.json({
+      rate_limit: {
+        primary_window: {
+          used_percent: 10,
+          limit_window_seconds: 5 * 60 * 60,
+          reset_at: (now + 31 * 60_000) / 1000,
+        },
+        secondary_window: {
+          used_percent: 20,
+          limit_window_seconds: 24 * 60 * 60,
+          reset_at: (now + 60 * 60_000) / 1000,
+        },
+        monthly_window: {
+          used_percent: 30,
+          limit_window_seconds: 30 * 24 * 60 * 60,
+          reset_at: (now + 2 * 24 * 60 * 60_000) / 1000,
+        },
+      },
+    }),
+  );
+
+  const result = await chatgptSource.fetch(
+    "fixture-token",
+    new AbortController().signal,
+  );
+
+  assert.ok(result);
+  assert.match(result.line, /resets in 0h31m\/0d1h\/2d0h/);
 });
 
 test("ChatGPT fetch authenticates with the supplied JWT and account claim", async (t) => {

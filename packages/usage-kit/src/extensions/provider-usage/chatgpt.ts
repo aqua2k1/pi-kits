@@ -52,13 +52,23 @@ function windowLabel(seconds: number): string {
   return "limit";
 }
 
-function formatReset(resetAtSec: number): string {
+const MINUTES_PER_HOUR = 60;
+const MINUTES_PER_DAY = 24 * MINUTES_PER_HOUR;
+const DAY_WINDOW_SECONDS = 24 * 60 * 60;
+
+/** 按窗口类型固定显示两个单位，保留 0 值（如 0h31m、0d1h）。 */
+function formatReset(resetAtSec: number, windowSeconds: number): string {
   const minutes = Math.round((resetAtSec * 1000 - Date.now()) / 60_000);
   if (minutes <= 0) return "";
-  if (minutes < 60) return `${minutes}m`;
-  const hours = minutes / 60;
-  if (hours < 24) return `${Math.round(hours)}h`;
-  return `${Math.round(hours / 24)}d`;
+
+  if (windowSeconds >= DAY_WINDOW_SECONDS) {
+    const days = Math.floor(minutes / MINUTES_PER_DAY);
+    const hours = Math.floor((minutes % MINUTES_PER_DAY) / MINUTES_PER_HOUR);
+    return `${days}d${hours}h`;
+  }
+
+  const hours = Math.floor(minutes / MINUTES_PER_HOUR);
+  return `${hours}h${minutes % MINUTES_PER_HOUR}m`;
 }
 
 function isWhamWindow(value: unknown): value is WhamWindow {
@@ -107,7 +117,7 @@ export const chatgptSource: WidgetSource = {
       .map((w) => ({
         label: windowLabel(w.limit_window_seconds),
         percent: w.used_percent,
-        reset: formatReset(w.reset_at),
+        reset: formatReset(w.reset_at, w.limit_window_seconds),
       }));
     if (windows.length === 0) return undefined;
 
