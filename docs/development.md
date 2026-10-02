@@ -52,10 +52,10 @@ pi --no-extensions \
 本轮没有执行以下步骤。正式切换时：
 
 1. 用 `pi config` 在个人作用域中禁用旧的九个入口，保留 Herdr。
-2. 通过 Git source 安装仓库（实际 URL 在推送远程仓库后提供）：
+2. 通过 Git source 安装仓库：
 
    ```sh
-   pi install "git:<repository-url>"
+   pi install git:github.com/aqua2k1/pi-kits
    ```
 
    本地开发可使用 `pi install ~/Projects/pi-kits`；也可安装某个 `packages/<name>-kit` 子包，但不要同时启用根包与同功能子包。

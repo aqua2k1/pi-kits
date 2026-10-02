@@ -27,15 +27,15 @@
 
 ### Install
 
-通过 Git 仓库安装全部 kit（将 `<repository-url>` 替换为实际远程仓库地址）：
+通过 Git 仓库安装全部 kit：
 
 ```sh
-pi install "git:<repository-url>"
+pi install git:github.com/aqua2k1/pi-kits
 ```
 
-例如 GitHub 的 source 格式为 `git:github.com/<owner>/pi-kits`。Pi 会克隆仓库、安装依赖并加载根 manifest 中声明的功能入口，无需手动克隆或运行 `npm ci`。
+Pi 会克隆 [aqua2k1/pi-kits](https://github.com/aqua2k1/pi-kits)、安装依赖并加载根 manifest 中声明的功能入口，无需手动克隆或运行 `npm ci`。
 
-**当前尚未配置远程仓库，上述地址是占位符；推送仓库后才能远程安装。** 已有本地仓库时，可用于开发安装：
+已有本地仓库时，可用于开发安装：
 
 ```sh
 pi install ~/Projects/pi-kits
