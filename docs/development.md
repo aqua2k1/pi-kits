@@ -55,7 +55,7 @@ pi --no-extensions \
 2. 通过 Git source 安装仓库：
 
    ```sh
-   pi install git:github.com/aqua2k1/pi-kits
+   pi install https://github.com/aqua2k1/pi-kits.git
    ```
 
    本地开发可使用 `pi install ~/Projects/pi-kits`；也可安装某个 `packages/<name>-kit` 子包，但不要同时启用根包与同功能子包。

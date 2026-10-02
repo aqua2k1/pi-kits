@@ -30,5 +30,5 @@
 通过 Git 仓库安装全部 kit：
 
 ```sh
-pi install git:github.com/aqua2k1/pi-kits
+pi install https://github.com/aqua2k1/pi-kits.git
 ```
