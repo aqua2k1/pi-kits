@@ -40,41 +40,59 @@ test("four kits explicitly declare nine independent runtime entries", () => {
   }
   assert.equal(entries.length, 9);
   assert.equal(new Set(entries).size, 9);
+  const repository = JSON.parse(
+    readFileSync(join(root, "package.json"), "utf8"),
+  );
+  assert.ok(repository.keywords.includes("pi-package"));
+  assert.deepEqual(
+    repository.pi.extensions.map((entry: string) => resolve(root, entry)),
+    entries,
+    "Git repository manifest must expose exactly the kit entries",
+  );
 });
 
-test("Pi loads all kit manifests in isolation without extension errors", () => {
-  const agentDir = mkdtempSync(join(tmpdir(), "pi-kits-smoke-"));
-  try {
-    const child = spawnSync(
-      process.execPath,
-      [
-        join(
-          root,
-          "node_modules/@earendil-works/pi-coding-agent/dist/bundle/cli.js",
-        ),
-        "--no-extensions",
-        "--no-context-files",
-        "--no-approve",
-        "--offline",
-        ...kits.flatMap((kit) => ["-e", join(root, "packages", `${kit}-kit`)]),
-        "--help",
-      ],
-      {
-        cwd: root,
-        env: { ...process.env, PI_CODING_AGENT_DIR: agentDir, PI_OFFLINE: "1" },
-        encoding: "utf8",
-        timeout: 30_000,
-        stdio: ["ignore", "pipe", "pipe"],
-      },
-    );
-    assert.equal(child.error, undefined);
-    assert.equal(child.status, 0, child.stderr);
-    assert.match(child.stdout, /--commit/);
-    assert.doesNotMatch(
-      child.stdout + child.stderr,
-      /Failed to load|Extension error|duplicate registration/i,
-    );
-  } finally {
-    rmSync(agentDir, { recursive: true, force: true });
-  }
-});
+for (const [name, paths] of [
+  ["individual kits", kits.map((kit) => join(root, "packages", `${kit}-kit`))],
+  ["Git repository root", [root]],
+] as const) {
+  test(`Pi loads ${name} in isolation without extension errors`, () => {
+    const agentDir = mkdtempSync(join(tmpdir(), "pi-kits-smoke-"));
+    try {
+      const child = spawnSync(
+        process.execPath,
+        [
+          join(
+            root,
+            "node_modules/@earendil-works/pi-coding-agent/dist/bundle/cli.js",
+          ),
+          "--no-extensions",
+          "--no-context-files",
+          "--no-approve",
+          "--offline",
+          ...paths.flatMap((path) => ["-e", path]),
+          "--help",
+        ],
+        {
+          cwd: root,
+          env: {
+            ...process.env,
+            PI_CODING_AGENT_DIR: agentDir,
+            PI_OFFLINE: "1",
+          },
+          encoding: "utf8",
+          timeout: 30_000,
+          stdio: ["ignore", "pipe", "pipe"],
+        },
+      );
+      assert.equal(child.error, undefined);
+      assert.equal(child.status, 0, child.stderr);
+      assert.match(child.stdout, /--commit/);
+      assert.doesNotMatch(
+        child.stdout + child.stderr,
+        /Failed to load|Extension error|duplicate registration/i,
+      );
+    } finally {
+      rmSync(agentDir, { recursive: true, force: true });
+    }
+  });
+}

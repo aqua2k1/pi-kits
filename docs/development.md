@@ -1,6 +1,6 @@
 # pi-kits
 
-将个人 Pi 扩展按职责组织为四个独立 kit 的 npm workspace / Git 仓库。所有包暂为 `private`，通过本地路径加载，不发布 npm。
+将个人 Pi 扩展按职责组织为四个独立 kit 的 npm workspace / Git 仓库。所有包暂为 `private`，不发布 npm；仓库根 Pi manifest 聚合九个入口，支持通过 Git source 整体安装，本地子包路径用于开发和独立试用。
 
 ## 包与入口
 
@@ -52,19 +52,18 @@ pi --no-extensions \
 本轮没有执行以下步骤。正式切换时：
 
 1. 用 `pi config` 在个人作用域中禁用旧的九个入口，保留 Herdr。
-2. 通过本地路径安装四个包：
+2. 通过 Git source 安装仓库（实际 URL 在推送远程仓库后提供）：
 
    ```sh
-   pi install ~/Projects/pi-kits/packages/workspace-kit
-   pi install ~/Projects/pi-kits/packages/usage-kit
-   pi install ~/Projects/pi-kits/packages/workflow-kit
-   pi install ~/Projects/pi-kits/packages/web-kit
+   pi install "git:<repository-url>"
    ```
+
+   本地开发可使用 `pi install ~/Projects/pi-kits`；也可安装某个 `packages/<name>-kit` 子包，但不要同时启用根包与同功能子包。
 
 3. `/reload`，确认没有重复命令/工具注册及扩展加载错误。
 4. 用 `pi config` 独立关闭不需要的入口，例如请求预览或通知。
 
-回滚：移除四个本地包的加载声明，再重新启用旧入口；无需恢复旧文件。本地 package 加载引用仓库本身，移动仓库后需更新路径。
+回滚：移除 Git source 或本地包的加载声明，再重新启用旧入口；无需恢复旧文件。本地 package 加载引用仓库本身，移动仓库后需更新路径。
 
 ## 已知限制
 

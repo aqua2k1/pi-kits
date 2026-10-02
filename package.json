@@ -3,6 +3,28 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
+  "keywords": [
+    "pi-package"
+  ],
+  "pi": {
+    "extensions": [
+      "./packages/workspace-kit/src/extensions/terminal.ts",
+      "./packages/workspace-kit/src/extensions/open.ts",
+      "./packages/workspace-kit/src/extensions/preview.ts",
+      "./packages/workspace-kit/src/extensions/context-preview.ts",
+      "./packages/usage-kit/src/extensions/provider-usage/index.ts",
+      "./packages/usage-kit/src/extensions/stats/index.ts",
+      "./packages/workflow-kit/src/extensions/commit/index.ts",
+      "./packages/workflow-kit/src/extensions/notify/index.ts",
+      "./packages/web-kit/index.ts"
+    ]
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-ai": "*",
+    "@earendil-works/pi-coding-agent": "*",
+    "@earendil-works/pi-tui": "*",
+    "typebox": "*"
+  },
   "workspaces": [
     "packages/*"
   ],
