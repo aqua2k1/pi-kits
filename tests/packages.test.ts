@@ -100,7 +100,15 @@ test("repository declares an independent valid Gruvbox theme", async () => {
   const repository = JSON.parse(
     readFileSync(join(root, "package.json"), "utf8"),
   );
-  assert.deepEqual(repository.pi.themes, ["./themes/gruvbox.json"]);
+  const dir = join(root, "packages/themes");
+  const manifest = JSON.parse(readFileSync(join(dir, "package.json"), "utf8"));
+  assert.ok(manifest.keywords.includes("pi-package"));
+  assert.deepEqual(manifest.pi.themes, ["./gruvbox.json"]);
+  assert.deepEqual(repository.pi.themes, ["./packages/themes/gruvbox.json"]);
+  assert.deepEqual(
+    repository.pi.themes.map((entry: string) => resolve(root, entry)),
+    manifest.pi.themes.map((entry: string) => resolve(dir, entry)),
+  );
   const theme = JSON.parse(
     readFileSync(resolve(root, repository.pi.themes[0]), "utf8"),
   );
@@ -118,7 +126,13 @@ test("repository declares an independent valid Gruvbox theme", async () => {
 });
 
 for (const [name, paths] of [
-  ["individual kits", kits.map((kit) => join(root, "packages", `${kit}-kit`))],
+  [
+    "individual kits",
+    [
+      ...kits.map((kit) => join(root, "packages", `${kit}-kit`)),
+      join(root, "packages/themes"),
+    ],
+  ],
   ["Git repository root", [root]],
 ] as const) {
   test(`Pi loads ${name} in isolation without extension errors`, (t) => {
@@ -147,12 +161,7 @@ test("Git package loads with production-only workspace dependencies", (t) => {
   const dir = mkdtempSync(join(tmpdir(), "pi-kits-production-"));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
   const checkout = join(dir, "checkout");
-  for (const entry of [
-    "package.json",
-    "package-lock.json",
-    "packages",
-    "themes",
-  ]) {
+  for (const entry of ["package.json", "package-lock.json", "packages"]) {
     cpSync(join(root, entry), join(checkout, entry), {
       recursive: true,
       filter: (path) => basename(path) !== "node_modules",

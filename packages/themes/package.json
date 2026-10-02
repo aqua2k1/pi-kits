@@ -1,0 +1,16 @@
+{
+  "name": "pi-kits-themes",
+  "version": "0.1.0",
+  "private": true,
+  "keywords": [
+    "pi-package"
+  ],
+  "pi": {
+    "themes": [
+      "./gruvbox.json"
+    ]
+  },
+  "files": [
+    "gruvbox.json"
+  ]
+}

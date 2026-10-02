@@ -19,7 +19,7 @@
       "./packages/web-kit/index.ts"
     ],
     "themes": [
-      "./themes/gruvbox.json"
+      "./packages/themes/gruvbox.json"
     ]
   },
   "peerDependencies": {
