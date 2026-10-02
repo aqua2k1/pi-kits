@@ -16,7 +16,7 @@ Requires Pi and Node.js >= 22.19.
 | --- | --- |
 | [workspace-kit](packages/workspace-kit/README.md) | nvim, lazygit, yazi, open files/URLs, reply and request previews |
 | [usage-kit](packages/usage-kit/README.md) | Provider usage and token/cost reports |
-| [workflow-kit](packages/workflow-kit/README.md) | Conventional Commits and desktop notifications |
+| [workflow-kit](packages/workflow-kit/README.md) | Conventional Commits, desktop notifications, and user questions |
 | [web-kit](packages/web-kit/README.md) | Web search and web/GitHub fetching |
 
 Select `gruvbox` in `/settings`. Toggle resources with `pi config`.

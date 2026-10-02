@@ -48,6 +48,7 @@ export const PI_KITS_SCHEMA = Type.Object(
     }),
     workflow: section({
       enabled,
+      askUserQuestion: feature(),
       commit: section({
         enabled,
         model: Type.Optional(text()),

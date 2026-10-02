@@ -23,6 +23,7 @@
   },
   "workflow": {
     "enabled": true,
+    "askUserQuestion": { "enabled": true },
     "commit": {
       "enabled": true,
       "timeoutMs": 120000,

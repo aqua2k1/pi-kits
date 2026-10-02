@@ -11,19 +11,24 @@
     "README.md"
   ],
   "exports": {
-    "./notifications": "./src/lib/notifications/index.ts"
+    "./notifications": "./src/lib/notifications/index.ts",
+    "./ui/tabs": "./src/lib/ui/tabs.ts",
+    "./ui/panel": "./src/lib/ui/panel.ts",
+    "./ui/docked-panel": "./src/lib/ui/docked-panel/index.ts"
   },
   "scripts": {
-    "test": "tsx --test src/extensions/commit/*.test.ts src/extensions/notify/*.test.ts src/lib/notifications/*.test.ts"
+    "test": "tsx --test src/extensions/ask-user-question/*.test.ts src/extensions/commit/*.test.ts src/extensions/notify/*.test.ts src/lib/notifications/*.test.ts src/lib/ui/*.test.ts"
   },
   "peerDependencies": {
     "@earendil-works/pi-coding-agent": "*",
-    "@earendil-works/pi-tui": "*"
+    "@earendil-works/pi-tui": "*",
+    "typebox": "*"
   },
   "pi": {
     "extensions": [
       "./src/extensions/commit/index.ts",
-      "./src/extensions/notify/index.ts"
+      "./src/extensions/notify/index.ts",
+      "./src/extensions/ask-user-question/index.ts"
     ]
   },
   "private": true,

@@ -121,6 +121,16 @@
           "type": "boolean",
           "default": true
         },
+        "askUserQuestion": {
+          "type": "object",
+          "properties": {
+            "enabled": {
+              "type": "boolean",
+              "default": true
+            }
+          },
+          "additionalProperties": false
+        },
         "commit": {
           "type": "object",
           "properties": {

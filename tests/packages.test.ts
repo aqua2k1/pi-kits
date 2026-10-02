@@ -53,7 +53,7 @@ function smoke(paths: readonly string[], agentDir: string): string {
   return child.stdout;
 }
 
-test("four kits explicitly declare nine independent runtime entries", () => {
+test("four kits explicitly declare ten independent runtime entries", () => {
   const entries: string[] = [];
   for (const kit of kits) {
     const dir = join(root, "packages", `${kit}-kit`);
@@ -83,8 +83,8 @@ test("four kits explicitly declare nine independent runtime entries", () => {
     }
     assert.equal(manifest.dependencies["@pi-kits/config"], "0.1.0");
   }
-  assert.equal(entries.length, 9);
-  assert.equal(new Set(entries).size, 9);
+  assert.equal(entries.length, 10);
+  assert.equal(new Set(entries).size, 10);
   const repository = JSON.parse(
     readFileSync(join(root, "package.json"), "utf8"),
   );

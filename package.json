@@ -16,6 +16,7 @@
       "./packages/usage-kit/src/extensions/stats/index.ts",
       "./packages/workflow-kit/src/extensions/commit/index.ts",
       "./packages/workflow-kit/src/extensions/notify/index.ts",
+      "./packages/workflow-kit/src/extensions/ask-user-question/index.ts",
       "./packages/web-kit/index.ts"
     ],
     "themes": [

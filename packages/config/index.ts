@@ -130,6 +130,9 @@ export function resolvePiKitsConfig(raw: PiKitsFileConfig = {}) {
     },
     workflow: {
       enabled: raw.workflow?.enabled ?? true,
+      askUserQuestion: {
+        enabled: raw.workflow?.askUserQuestion?.enabled ?? true,
+      },
       commit: {
         enabled: raw.workflow?.commit?.enabled ?? true,
         model: raw.workflow?.commit?.model,
