@@ -1,18 +1,15 @@
+import type { Static } from "typebox";
+import type { FetchSourceSchema, FetchTruncationSchema } from "../schema.ts";
 import type { FetchLike } from "../shared/http.ts";
 
-export type FetchSource = "native-http" | "github-gh" | "github-clone";
+export type FetchSource = Static<typeof FetchSourceSchema>;
 
 export interface FetchRequest {
   readonly url: URL;
   readonly raw: boolean;
 }
 
-export interface FetchTruncation {
-  readonly totalBytes: number;
-  readonly outputBytes: number;
-  readonly totalLines?: number;
-  readonly outputLines?: number;
-}
+export type FetchTruncation = Readonly<Static<typeof FetchTruncationSchema>>;
 
 export interface FetchResponse {
   readonly text: string;

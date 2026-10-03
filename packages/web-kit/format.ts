@@ -1,19 +1,9 @@
 import { WebSearchError } from "./core/errors.ts";
-import type {
-  RoutedSearchResponse,
-  SearchResult,
-  WebSearchProviderName,
-} from "./core/types.ts";
+import type { RoutedSearchResponse } from "./core/types.ts";
+import type { SearchDetails, SearchMachineOutput } from "./schema.ts";
 import { MAX_OUTPUT_BYTES } from "./shared/limits.ts";
 
-export interface SearchDetails {
-  query: string;
-  backend: WebSearchProviderName;
-  resultCount: number;
-  results: SearchResult[];
-  hasSummary: boolean;
-  truncated?: boolean;
-}
+export type { SearchDetails } from "./schema.ts";
 
 function markdownText(text: string): string {
   return text.replace(/([\\`*_[\]<>])/g, "\\$1");
@@ -23,6 +13,7 @@ function markdownText(text: string): string {
 export function buildSearchOutput(response: RoutedSearchResponse): {
   content: { type: "text"; text: string }[];
   details: SearchDetails;
+  structuredContent: SearchMachineOutput;
 } {
   const results = response.results.map((result) => ({ ...result }));
   let truncated = Boolean(response.truncated);
@@ -46,18 +37,23 @@ export function buildSearchOutput(response: RoutedSearchResponse): {
       sections.push(`No results found for "${markdownText(response.query)}".`);
     if (truncated)
       sections.push("[Output truncated; omitted provider data was not saved.]");
+    const details: SearchDetails = {
+      query: response.query,
+      backend: response.provider,
+      resultCount: results.length,
+      results: results.map((result) => ({ ...result })),
+      hasSummary: Boolean(response.summary),
+      ...(truncated ? { truncated: true } : {}),
+    };
     const output = {
       content: [{ type: "text" as const, text: sections.join("\n\n") }],
-      details: {
-        query: response.query,
-        backend: response.provider,
-        resultCount: results.length,
-        results: results.map((result) => ({ ...result })),
-        hasSummary: Boolean(response.summary),
-        ...(truncated ? { truncated: true } : {}),
+      details,
+      structuredContent: {
+        ...details,
+        ...(response.summary ? { summary: response.summary } : {}),
       },
     };
-    // Include details and JSON escaping in the budget, not just visible text.
+    // Budget every serialized copy, including machine data and JSON escaping.
     if (
       Buffer.byteLength(JSON.stringify(output)) <= MAX_OUTPUT_BYTES &&
       output.content[0].text.split("\n").length <= 2_000

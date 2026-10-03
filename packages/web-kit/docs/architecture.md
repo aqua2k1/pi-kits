@@ -33,6 +33,7 @@ Pi host
 Boundary
 ├── config.ts       -> @pi-kits/config, web.search/web.fetch resolution
 ├── composition.ts  -> lazy search/fetch assembly
+├── schema.ts       -> pure TypeBox schemas and derived output/response types
 └── fetch/format.ts -> bounded preview and local path metadata
 
 Search
@@ -62,8 +63,8 @@ Shared
 web_fetch(url, raw)
 ├─ startup snapshot (readConfigSnapshot + resolveConfig)
 ├─ fetchWeb(request, config.fetch, runtime, signal)
+│  ├─ normalizeFetchRequest()
 │  └─ WebFetchRouter.fetch()
-│     ├─ normalizeFetchRequest()
 │     ├─ GitHubHandler.fetch()
 │     │  ├─ parseGitHubUrl()
 │     │  ├─ mode=api -> gh api
@@ -74,10 +75,11 @@ web_fetch(url, raw)
 │        ├─ Node global fetch() with Chrome-style HTTP headers
 │        ├─ follow redirects
 │        ├─ stream response into bounded spool
-│        └─ decodeDocument()
+│        ├─ decodeDocument()
+│        └─ saveText() -> content.txt; remove response.bin
 ├─ save final logical text as content.txt
 ├─ buildFetchOutput()
-└─ return content + details
+└─ return content + details + structuredContent
 ```
 
 ## Native HTTP
@@ -88,6 +90,7 @@ checks the status, and streams the response body to a temporary file. A
 response body larger than 50 MiB is cancelled. The transport remains Node's
 HTTP stack; these headers do not change its TLS or HTTP/2 fingerprint.
 
+Binary HTTP responses are rejected as unsupported, including with `raw: true`.
 The body is decoded as text, JSON, XML or HTML. HTML extraction removes script,
 style, noscript and template blocks, extracts the title, converts block tags to
 line breaks, and decodes entities. JavaScript is never executed.
@@ -101,13 +104,18 @@ A successful text operation creates:
 ```
 
 The file contains the final logical content that corresponds to the tool result.
-`raw: true` stores raw decoded text; normal HTML fetches store extracted text.
+For ordinary HTTP, `raw: true` stores decoded response text; normal HTML fetches
+store extracted text. GitHub repository handlers ignore `raw` and keep their
+repository-specific text rendering.
 The model receives a small inline result for short content and a preview plus
 `fullOutputPath` for larger content.
 
-The raw response is first streamed through a bounded `response.bin` and is then
-converted to `content.txt`; the intermediate file is removed. Failed or
-cancelled operations remove the directory. Expired spool cleanup is owned by
+For native HTTP, the raw response is first streamed through a bounded
+`response.bin` and is then converted to `content.txt`; the intermediate file is
+removed. GitHub-generated
+text goes directly through `saveText()` to `content.txt`, without streaming a
+network body into `response.bin`. Failed or cancelled operations remove the
+directory. Expired spool cleanup is owned by
 extension startup rather than detached from individual fetch requests.
 
 ## GitHub strategy
@@ -128,7 +136,10 @@ threshold are never cloned: GitHub code-content handling is API-only, with
 ordinary native HTTP still available when the GitHub API cannot serve the URL.
 The clone is cached under a hashed key so owner, repository and ref cannot create arbitrary
 local paths. The repository path is returned as `repositoryPath`; generated
-tree or file content is also saved to `content.txt`.
+tree or file content is also saved to `content.txt`. Both API and clone paths
+render roots/trees as listings (with README content for roots), and blobs as file
+text. Binary files produce a textual description rather than raw binary output;
+this differs from unsupported binary native HTTP responses.
 
 The clone does not recurse into submodules, install dependencies, run hooks,
 or execute repository files. A clone timeout, missing command or failed clone
@@ -136,6 +147,64 @@ for an eligible repository can fall back to API access. `mode=api` never clones.
 
 `gh` owns GitHub authentication. The extension invokes `gh` and `git` with
 argument arrays and `shell: false`; tokens are not placed in arguments.
+
+## Machine output contract
+
+`schema.ts` defines separate TypeBox schemas/types for legacy `SearchDetails`
+and `FetchDetails` and meaningful `SearchMachineOutput` and `FetchMachineOutput`.
+Machine schemas reuse the metadata properties and add content-bearing fields;
+search result fields, fetch source enums and truncation types are also derived
+with `Static` to avoid parallel shape drift. This is a pure helper, not an
+extension entry point. Enums use Pi's `StringEnum` for provider compatibility
+rather than literal unions/`anyOf`.
+
+The formatters retain legacy details and render model-facing text, then return
+machine data as `structuredContent`. `index.ts` declares the corresponding
+`outputSchema`. Pi codemode's `toScriptValue()` returns only `structuredContent`,
+not `content` or `details`, so machine output includes actual search summaries
+and fetch text. Failures remain classified thrown errors; there is no new error
+envelope. Progress updates are still text-only, with `details: undefined`.
+
+Search machine data contains `query`, `backend`, `resultCount`, `results`
+(`title`, `url`, `snippet`), `hasSummary`, optional `truncated`, and optional
+`summary`. Summary text is the provider's sanitized, bounded summary (currently
+limited to 4,000 UTF-8 bytes), without display-only Markdown escaping. The
+legacy details retain only `hasSummary`; no summary field is added there. Counts
+match returned results, including no-results and summary-only output.
+
+Search budgets the entire serialized return object, including all text, details
+and machine copies and JSON-escaped UTF-8, within 50 KiB and the existing visible
+line limit. It omits results until the return fits, marking both metadata copies
+as truncated. Omitted search data is not saved. If the remaining summary/query
+alone cannot fit, the existing classified `invalid-response` policy applies.
+
+Fetch machine data contains `url`, `finalUrl`, `source` (`native-http`,
+`github-gh`, `github-clone`), `fullOutputPath`, and optional `title`,
+`contentType`, `contentLength`, `repositoryPath`, `truncation`, `expiresAt`, plus
+`text` and `isPreview`. `text` contains the decoded/rendered saved logical text
+for small results, or a UTF-8-safe preview bounded to 8 KiB / 2,000 lines.
+The formatter counts the full serialized return toward 50 KiB, shortening both
+visible and machine previews further if JSON escaping or metadata consumes the
+budget. Metadata is not silently changed; if metadata alone cannot fit, a
+classified `invalid-response` is thrown.
+
+`isPreview` is true if machine text omits saved content **or** upstream/content
+limiting already capped the saved artifact. False means the returned text covers
+the stored logical artifact without reported upstream truncation; it does not
+mean raw bytes, complete repository coverage or a rendered browser page.
+Truncation carries `totalBytes`, `outputBytes`, and optional `totalLines` and
+`outputLines`. It describes upstream/stored-content limiting, not simply a
+short inline preview: a preview can omit content without a `truncation` field.
+`expiresAt` is a timestamp string for the spool, not the clone cache.
+`fullOutputPath` points to all saved logical text, which may already be bounded;
+it is never a promise that the original source was saved in full.
+
+Both public URL fields are the same final redacted URL, never a new requested-URL
+field: native HTTP supplies `response.url` after redirects (or the normalized
+request URL if absent), while GitHub's `storeResponse()` supplies the handler's
+request URL. The router passes that provenance through unchanged. Only the
+output formatter removes credentials/fragments and redacts sensitive query
+values; `url` is retained as a compatibility alias of `finalUrl`.
 
 ## Configuration and boundaries
 

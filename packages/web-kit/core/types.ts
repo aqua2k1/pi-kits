@@ -1,3 +1,6 @@
+import type { Static } from "typebox";
+import type { SearchResultSchema } from "../schema.ts";
+
 export const WEB_SEARCH_PROVIDER_NAMES = [
   "searxng",
   "codex-alpha-search",
@@ -12,11 +15,7 @@ export interface SearchRequest {
   readonly recencyDays?: number;
 }
 
-export interface SearchResult {
-  readonly title: string;
-  readonly url: string;
-  readonly snippet: string;
-}
+export type SearchResult = Readonly<Static<typeof SearchResultSchema>>;
 
 /** Providers return sanitized, bounded data, never their raw wire response. */
 export interface SearchResponse {

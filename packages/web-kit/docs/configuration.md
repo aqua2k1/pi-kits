@@ -83,6 +83,29 @@ export SEARXNG_URL="http://localhost:8080"
 export SEARXNG_API_KEY="..."
 ```
 
+## Tool parameters
+
+`web_search.max_results` is optional. Its registered schema `default` and runtime
+omission behavior both use the resolved startup `web.search.maxResults` value
+(including nondefault values); an explicit count overrides it for that call.
+The optional `provider` selects the primary provider only. Configured fallback
+still applies to eligible failures; it is not forced or disabled by that field.
+The `codex` configuration/command alias remains supported; tool parameters use
+the canonical provider names.
+
+Queries must contain a non-whitespace character. Domain filters are hostnames,
+not URLs or paths: `example.com` and `*.example.com` are supported; normalization
+trims whitespace, lowercases and deduplicates them, and checks hostname labels
+and normalized length. The declarative schema retains string/count bounds but
+intentionally does not duplicate that normalization/parser with a second regex.
+`recency_days` is provider-dependent best effort, not a strict publication-date
+guarantee.
+
+Fetch URL schema validation checks an HTTP(S) scheme and allows surrounding
+whitespace and uppercase schemes. Runtime trimming and URL parsing remain the
+authority, including rejection of credential-bearing URLs. This modest pattern
+is not a URL parser or SSRF policy.
+
 ## Fetch settings
 
 | Path | Type | Default | Meaning |
@@ -169,10 +192,29 @@ execute repository code.
 
 - Small content is returned inline.
 - Large content returns a short preview and `fullOutputPath`.
-- Inline output is limited to 50 KiB / 2,000 lines.
-- `raw: false` extracts readable text from HTML.
-- `raw: true` preserves decoded raw text.
+- Serialized tool output is limited to 50 KiB, including all machine/text/details
+  copies and JSON escaping; fetch text previews are at most 8 KiB / 2,000 lines.
+- For ordinary HTTP, `raw: false` extracts readable text from HTML.
+- For ordinary HTTP, `raw: true` preserves decoded response text, not bytes.
+- Binary ordinary HTTP responses are unsupported regardless of `raw`.
+- GitHub repository rendering is unchanged by `raw`: listings/README/file text
+  or a textual binary-file description are saved, not raw binary data.
 - JavaScript is never executed.
+
+Both tools declare typed `outputSchema` and return meaningful `structuredContent`
+for codemode callers, who receive only that machine value. Search adds optional
+sanitized summary text, and fetch adds bounded `text` and `isPreview`; legacy
+details retain their original fields. `isPreview` is true for a short preview or
+when upstream limiting capped the stored artifact, so `fullOutputPath` does not
+promise the original document is complete. Fetch `url` is a compatibility alias
+of `finalUrl`; both contain the final redacted handler URL, not the original
+requested URL. See the [machine output contract](architecture.md#machine-output-contract)
+for all fields and budget behavior.
+
+Native HTTP streams a bounded `response.bin` before decoding/extraction and
+saving `content.txt`, then removes the intermediate file. GitHub-generated text
+is saved directly to `content.txt`. A preview does not mean the saved content
+was truncated; optional truncation metadata describes upstream/content limits.
 
 ## Security assumption
 

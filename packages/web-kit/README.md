@@ -19,7 +19,7 @@ Pi-provided peers
 web_fetch
   -> ordinary URL: Node fetch / Undici
   -> GitHub repository URL: gh api or shallow clone
-  -> text extraction
+  -> ordinary HTTP: decode/extract text; GitHub: render repository text
   -> /tmp/pi-web-fetch-*/content.txt
   -> inline content or preview + fullOutputPath
 ```
@@ -27,7 +27,14 @@ web_fetch
 Successful textual results are always saved to a temporary `content.txt`. The
 final text is limited to 50 MiB. Small results are returned inline; larger
 results include a short preview and a path that the model can pass to `read`.
-Temporary files expire after the configured cleanup period.
+Temporary files expire after the fixed temporary-file TTL (currently 24 hours).
+
+For ordinary HTTP, `raw: true` preserves decoded response text instead of HTML
+extraction; binary HTTP responses remain unsupported. GitHub repository handling
+is unchanged by `raw`: roots/trees render listings and README content, blobs
+render file text, and binary files produce a textual description, not raw bytes.
+HTTP responses stream through a bounded `response.bin` before conversion to
+`content.txt`; GitHub-generated text is saved directly to `content.txt`.
 
 GitHub repository URLs can also return `repositoryPath`, pointing at a local
 shallow clone. The extension never installs dependencies, runs repository
@@ -42,6 +49,7 @@ URLs or fetched content.
 
 ```text
 index.ts                    Pi tools and output boundary
+schema.ts                   typed machine-output contracts (pure helper)
 commands.ts                 /web-tools diagnostics
 composition.ts              lazy search/fetch assembly
 config.ts                   search/fetch configuration resolution
@@ -174,6 +182,33 @@ configuration.
 
 The command is read-only. It reports search and fetch settings without printing
 keys, tokens, or command stderr.
+
+## Machine output
+
+Both tools declare `outputSchema` and return meaningful `structuredContent` for
+codemode callers, who receive only that value, not Markdown `content` or UI
+`details`. Legacy details keep their original fields. Errors still throw
+classified exceptions, not success-shaped error envelopes.
+
+- Search: `query`, `backend`, `resultCount`, `results` (title/URL/snippet),
+  `hasSummary`, optional `truncated`, and optional sanitized, bounded `summary`
+  text. Summary-only searches therefore retain their answer in machine output.
+  Omitted provider data is not saved.
+- Fetch: metadata plus bounded `text` and an explicit `isPreview` flag. Small
+  results contain decoded/rendered text; larger results contain a preview.
+  `isPreview` is also true when upstream limiting capped the saved artifact:
+  `fullOutputPath` points to saved logical text, not necessarily the complete
+  original document. Consult optional `truncation` for reported limits.
+  **Both `url` and `finalUrl` are the final redacted URL** reported by the chosen
+  handler, not the original request URL. `url` remains a compatibility alias.
+
+Both formatters budget the complete serialized return object, including machine
+data, legacy details, visible text, UTF-8 and JSON escaping, within 50 KiB.
+Search can omit additional results and fetch can shorten previews to fit.
+
+See [architecture](docs/architecture.md#machine-output-contract) for truncation
+and URL provenance, and [configuration](docs/configuration.md#tool-parameters)
+for parameter defaults and validation.
 
 ## Tool guidance
 
