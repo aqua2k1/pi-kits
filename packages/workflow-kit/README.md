@@ -235,6 +235,10 @@ if cancellation does not settle within five seconds, the terminal is destroyed.
 Parent session shutdown/reload cleans up owned workers and views. Workers share
 the filesystem and credentials and are not a sandbox. They start with
 `--no-approve`, so trust-gated project resources are not loaded automatically.
+Workers also use `--no-extensions` and load only the worker bridge explicitly;
+parent/user extensions, including custom tools and permission extensions, are
+not inherited. This prevents unrelated or older installed extensions from
+blocking worker startup.
 
 The worker bridge uses authenticated loopback TCP JSONL, not terminal screen
 parsing. Command frames and returned results are bounded to 64 KiB; truncated

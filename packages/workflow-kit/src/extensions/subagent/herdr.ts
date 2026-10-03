@@ -42,6 +42,13 @@ export class HerdrError extends Error {
   }
 }
 
+function isNotFound(error: unknown): boolean {
+  return (
+    error instanceof HerdrError &&
+    ["not_found", "pane_not_found", "workspace_not_found"].includes(error.code)
+  );
+}
+
 export const runHerdr: HerdrRunner = (binary, argv, options) =>
   new Promise((resolve, reject) => {
     execFile(
@@ -237,7 +244,7 @@ export class HerdrAdapter implements MuxAdapter {
         actual.workspaceId === expected.workspaceId
       );
     } catch (error) {
-      if (error instanceof HerdrError && error.code === "not_found") {
+      if (isNotFound(error)) {
         return false;
       }
       throw error;
@@ -261,7 +268,7 @@ export class HerdrAdapter implements MuxAdapter {
       // Neither is permission to close its new location or forget ownership.
       throw new HerdrError("terminal_not_stopped");
     } catch (error) {
-      if (!(error instanceof HerdrError && error.code === "not_found")) {
+      if (!isNotFound(error)) {
         throw error;
       }
     }
@@ -291,7 +298,7 @@ export class HerdrAdapter implements MuxAdapter {
         worker.workspaceId,
       ]);
     } catch (error) {
-      if (!(error instanceof HerdrError && error.code === "not_found")) {
+      if (!isNotFound(error)) {
         throw error;
       }
       await this.confirmStopped(worker);

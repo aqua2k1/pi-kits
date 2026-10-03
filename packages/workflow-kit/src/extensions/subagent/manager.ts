@@ -302,6 +302,7 @@ export class SubagentManager {
       void ready.catch(() => undefined);
       const argv = [
         this.options.executable ?? "pi",
+        "--no-extensions",
         "--no-approve",
         "--session-id",
         `subagent-${record.snapshot.id}`,

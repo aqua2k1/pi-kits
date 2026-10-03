@@ -522,6 +522,34 @@ test("changed terminal identity is never closed; inspect reports false", async (
   assert.equal(fake.commands("workspace", "close").length, 0);
 });
 
+test("Herdr 0.9 missing pane/workspace codes allow idempotent cleanup", async (t) => {
+  environment(t);
+  const fake = new FakeHerdr();
+  fake.intercept = (argv) => {
+    if (argv[0] === "pane" && argv[1] === "get" && !fake.panes.has(argv[2])) {
+      return failure("pane_not_found");
+    }
+    if (
+      argv[0] === "pane" &&
+      argv[1] === "list" &&
+      argv[2] === "--workspace" &&
+      ![...fake.panes.values()].some((pane) => pane.workspace_id === argv[3])
+    ) {
+      return failure("workspace_not_found");
+    }
+  };
+  const adapter = fake.adapter();
+  const terminal = await adapter.start(startOptions);
+  const view = await adapter.open_view({ terminal, direction: "right" });
+  fake.panes.delete("parent:p2");
+  await adapter.close_view(view);
+  fake.panes.delete("worker1:p1");
+  assert.deepEqual(await adapter.inspect(terminal), { alive: false });
+  await adapter.destroy(terminal);
+  assert.ok(fake.panes.has("parent:p1"));
+  assert.ok(fake.panes.has("external:p1"));
+});
+
 test("inspect handles missing panes but does not hide server errors", async (t) => {
   environment(t);
   const fake = new FakeHerdr();
