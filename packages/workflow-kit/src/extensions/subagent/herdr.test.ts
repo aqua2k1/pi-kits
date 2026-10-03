@@ -105,7 +105,7 @@ class FakeHerdr {
     }
     if (action === "split") {
       assert.equal(target, "--pane");
-      assert.equal(argv[3], "parent:p1");
+      assert.ok(this.panes.has(argv[3]));
       const pane = info(`parent:p${this.nextView++}`, "parent");
       this.panes.set(pane.pane_id, pane);
       return ok({ pane });
@@ -228,7 +228,7 @@ test("open/focus/close view only affects the new attachment pane", async (t) => 
   const fake = new FakeHerdr();
   const adapter = fake.adapter();
   const terminal = await adapter.start(startOptions);
-  const view = await adapter.open_view({ terminal, direction: "down" });
+  const view = await adapter.open_view({ terminal, direction: "right" });
   assert.deepEqual(Object.keys(view), ["id"]);
   assert.deepEqual(fake.commands("pane", "split"), [
     [
@@ -237,7 +237,7 @@ test("open/focus/close view only affects the new attachment pane", async (t) => 
       "--pane",
       "parent:p1",
       "--direction",
-      "down",
+      "right",
       "--cwd",
       startOptions.cwd,
       "--no-focus",
@@ -245,7 +245,7 @@ test("open/focus/close view only affects the new attachment pane", async (t) => 
   ]);
   await adapter.focus_view(view);
   assert.deepEqual(fake.commands("pane", "focus"), [
-    ["pane", "focus", "--pane", "parent:p1", "--direction", "down"],
+    ["pane", "focus", "--pane", "parent:p1", "--direction", "right"],
   ]);
   await adapter.close_view(view);
   assert.deepEqual(fake.commands("pane", "close"), [
@@ -259,13 +259,94 @@ test("open/focus/close view only affects the new attachment pane", async (t) => 
   await assert.rejects(adapter.close_view(view), code("unowned_view"));
 });
 
+test("adapter executes the shared placement instruction without choosing layout", async (t) => {
+  environment(t);
+  const fake = new FakeHerdr();
+  const adapter = fake.adapter();
+  const terminal = await adapter.start(startOptions);
+  const first = await adapter.open_view({ terminal, direction: "right" });
+  const second = await adapter.open_view({
+    terminal,
+    direction: "down",
+    relativeTo: first,
+  });
+  await adapter.open_view({ terminal, direction: "down", relativeTo: second });
+  assert.deepEqual(
+    fake.commands("pane", "split").map((argv) => [argv[3], argv[5]]),
+    [
+      ["parent:p1", "right"],
+      ["parent:p2", "down"],
+      ["parent:p3", "down"],
+    ],
+  );
+  assert.deepEqual(await adapter.inspect_view(first), { alive: true });
+  fake.panes.delete("parent:p2");
+  assert.deepEqual(await adapter.inspect_view(first), { alive: false });
+  await assert.rejects(
+    adapter.open_view({ terminal, direction: "down", relativeTo: first }),
+    code("view_not_alive"),
+  );
+  assert.equal(fake.commands("pane", "split").length, 3);
+});
+
+test("stacked attachments remain focusable after preceding panes close", async (t) => {
+  environment(t);
+  const fake = new FakeHerdr();
+  const adapter = fake.adapter();
+  const terminal = await adapter.start(startOptions);
+  const first = await adapter.open_view({ terminal, direction: "right" });
+  const second = await adapter.open_view({
+    terminal,
+    direction: "down",
+    relativeTo: first,
+  });
+  const third = await adapter.open_view({
+    terminal,
+    direction: "down",
+    relativeTo: second,
+  });
+  await adapter.close_view(second);
+  const neighbors = new Map([
+    ["parent:p1/right", "parent:p2"],
+    ["parent:p2/down", "parent:p4"],
+  ]);
+  fake.intercept = (argv) =>
+    argv[1] === "neighbor"
+      ? ok({
+          neighbor: {
+            neighbor_pane_id: neighbors.get(`${argv[3]}/${argv[5]}`),
+          },
+        })
+      : undefined;
+  await adapter.focus_view(third);
+  assert.deepEqual(fake.commands("pane", "focus").at(-1), [
+    "pane",
+    "focus",
+    "--pane",
+    "parent:p2",
+    "--direction",
+    "down",
+  ]);
+  await adapter.close_view(first);
+  neighbors.set("parent:p1/right", "parent:p4");
+  await adapter.focus_view(third);
+  assert.deepEqual(fake.commands("pane", "focus").at(-1), [
+    "pane",
+    "focus",
+    "--pane",
+    "parent:p1",
+    "--direction",
+    "right",
+  ]);
+});
+
 test("destroy closes its views and workspace, never the parent or outsiders", async (t) => {
   environment(t);
   const fake = new FakeHerdr();
   const adapter = fake.adapter();
   const terminal = await adapter.start(startOptions);
-  await adapter.open_view({ terminal, direction: "right" });
-  await adapter.open_view({ terminal, direction: "down" });
+  const first = await adapter.open_view({ terminal, direction: "right" });
+  await adapter.open_view({ terminal, direction: "down", relativeTo: first });
   await adapter.destroy(terminal);
   assert.deepEqual(fake.commands("workspace", "close"), [
     ["workspace", "close", "worker1"],
@@ -365,6 +446,7 @@ test("foreign and cross-instance handles are rejected without CLI calls", async 
   await assert.rejects(adapter.destroy(foreign), code("unowned_terminal"));
   await assert.rejects(adapter.close_view(foreign), code("unowned_view"));
   await assert.rejects(adapter.focus_view(foreign), code("unowned_view"));
+  await assert.rejects(adapter.inspect_view(foreign), code("unowned_view"));
   assert.equal(fake.calls.length, 0);
   const terminal = await adapter.start(startOptions);
   const calls = fake.calls.length;
@@ -584,7 +666,7 @@ test("outside Herdr and missing parent never start/attach implicitly", async (t)
   const terminal = await adapter.start(startOptions);
   delete process.env.HERDR_PANE_ID;
   await assert.rejects(
-    adapter.open_view({ terminal, direction: "down" }),
+    adapter.open_view({ terminal, direction: "right" }),
     code("missing_parent_pane"),
   );
   assert.equal(fake.commands("pane", "split").length, 0);

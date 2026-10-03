@@ -141,7 +141,8 @@ interface Worker {
 
 interface View extends Pane {
   workerId: string;
-  anchor: string;
+  parent: Pane;
+  anchor: Pane;
   direction: "right" | "down";
 }
 
@@ -426,21 +427,37 @@ export class HerdrAdapter implements MuxAdapter {
 
   private async openView(options: OpenViewOptions): Promise<ViewHandle> {
     const worker = this.worker(options.terminal);
-    if (options.direction !== "right" && options.direction !== "down") {
-      throw new HerdrError("invalid_direction");
+    if (
+      !(
+        (options.direction === "down" && options.relativeTo) ||
+        (options.direction === "right" && !options.relativeTo)
+      )
+    ) {
+      throw new HerdrError("invalid_placement");
     }
-    const anchor = process.env.HERDR_PANE_ID;
-    if (!anchor) throw new HerdrError("missing_parent_pane");
-    identifier(anchor);
+    const relativeView = options.relativeTo
+      ? this.view(options.relativeTo)
+      : undefined;
+    const parentId = process.env.HERDR_PANE_ID;
+    if (!parentId) throw new HerdrError("missing_parent_pane");
+    identifier(parentId);
     if (!(await this.matches(this.workerPane(worker)))) {
       throw new HerdrError("terminal_not_alive");
     }
-    const parent = pane((await this.command(["pane", "get", anchor])).pane);
+    const parent = pane((await this.command(["pane", "get", parentId])).pane);
+    if (parent.paneId !== parentId) throw new HerdrError("invalid_response");
+    const anchor: Pane = relativeView ?? parent;
+    if (
+      anchor.workspaceId !== parent.workspaceId ||
+      !(await this.matches(anchor))
+    ) {
+      throw new HerdrError("view_not_alive");
+    }
     const result = await this.command([
       "pane",
       "split",
       "--pane",
-      anchor,
+      anchor.paneId,
       "--direction",
       options.direction,
       "--cwd",
@@ -449,7 +466,7 @@ export class HerdrAdapter implements MuxAdapter {
     ]);
     const attachment = pane(result.pane);
     if (
-      attachment.paneId === anchor ||
+      attachment.paneId === anchor.paneId ||
       attachment.paneId === worker.paneId ||
       attachment.workspaceId !== parent.workspaceId
     ) {
@@ -459,7 +476,12 @@ export class HerdrAdapter implements MuxAdapter {
     this.views.set(handle.id, {
       ...attachment,
       workerId: options.terminal.id,
-      anchor,
+      parent,
+      anchor: {
+        paneId: anchor.paneId,
+        terminalId: anchor.terminalId,
+        workspaceId: anchor.workspaceId,
+      },
       direction: options.direction,
     });
     try {
@@ -488,6 +510,10 @@ export class HerdrAdapter implements MuxAdapter {
     }
   }
 
+  async inspect_view(handle: ViewHandle): Promise<{ alive: boolean }> {
+    return { alive: await this.matches(this.view(handle)) };
+  }
+
   focus_view(handle: ViewHandle): Promise<void> {
     return this.serialize(() => this.focusView(handle));
   }
@@ -495,12 +521,44 @@ export class HerdrAdapter implements MuxAdapter {
   private async focusView(handle: ViewHandle): Promise<void> {
     const view = this.view(handle);
     if (!(await this.matches(view))) throw new HerdrError("view_not_alive");
-    const argv = ["--pane", view.anchor, "--direction", view.direction];
-    const result = await this.command(["pane", "neighbor", ...argv]);
-    if (object(result.neighbor).neighbor_pane_id !== view.paneId) {
-      throw new HerdrError("view_layout_changed");
+    const routes = [
+      { anchor: view.anchor, direction: view.direction },
+      ...[view.parent, ...this.views.values()].flatMap((anchor) =>
+        ["right", "down", "up", "left"].map((direction) => ({
+          anchor,
+          direction,
+        })),
+      ),
+    ];
+    // The original anchor may have closed. Find a verified neighboring route
+    // from the parent or another owned attachment, never focus blindly.
+    for (const route of routes) {
+      if (
+        route.anchor.paneId === view.paneId ||
+        route.anchor.workspaceId !== view.workspaceId ||
+        !(await this.matches(route.anchor))
+      ) {
+        continue;
+      }
+      const argv = [
+        "--pane",
+        route.anchor.paneId,
+        "--direction",
+        route.direction,
+      ];
+      let result: JsonObject;
+      try {
+        result = await this.command(["pane", "neighbor", ...argv]);
+      } catch (error) {
+        if (isNotFound(error)) continue;
+        throw error;
+      }
+      if (object(result.neighbor).neighbor_pane_id === view.paneId) {
+        await this.command(["pane", "focus", ...argv]);
+        return;
+      }
     }
-    await this.command(["pane", "focus", ...argv]);
+    throw new HerdrError("view_layout_changed");
   }
 
   close_view(handle: ViewHandle): Promise<void> {

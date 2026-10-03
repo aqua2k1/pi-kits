@@ -64,7 +64,6 @@ interface AgentRecord {
   rejectReady?: (error: Error) => void;
   cancelTimer?: ReturnType<typeof setTimeout>;
   terminating?: Promise<void>;
-  viewQueue: Promise<void>;
 }
 
 export interface ManagerOptions {
@@ -84,6 +83,8 @@ const terminalStatus = (status: AgentStatus) =>
 export class SubagentManager {
   private readonly records = new Map<string, AgentRecord>();
   private readonly listeners = new Set<() => void>();
+  private readonly views = new Map<string, AgentRecord>();
+  private viewMutation: Promise<void> = Promise.resolve();
   private readonly queue: AgentRecord[] = [];
   private readonly sockets = new Set<Socket>();
   private readonly launches = new Set<Promise<void>>();
@@ -148,7 +149,6 @@ export class SubagentManager {
       waiters: 0,
       notified: false,
       finished: false,
-      viewQueue: Promise.resolve(),
       completion,
       resolve,
     };
@@ -210,22 +210,32 @@ export class SubagentManager {
     return this.snapshot(record);
   }
 
-  openView(id: string, direction: "right" | "down") {
+  openView(id: string) {
     const record = this.record(id);
-    return this.viewOperation(record, async () => {
+    return this.viewOperation(async () => {
       if (this.disposed) throw new Error("Subagent manager is closed.");
       if (!record.terminal) {
         throw new Error("Subagent terminal is not ready yet.");
       }
-      if (record.view) {
-        await this.adapter.focus_view(record.view);
-        return record.view;
+      const existing = await this.liveView(record);
+      if (existing) {
+        await this.adapter.focus_view(existing);
+        return existing;
       }
-      const view = await this.adapter.open_view({
-        terminal: record.terminal,
-        direction,
-      });
+      let relativeTo: ViewHandle | undefined;
+      for (const previous of [...this.views.values()].reverse()) {
+        relativeTo = await this.liveView(previous);
+        if (relativeTo) break;
+      }
+      // Layout policy belongs here, not in any adapter: first right of the
+      // parent, every subsequent view below the last surviving attachment.
+      const view = await this.adapter.open_view(
+        relativeTo
+          ? { terminal: record.terminal, direction: "down", relativeTo }
+          : { terminal: record.terminal, direction: "right" },
+      );
       record.view = view;
+      this.views.set(view.id, record);
       this.changed();
       return view;
     });
@@ -233,17 +243,31 @@ export class SubagentManager {
 
   closeView(id: string): Promise<void> {
     const record = this.record(id);
-    return this.viewOperation(record, async () => {
+    return this.viewOperation(async () => {
       if (!record.view) return;
       await this.adapter.close_view(record.view);
-      record.view = undefined;
-      this.changed();
+      this.forgetView(record);
     });
   }
 
-  private viewOperation<T>(record: AgentRecord, action: () => Promise<T>) {
-    const result = record.viewQueue.then(action);
-    record.viewQueue = result.then(
+  private forgetView(record: AgentRecord): void {
+    if (record.view) this.views.delete(record.view.id);
+    record.view = undefined;
+    this.changed();
+  }
+
+  private async liveView(record: AgentRecord): Promise<ViewHandle | undefined> {
+    if (record.view && !(await this.adapter.inspect_view(record.view)).alive) {
+      await this.adapter.close_view(record.view);
+      this.forgetView(record);
+    }
+    return record.view;
+  }
+
+  private viewOperation<T>(action: () => Promise<T>) {
+    // Different agents share one column, so serialize across all records.
+    const result = this.viewMutation.then(action);
+    this.viewMutation = result.then(
       () => undefined,
       () => undefined,
     );
@@ -400,7 +424,7 @@ export class SubagentManager {
     try {
       await this.adapter.destroy(terminal);
       record.terminal = undefined;
-      record.view = undefined;
+      this.forgetView(record);
       return true;
     } catch {
       // Retain ownership and the concurrency slot until cleanup can be retried.
@@ -414,7 +438,7 @@ export class SubagentManager {
     error?: string,
   ): Promise<void> {
     if (record.terminating) return record.terminating;
-    const operation = this.viewOperation(record, async () => {
+    const operation = this.viewOperation(async () => {
       if (await this.destroyTerminal(record)) {
         this.finish(record, status, error);
       } else if (!record.finished) {

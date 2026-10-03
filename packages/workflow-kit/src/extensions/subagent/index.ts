@@ -165,7 +165,7 @@ export function registerSubagents(
   );
 
   pi.registerCommand("subagent:views", {
-    description: "View/control a subagent: [id] [right|down|close|focus]",
+    description: "View/control a subagent: [id] [open|focus|close]",
     async handler(args, ctx) {
       if (ctx.mode !== "tui") {
         ctx.ui.notify("Subagent views require interactive Pi.", "error");
@@ -175,9 +175,7 @@ export function registerSubagents(
         const current = getManager(ctx);
         const tokens = args.trim().split(/\s+/).filter(Boolean);
         if (tokens.length > 2) {
-          throw new Error(
-            "Usage: /subagent:views [id] [right|down|close|focus]",
-          );
+          throw new Error("Usage: /subagent:views [id] [open|focus|close]");
         }
         let [id, action] = tokens;
         if (id) current.get(id);
@@ -198,14 +196,10 @@ export function registerSubagents(
         }
         if (!id) return;
         if (action === "close") await current.closeView(id);
-        else if (
-          action === "right" ||
-          action === "down" ||
-          action === "focus"
-        ) {
-          await current.openView(id, action === "down" ? "down" : "right");
+        else if (action === "open" || action === "focus") {
+          await current.openView(id);
         } else {
-          throw new Error("View action must be right, down, close, or focus.");
+          throw new Error("View action must be open, focus, or close.");
         }
       } catch (error) {
         ctx.ui.notify(

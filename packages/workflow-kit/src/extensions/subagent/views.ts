@@ -26,7 +26,7 @@ import {
   statusIcon,
 } from "./presentation.ts";
 
-export type ViewAction = "right" | "down" | "focus" | "close";
+export type ViewAction = "open" | "focus" | "close";
 export interface ViewChoice {
   agentId: string;
   action: ViewAction;
@@ -76,10 +76,7 @@ export class SubagentViewsPanel {
         { value: "close", label: "Close view · keep worker running" },
       ];
     }
-    return [
-      { value: "right", label: "Split right · native Pi control" },
-      { value: "down", label: "Split down · native Pi control" },
-    ];
+    return [{ value: "open", label: "Open view · automatic right-side stack" }];
   }
 
   cancel(): void {

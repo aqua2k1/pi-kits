@@ -222,9 +222,13 @@ environment, the entry registers no tools, hooks, or commands.
 | `steer_subagent` | Send guidance to a running task. |
 | `stop_subagent` | Cancel a queued or running task. |
 
-Use `/subagent:views [id] right|down` to open a view attached to an existing Pi
-terminal, on the right or below. The attached view allows inspection and control
-of that Pi terminal. Closing a view only detaches it; it does not kill the worker.
+Use `/subagent:views <id> open` to open a view attached to an existing Pi
+terminal. Placement is automatic: the first view opens right of the parent Pi,
+and each subsequent view opens below the last surviving view, forming a right-side
+column. There is no direction picker or right/down command argument. This policy
+belongs to the shared subagent manager and applies to every mux adapter; adapters
+only execute the supplied placement instruction. Concurrent opens are serialized
+across agents. Closing a view only detaches it; it does not kill the worker.
 Use `/subagent:views <id> close` to close an attachment from the parent Pi, or
 `focus` to focus an existing view. Running `/subagent:views` without arguments
 opens the shared lower-half docked panel with live Agents/Actions tabs; passing

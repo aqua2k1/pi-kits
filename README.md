@@ -48,8 +48,10 @@ no tools, hooks, or commands. There is no environment probing or fallback.
 `maxConcurrent` is an integer from 1 to 32 (default 4).
 
 Tools: `subagent`, `get_subagent_result`, `steer_subagent`, `stop_subagent`.
-`/subagent:views [id] right|down` opens a view attached to an existing Pi terminal
-for inspection and control; closing the view does not kill the worker.
+`/subagent:views [id] [open|focus|close]` manages views attached to existing Pi
+terminals for inspection and control. The shared manager places the first view
+right of the parent and subsequent views below the last surviving view; every
+adapter follows this policy. Closing a view does not kill the worker.
 Background tasks use Herdr's native Pi terminals plus a worker bridge, not a
 custom PTY. `worker.ts` is loaded only via explicit `-e`, never a package manifest
 entry. The first version supports general tasks with `model` and `thinking`

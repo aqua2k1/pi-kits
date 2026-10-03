@@ -54,6 +54,7 @@ function harness() {
       sockets.get(terminal.id)?.destroy();
     },
     open_view: async () => ({ id: "view" }),
+    inspect_view: async () => ({ alive: true }),
     focus_view: async () => undefined,
     close_view: async () => undefined,
   };
@@ -202,8 +203,8 @@ test("concurrent view operations create one attachment and close it completely",
   const { id } = manager.spawn(task);
   await until(() => mux.prompts.includes(id));
   const [first, second] = await Promise.all([
-    manager.openView(id, "right"),
-    manager.openView(id, "down"),
+    manager.openView(id),
+    manager.openView(id),
   ]);
   assert.deepEqual(first, second);
   assert.equal(opens, 1);

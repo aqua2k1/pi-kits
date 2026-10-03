@@ -5,6 +5,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import { SubagentManager } from "./manager.ts";
 import type {
   MuxAdapter,
+  OpenViewOptions,
   StartOptions,
   TerminalHandle,
   ViewHandle,
@@ -17,6 +18,8 @@ class FakeMux implements MuxAdapter {
   readonly destroyed: string[] = [];
   readonly closedViews: string[] = [];
   readonly focused: string[] = [];
+  readonly opened: OpenViewOptions[] = [];
+  readonly missingViews = new Set<string>();
   authenticate = true;
 
   check_env() {
@@ -69,11 +72,16 @@ class FakeMux implements MuxAdapter {
     this.sockets.get(handle.id)?.destroy();
   }
 
-  async open_view(options: {
-    terminal: TerminalHandle;
-    direction: "right" | "down";
-  }): Promise<ViewHandle> {
-    return { id: `view-${options.terminal.id}-${options.direction}` };
+  async open_view(options: OpenViewOptions): Promise<ViewHandle> {
+    this.opened.push(options);
+    return { id: `view-${options.terminal.id}-${this.opened.length}` };
+  }
+
+  async inspect_view(view: ViewHandle) {
+    return {
+      alive:
+        !this.missingViews.has(view.id) && !this.closedViews.includes(view.id),
+    };
   }
 
   async focus_view(view: ViewHandle) {
@@ -207,15 +215,86 @@ test("queue enforces concurrency and canceled queued tasks never start", async (
   assert.ok(!mux.started.some((start) => start.agentId === canceled.id));
 });
 
+test("shared manager lays out concurrent views right then down for every adapter", async (t) => {
+  const mux = new FakeMux();
+  const manager = new SubagentManager(mux);
+  t.after(() => manager.close());
+  const agents = Array.from({ length: 3 }, () => manager.spawn(task));
+  await until(() =>
+    agents.every(({ id }) => mux.commands.get(id)?.length === 1),
+  );
+  const [first, second, third] = await Promise.all(
+    agents.map(({ id }) => manager.openView(id)),
+  );
+  assert.deepEqual(mux.opened, [
+    { terminal: { id: agents[0].id }, direction: "right" },
+    { terminal: { id: agents[1].id }, direction: "down", relativeTo: first },
+    { terminal: { id: agents[2].id }, direction: "down", relativeTo: second },
+  ]);
+  await manager.openView(agents[0].id);
+  assert.equal(mux.opened.length, 3, "Focusing must not change stack order");
+  assert.deepEqual(mux.focused, [first.id]);
+  await manager.closeView(agents[1].id);
+  const reopened = await manager.openView(agents[1].id);
+  assert.deepEqual(mux.opened.at(-1), {
+    terminal: { id: agents[1].id },
+    direction: "down",
+    relativeTo: third,
+  });
+  await manager.closeView(agents[1].id);
+  mux.missingViews.add(third.id);
+  await manager.openView(agents[1].id);
+  assert.deepEqual(mux.opened.at(-1), {
+    terminal: { id: agents[1].id },
+    direction: "down",
+    relativeTo: first,
+  });
+  assert.equal(manager.get(agents[2].id).viewId, undefined);
+  assert.ok(mux.closedViews.includes(third.id));
+  assert.ok(mux.closedViews.includes(reopened.id));
+  await manager.closeView(agents[0].id);
+  await manager.closeView(agents[1].id);
+  await manager.openView(agents[2].id);
+  assert.deepEqual(mux.opened.at(-1), {
+    terminal: { id: agents[2].id },
+    direction: "right",
+  });
+});
+
+test("failed view creation does not occupy a slot or block other agents", async (t) => {
+  const mux = new FakeMux();
+  const manager = new SubagentManager(mux);
+  t.after(() => manager.close());
+  const first = manager.spawn(task);
+  const second = manager.spawn(task);
+  await until(() => mux.commands.get(second.id)?.length === 1);
+  const open = mux.open_view.bind(mux);
+  let fail = true;
+  mux.open_view = async (options) => {
+    if (fail) {
+      fail = false;
+      throw new Error("Split failed");
+    }
+    return open(options);
+  };
+  await assert.rejects(manager.openView(first.id), /Split failed/);
+  const view = await manager.openView(second.id);
+  await manager.openView(first.id);
+  assert.deepEqual(mux.opened, [
+    { terminal: { id: second.id }, direction: "right" },
+    { terminal: { id: first.id }, direction: "down", relativeTo: view },
+  ]);
+});
+
 test("view closure detaches without destroying the worker", async (t) => {
   const mux = new FakeMux();
   const manager = new SubagentManager(mux);
   t.after(() => manager.close());
   const { id } = manager.spawn(task);
   await until(() => mux.commands.get(id)?.length === 1);
-  const view = await manager.openView(id, "down");
+  const view = await manager.openView(id);
   assert.equal(manager.get(id).viewId, view.id);
-  await manager.openView(id, "right");
+  await manager.openView(id);
   assert.deepEqual(mux.focused, [view.id]);
   await manager.closeView(id);
   assert.equal(manager.get(id).viewId, undefined);

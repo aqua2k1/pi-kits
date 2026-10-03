@@ -99,17 +99,18 @@ function panel(source: Source, initialId?: string, rows = 24) {
   };
 }
 
-test("views uses shared docked frame, agent selection and right/down actions", () => {
+test("views uses shared docked frame and automatic open action without direction choices", () => {
   const source = new Source();
   source.agents = [agent("one"), agent("two")];
   const h = panel(source);
   assert.match(h.component.render(80).join("\n"), /Subagent views/);
   h.component.handleInput("\x1b[B");
   h.component.handleInput("\r");
-  assert.match(h.component.render(80).join("\n"), /Split right/);
-  h.component.handleInput("\x1b[B");
+  const actions = h.component.render(80).join("\n");
+  assert.match(actions, /Open view/);
+  assert.doesNotMatch(actions, /Split right|Split down/);
   h.component.handleInput("\r");
-  assert.deepEqual(h.result, { agentId: "two", action: "down" });
+  assert.deepEqual(h.result, { agentId: "two", action: "open" });
   h.component.dispose();
   h.component.dispose();
   assert.equal(source.listeners.size, 0);
@@ -187,9 +188,9 @@ test("mouse selects tabs and action rows using component-local coordinates", () 
     }) as TuiMouseEvent;
   h.component.handleMouse(click(actionsX + 1, 1));
   const actions = h.component.render(80);
-  const downY = actions.findIndex((line) => line.includes("Split down"));
-  h.component.handleMouse(click(4, downY));
-  assert.deepEqual(h.result, { agentId: "one", action: "down" });
+  const openY = actions.findIndex((line) => line.includes("Open view"));
+  h.component.handleMouse(click(4, openY));
+  assert.deepEqual(h.result, { agentId: "one", action: "open" });
   h.component.dispose();
 });
 
