@@ -97,7 +97,7 @@ test("configured Herdr enables tools with HERDR_ENV alone, without backend probi
     "stop_subagent",
   ]);
   assert.deepEqual(capture.commands, ["subagent:views"]);
-  assert.deepEqual(capture.hooks, ["session_shutdown"]);
+  assert.deepEqual(capture.hooks, ["session_start", "session_shutdown"]);
 });
 
 test("registration is lazy and does not invoke mux operations", () => {

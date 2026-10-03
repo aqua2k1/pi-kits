@@ -107,6 +107,13 @@ test("manager is lazy, starts an authenticated worker and returns structured res
   });
   t.after(() => manager.close());
   assert.equal(mux.started.length, 0);
+  const updates: string[] = [];
+  const unsubscribe = manager.subscribe(() => {
+    updates.push(manager.list()[0]?.status ?? "empty");
+  });
+  manager.subscribe(() => {
+    throw new Error("Broken UI subscriber");
+  });
   const agent = manager.spawn({ ...task, model: "sonnet", thinking: "high" });
   await until(() => mux.commands.get(agent.id)?.length === 1);
   const start = mux.started[0];
@@ -125,6 +132,29 @@ test("manager is lazy, starts an authenticated worker and returns structured res
     type: "steer",
     message: "Only inspect files",
   });
+  mux.emit(agent.id, {
+    type: "stats",
+    turnCount: 2,
+    toolUses: 3,
+    totalTokens: 1234,
+    compactionCount: 1,
+    contextPercent: 42,
+  });
+  await until(() => manager.get(agent.id).turnCount === 2);
+  assert.equal(manager.get(agent.id).toolUses, 3);
+  assert.equal(manager.get(agent.id).totalTokens, 1234);
+  assert.equal(manager.get(agent.id).contextPercent, 42);
+  mux.emit(agent.id, {
+    type: "stats",
+    turnCount: -1,
+    toolUses: 1.5,
+    totalTokens: Number.MAX_SAFE_INTEGER + 1,
+    contextPercent: 101,
+  });
+  await until(() => manager.get(agent.id).contextPercent === undefined);
+  assert.equal(manager.get(agent.id).turnCount, 2);
+  assert.equal(manager.get(agent.id).toolUses, 3);
+  assert.equal(manager.get(agent.id).totalTokens, 1234);
   mux.emit(agent.id, { type: "activity", toolName: "read" });
   await until(() => manager.get(agent.id).activity === "read");
   const result = manager.result(agent.id, true);
@@ -132,6 +162,14 @@ test("manager is lazy, starts an authenticated worker and returns structured res
   assert.equal((await result).result, "Found auth.ts");
   assert.equal(manager.get(agent.id).status, "completed");
   assert.deepEqual(notifications, [], "Waited results must not notify twice");
+  assert.ok(updates.includes("starting"));
+  assert.ok(updates.includes("running"));
+  assert.ok(updates.includes("completed"));
+  const finished = manager.get(agent.id);
+  assert.ok(finished.startedAt !== undefined);
+  assert.ok(finished.completedAt !== undefined);
+  assert.ok(finished.completedAt >= finished.startedAt);
+  unsubscribe();
 });
 
 test("background completion notifies once and remains readable", async (t) => {

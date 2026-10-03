@@ -32,6 +32,15 @@ export type WorkerActivityName =
   | "control_rejected";
 
 export type WorkerEvent =
+  | {
+      type: "stats";
+      id: string;
+      turnCount: number;
+      toolUses: number;
+      totalTokens: number;
+      contextPercent?: number;
+      compactionCount: number;
+    }
   | { type: "ready"; id: string; token: string; sessionPath?: string }
   | { type: "started"; id: string }
   | {
@@ -195,6 +204,10 @@ export function registerWorkerBridge(
   let generation = 0;
   let preparing = false;
   let result = "";
+  let turnCount = 0;
+  let toolUses = 0;
+  let totalTokens = 0;
+  let compactionCount = 0;
   let truncated = false;
   let error: string | undefined;
   let aborted = false;
@@ -232,9 +245,28 @@ export function registerWorkerBridge(
     pendingCommands = 0;
     startupQueue = [];
     result = "";
+    turnCount = 0;
+    toolUses = 0;
+    totalTokens = 0;
+    compactionCount = 0;
     truncated = false;
     error = undefined;
     aborted = false;
+  }
+
+  function sendStats(): void {
+    const percent = context?.getContextUsage?.()?.percent;
+    send({
+      type: "stats",
+      id: config.id,
+      turnCount,
+      toolUses,
+      totalTokens,
+      compactionCount,
+      ...(typeof percent === "number" && Number.isFinite(percent)
+        ? { contextPercent: percent }
+        : {}),
+    });
   }
 
   function complete(): void {
@@ -432,6 +464,12 @@ export function registerWorkerBridge(
       ...(preview.truncated ? { truncated: true } : {}),
     });
     if (event.message.role === "assistant") {
+      turnCount += 1;
+      const usage = event.message.usage;
+      // Lifetime usage excludes cacheRead, which repeats the cached prefix.
+      totalTokens +=
+        (usage?.input ?? 0) + (usage?.output ?? 0) + (usage?.cacheWrite ?? 0);
+      sendStats();
       const final = boundedText(messageText(event.message), MAX_RESULT_BYTES);
       result = final.text;
       truncated = final.truncated;
@@ -449,6 +487,8 @@ export function registerWorkerBridge(
   pi.on("tool_execution_start", (event, ctx) => {
     context = ctx;
     if (!active) return;
+    toolUses += 1;
+    sendStats();
     send({
       type: "activity",
       id: config.id,
@@ -470,6 +510,12 @@ export function registerWorkerBridge(
       parentToolCallId: event.parentToolCallId,
       isError: event.isError,
     });
+  });
+  pi.on("session_compact", (_event, ctx) => {
+    context = ctx;
+    if (!active) return;
+    compactionCount += 1;
+    sendStats();
   });
   pi.on("agent_end", (_event, ctx) => {
     context = ctx;

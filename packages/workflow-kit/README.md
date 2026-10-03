@@ -227,8 +227,21 @@ terminal, on the right or below. The attached view allows inspection and control
 of that Pi terminal. Closing a view only detaches it; it does not kill the worker.
 Use `/subagent:views <id> close` to close an attachment from the parent Pi, or
 `focus` to focus an existing view. Running `/subagent:views` without arguments
-opens the selection menu. Views are native control attachments, not read-only
-viewers.
+opens the shared lower-half docked panel with live Agents/Actions tabs; passing
+only an ID opens its actions directly. Up/Down selects, Enter confirms, Tab
+switches tabs, Left returns to agents, and Esc closes the panel. Fullscreen mode
+also supports mouse selection. Closing the panel does not affect workers.
+Views are native control attachments, not read-only viewers.
+
+In TUI mode, a live tree-style status area stays above the editor while tasks are
+active or queued, independently of the views panel. It shows state, current tool
+activity, elapsed time, assistant turns, tool calls, cumulative tokens, context
+percentage (when available), and compactions. Tokens exclude repeated cache-read
+prefixes. Up to four active tasks are expanded; additional active/queued tasks
+are summarized to bound widget height. Completed rows linger for five seconds;
+disconnected cleanup errors remain visible until resolved. Results and terminals
+remain available after rows disappear. Shutdown/reload removes the widget and
+its refresh timer.
 
 `stop_subagent` cancels the task and retains its terminal when Pi cooperates;
 if cancellation does not settle within five seconds, the terminal is destroyed.

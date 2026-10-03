@@ -29,6 +29,14 @@ export interface AgentSnapshot {
   terminalId?: string;
   viewId?: string;
   truncated?: boolean;
+  createdAt?: number;
+  startedAt?: number;
+  completedAt?: number;
+  turnCount?: number;
+  toolUses?: number;
+  totalTokens?: number;
+  contextPercent?: number;
+  compactionCount?: number;
 }
 
 export interface SpawnOptions {
@@ -75,6 +83,7 @@ const terminalStatus = (status: AgentStatus) =>
 /** Owns tasks and IPC; the mux owns PTYs, screens, and native terminal input. */
 export class SubagentManager {
   private readonly records = new Map<string, AgentRecord>();
+  private readonly listeners = new Set<() => void>();
   private readonly queue: AgentRecord[] = [];
   private readonly sockets = new Set<Socket>();
   private readonly launches = new Set<Promise<void>>();
@@ -88,6 +97,21 @@ export class SubagentManager {
     private readonly adapter: MuxAdapter,
     private readonly options: ManagerOptions = {},
   ) {}
+
+  subscribe(listener: () => void): () => void {
+    this.listeners.add(listener);
+    return () => this.listeners.delete(listener);
+  }
+
+  private changed(): void {
+    for (const listener of this.listeners) {
+      try {
+        listener();
+      } catch {
+        // A view/render failure must never alter task execution.
+      }
+    }
+  }
 
   list(): AgentSnapshot[] {
     return [...this.records.values()].map((record) => this.snapshot(record));
@@ -112,6 +136,11 @@ export class SubagentManager {
         id: randomUUID(),
         description: options.description,
         status: "queued",
+        createdAt: Date.now(),
+        turnCount: 0,
+        toolUses: 0,
+        totalTokens: 0,
+        compactionCount: 0,
       },
       options,
       token: randomBytes(32).toString("hex"),
@@ -126,6 +155,7 @@ export class SubagentManager {
     this.records.set(record.snapshot.id, record);
     this.queue.push(record);
     this.pump();
+    this.changed();
     return this.snapshot(record);
   }
 
@@ -176,6 +206,7 @@ export class SubagentManager {
         }, this.options.cancelTimeoutMs ?? 5_000);
       }
     }
+    this.changed();
     return this.snapshot(record);
   }
 
@@ -195,6 +226,7 @@ export class SubagentManager {
         direction,
       });
       record.view = view;
+      this.changed();
       return view;
     });
   }
@@ -205,6 +237,7 @@ export class SubagentManager {
       if (!record.view) return;
       await this.adapter.close_view(record.view);
       record.view = undefined;
+      this.changed();
     });
   }
 
@@ -275,6 +308,8 @@ export class SubagentManager {
       if (!record || record.finished) continue;
       this.active += 1;
       record.snapshot.status = "starting";
+      record.snapshot.startedAt = Date.now();
+      this.changed();
       const launch = this.start(record);
       this.launches.add(launch);
       void launch.finally(() => this.launches.delete(launch));
@@ -340,6 +375,8 @@ export class SubagentManager {
         return;
       }
       record.snapshot.status = "running";
+      record.snapshot.activity = "Thinking…";
+      this.changed();
       this.send(record, { type: "task", prompt: record.options.prompt });
     } catch (error) {
       if (error instanceof TerminalStartError) {
@@ -384,6 +421,7 @@ export class SubagentManager {
         record.snapshot.status = "disconnected";
         record.snapshot.error =
           "Worker cleanup failed; concurrency slot retained. Retry stop_subagent.";
+        this.changed();
       }
     });
     record.terminating = operation;
@@ -450,6 +488,7 @@ export class SubagentManager {
             if (typeof event.sessionPath === "string") {
               record.snapshot.sessionPath = event.sessionPath;
             }
+            this.changed();
             record.ready?.();
           } else {
             this.event(record, event);
@@ -480,8 +519,39 @@ export class SubagentManager {
 
   private event(record: AgentRecord, event: Record<string, unknown>): void {
     if (record.finished) return;
-    if (event.type === "activity" && typeof event.toolName === "string") {
-      record.snapshot.activity = event.toolName;
+    if (event.type === "stats") {
+      for (const key of [
+        "turnCount",
+        "toolUses",
+        "totalTokens",
+        "compactionCount",
+      ] as const) {
+        const value = event[key];
+        if (
+          typeof value === "number" &&
+          Number.isSafeInteger(value) &&
+          value >= 0
+        ) {
+          record.snapshot[key] = value;
+        }
+      }
+      record.snapshot.contextPercent = undefined;
+      if (
+        typeof event.contextPercent === "number" &&
+        Number.isFinite(event.contextPercent) &&
+        event.contextPercent >= 0 &&
+        event.contextPercent <= 100
+      ) {
+        record.snapshot.contextPercent = event.contextPercent;
+      }
+      this.changed();
+    }
+    if (event.type === "activity") {
+      if (typeof event.toolName === "string") {
+        record.snapshot.activity =
+          event.event === "tool_execution_end" ? "Thinking…" : event.toolName;
+      }
+      this.changed();
     }
     if (event.type === "completed") {
       if (typeof event.result !== "string") {
@@ -522,6 +592,8 @@ export class SubagentManager {
     clearTimeout(record.cancelTimer);
     record.snapshot.status = status;
     record.snapshot.error = error;
+    record.snapshot.completedAt = Date.now();
+    this.changed();
     if (wasActive) this.active -= 1;
     record.resolve(this.snapshot(record));
     this.notify(record);

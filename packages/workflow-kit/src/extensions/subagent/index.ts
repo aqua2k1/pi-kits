@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import {
   defineTool,
   type ExtensionAPI,
@@ -5,9 +6,15 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import { readPiKitsConfig } from "@pi-kits/config";
 import { Type } from "typebox";
+import {
+  DOCKED_PANEL_CLOSED,
+  DOCKED_PANEL_OPENED,
+} from "../../lib/ui/docked-panel/index.ts";
 import { HerdrAdapter } from "./herdr.ts";
 import { type AgentSnapshot, SubagentManager } from "./manager.ts";
 import type { MuxAdapter } from "./mux.ts";
+import { SubagentStatusWidget } from "./status-widget.ts";
+import { showSubagentViews } from "./views.ts";
 
 const agentId = Type.String({ minLength: 1, description: "Subagent ID" });
 const thinking = Type.Union([
@@ -43,7 +50,10 @@ export function registerSubagents(
   maxConcurrent = 4,
 ): void {
   let manager: SubagentManager | undefined;
-  const getManager = () => {
+  let status: SubagentStatusWidget | undefined;
+  let context: ExtensionContext | undefined;
+  const getManager = (ctx?: ExtensionContext) => {
+    context = ctx ?? context;
     manager ??= new SubagentManager(adapter, {
       maxConcurrent,
       onComplete(snapshot) {
@@ -58,8 +68,15 @@ export function registerSubagents(
         );
       },
     });
+    status ??= new SubagentStatusWidget(manager);
+    if (context?.mode === "tui") status.bind(context.ui);
     return manager;
   };
+
+  pi.on("session_start", (_event, ctx) => {
+    context = ctx;
+    if (ctx.mode === "tui") status?.bind(ctx.ui);
+  });
 
   pi.registerTool(
     defineTool({
@@ -80,7 +97,7 @@ export function registerSubagents(
       }),
       async execute(_id, params, signal, _onUpdate, ctx) {
         signal?.throwIfAborted();
-        const current = getManager();
+        const current = getManager(ctx);
         const snapshot = current.spawn({
           prompt: params.prompt,
           description: params.description,
@@ -155,7 +172,41 @@ export function registerSubagents(
         return;
       }
       try {
-        await manageViews(getManager(), args, ctx);
+        const current = getManager(ctx);
+        const tokens = args.trim().split(/\s+/).filter(Boolean);
+        if (tokens.length > 2) {
+          throw new Error(
+            "Usage: /subagent:views [id] [right|down|close|focus]",
+          );
+        }
+        let [id, action] = tokens;
+        if (id) current.get(id);
+        if (!action) {
+          const instanceId = randomUUID();
+          const payload = { panelId: "subagent:views", instanceId };
+          const choice = await showSubagentViews(ctx.ui, current, id, {
+            onOpen: () => pi.events.emit(DOCKED_PANEL_OPENED, payload),
+            onClosed: (closeStatus) =>
+              pi.events.emit(DOCKED_PANEL_CLOSED, {
+                ...payload,
+                status: closeStatus,
+              }),
+          });
+          if (!choice) return;
+          id = choice.agentId;
+          action = choice.action;
+        }
+        if (!id) return;
+        if (action === "close") await current.closeView(id);
+        else if (
+          action === "right" ||
+          action === "down" ||
+          action === "focus"
+        ) {
+          await current.openView(id, action === "down" ? "down" : "right");
+        } else {
+          throw new Error("View action must be right, down, close, or focus.");
+        }
       } catch (error) {
         ctx.ui.notify(
           error instanceof Error ? error.message : String(error),
@@ -168,50 +219,11 @@ export function registerSubagents(
   pi.on("session_shutdown", async () => {
     const current = manager;
     manager = undefined;
+    status?.dispose();
+    status = undefined;
+    context = undefined;
     await current?.close();
   });
-}
-
-async function manageViews(
-  manager: SubagentManager,
-  args: string,
-  ctx: ExtensionContext,
-): Promise<void> {
-  const tokens = args.trim().split(/\s+/).filter(Boolean);
-  if (tokens.length > 2) {
-    throw new Error("Usage: /subagent:views [id] [right|down|close|focus]");
-  }
-  let id = tokens[0];
-  let action: string | undefined = tokens[1];
-  if (!id) {
-    const agents = manager.list();
-    if (!agents.length) {
-      ctx.ui.notify("No subagents in this session.", "info");
-      return;
-    }
-    const labels = agents.map(
-      (agent) => `${agent.id} · ${agent.status} · ${agent.description}`,
-    );
-    const selected = await ctx.ui.select("Subagent views", labels);
-    if (selected === undefined) return;
-    id = agents[labels.indexOf(selected)]?.id;
-    if (!id) return;
-  }
-  const agent = manager.get(id);
-  if (!action) {
-    action = await ctx.ui.select("View / control existing Pi", [
-      "right",
-      "down",
-      ...(agent.viewId ? ["focus", "close"] : []),
-    ]);
-    if (!action) return;
-  }
-  if (action === "close") await manager.closeView(id);
-  else if (action === "right" || action === "down" || action === "focus") {
-    await manager.openView(id, action === "down" ? "down" : "right");
-  } else {
-    throw new Error("View action must be right, down, close, or focus.");
-  }
 }
 
 export default function subagentExtension(pi: ExtensionAPI): void {

@@ -309,6 +309,39 @@ test("busy task/followUp and steer delivery, with only settled completion", () =
   );
 });
 
+test("worker reports cumulative turn/tool/token stats, excluding cacheRead", () => {
+  const h = harness();
+  const socket = h.start();
+  h.ctx.getContextUsage = () =>
+    ({ percent: 42 }) as ReturnType<ExtensionContext["getContextUsage"]>;
+  socket.command({ type: "task", prompt: "work" });
+  h.emit("agent_start");
+  h.emit("tool_execution_start", { toolName: "read", toolCallId: "call" });
+  const message = {
+    ...assistant("answer"),
+    usage: { input: 10, output: 5, cacheWrite: 2, cacheRead: 999 },
+  };
+  h.emit("message_end", { message });
+  h.emit("session_compact");
+  const stats = socket.frames.filter((frame) => frame.type === "stats");
+  assert.deepEqual(stats.at(-1), {
+    type: "stats",
+    id: config.id,
+    turnCount: 1,
+    toolUses: 1,
+    totalTokens: 17,
+    contextPercent: 42,
+    compactionCount: 1,
+  });
+  h.emit("agent_settled");
+  socket.command({ type: "task", prompt: "next task" });
+  h.emit("agent_start");
+  h.emit("message_end", { message });
+  const next = socket.frames.filter((frame) => frame.type === "stats").at(-1);
+  assert.equal(next?.totalTokens, 17);
+  assert.equal(next?.toolUses, 0);
+});
+
 test("tool and finalized message events are structured, without raw payloads", () => {
   const h = harness();
   const socket = h.start();
