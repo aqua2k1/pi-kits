@@ -1,0 +1,552 @@
+import assert from "node:assert/strict";
+import { EventEmitter, once } from "node:events";
+import { createConnection, createServer, type Socket } from "node:net";
+import { test } from "node:test";
+import { setImmediate } from "node:timers/promises";
+import type {
+  ExtensionAPI,
+  ExtensionContext,
+} from "@earendil-works/pi-coding-agent";
+import workerExtension, {
+  createWorkerJsonlReader,
+  isSubagentWorker,
+  MAX_COMMAND_BYTES,
+  MAX_PENDING_COMMANDS,
+  MAX_RESULT_BYTES,
+  parseWorkerCommand,
+  readWorkerConfig,
+  registerWorkerBridge,
+  type WorkerCommand,
+  type WorkerConfig,
+  type WorkerEvent,
+} from "./worker.ts";
+
+const config: WorkerConfig = {
+  host: "127.0.0.1",
+  port: 32123,
+  token: "random-manager-token",
+  id: "worker-1",
+};
+
+type Handler = (
+  event: Record<string, unknown>,
+  ctx: ExtensionContext,
+) => unknown;
+
+class FakeSocket extends EventEmitter {
+  destroyed = false;
+  writableLength = 0;
+  frames: WorkerEvent[] = [];
+  setNoDelay(): void {}
+  unref(): void {}
+  write(frame: string): boolean {
+    this.frames.push(JSON.parse(frame) as WorkerEvent);
+    return true;
+  }
+  destroy(): void {
+    this.destroyed = true;
+    this.emit("close");
+  }
+  command(command: WorkerCommand): void {
+    this.emit("data", Buffer.from(`${JSON.stringify(command)}\n`));
+  }
+}
+
+function harness(connect?: (config: WorkerConfig) => Socket) {
+  const handlers = new Map<string, Handler>();
+  const sent = new EventEmitter();
+  const sockets: FakeSocket[] = [];
+  const messages: Array<{ text: string; deliverAs?: string }> = [];
+  let aborts = 0;
+  let connects = 0;
+  let editor = "local unfinished draft";
+  const ctx = {
+    mode: "tui",
+    isIdle: () => true,
+    model: { provider: "test", id: "test-model" },
+    modelRegistry: {
+      hasConfiguredAuth: () => true,
+    },
+    sessionManager: {
+      getSessionFile: () => "/sessions/worker.jsonl",
+    },
+    ui: {
+      getEditorText: () => editor,
+      setEditorText: (text: string) => {
+        editor = text;
+      },
+    },
+    abort() {
+      aborts += 1;
+      // Pi TUI's abort clears native queues and restores them in the editor.
+      editor = "canceled native follow-up";
+    },
+    shutdown() {
+      assert.fail("Worker bridge must not shut down Pi");
+    },
+  } as unknown as ExtensionContext;
+  const pi = {
+    on(name: string, handler: Handler) {
+      handlers.set(name, handler);
+      return () => handlers.delete(name);
+    },
+    sendUserMessage(text: string, options?: { deliverAs?: string }) {
+      messages.push({ text, deliverAs: options?.deliverAs });
+      sent.emit("message");
+    },
+  } as unknown as ExtensionAPI;
+  registerWorkerBridge(pi, config, {
+    connect(value) {
+      connects += 1;
+      if (connect) return connect(value);
+      const socket = new FakeSocket();
+      sockets.push(socket);
+      return socket as unknown as Socket;
+    },
+  });
+  return {
+    pi,
+    ctx,
+    sockets,
+    messages,
+    sent,
+    get aborts() {
+      return aborts;
+    },
+    get connects() {
+      return connects;
+    },
+    get editor() {
+      return editor;
+    },
+    emit(name: string, fields: Record<string, unknown> = {}) {
+      const handler = handlers.get(name);
+      assert.ok(handler, `Missing handler ${name}`);
+      return handler({ type: name, ...fields }, ctx);
+    },
+    start() {
+      this.emit("session_start");
+      const socket = sockets.at(-1);
+      assert.ok(socket);
+      socket.emit("connect");
+      return socket;
+    },
+  };
+}
+
+function assistant(text: string, stopReason = "stop", errorMessage?: string) {
+  return {
+    role: "assistant",
+    content: [
+      { type: "thinking", thinking: "not sent to manager" },
+      { type: "text", text },
+      { type: "text", text: "second block" },
+    ],
+    stopReason,
+    errorMessage,
+  };
+}
+
+function completions(socket: FakeSocket) {
+  return socket.frames.filter((frame) => frame.type === "completed");
+}
+
+test("explicit worker marker and validated loopback environment", () => {
+  for (const marker of [undefined, "", "0", "true"]) {
+    const env = { PI_KITS_SUBAGENT_WORKER: marker };
+    assert.equal(isSubagentWorker(env), false);
+    assert.equal(readWorkerConfig(env), undefined);
+  }
+  const env = {
+    PI_KITS_SUBAGENT_WORKER: "1",
+    PI_KITS_SUBAGENT_ENDPOINT: "127.0.0.1:32123",
+    PI_KITS_SUBAGENT_TOKEN: config.token,
+    PI_KITS_SUBAGENT_ID: config.id,
+  };
+  assert.equal(isSubagentWorker(env), true);
+  assert.deepEqual(readWorkerConfig(env), config);
+  for (const endpoint of [
+    "localhost:12",
+    "0.0.0.0:12",
+    "127.0.0.2:12",
+    "127.0.0.1:0",
+    "127.0.0.1:65536",
+    "127.0.0.1:12/path",
+    '{"host":"127.0.0.1","port":12}',
+  ]) {
+    assert.throws(() =>
+      readWorkerConfig({ ...env, PI_KITS_SUBAGENT_ENDPOINT: endpoint }),
+    );
+  }
+  assert.throws(() => readWorkerConfig({ ...env, PI_KITS_SUBAGENT_TOKEN: "" }));
+  assert.throws(() => readWorkerConfig({ ...env, PI_KITS_SUBAGENT_ID: "" }));
+});
+
+test("default extension is inert outside worker mode", (t) => {
+  const original = process.env.PI_KITS_SUBAGENT_WORKER;
+  process.env.PI_KITS_SUBAGENT_WORKER = "0";
+  t.after(() => {
+    if (original === undefined) delete process.env.PI_KITS_SUBAGENT_WORKER;
+    else process.env.PI_KITS_SUBAGENT_WORKER = original;
+  });
+  workerExtension({
+    on() {
+      assert.fail("Disabled worker must not register handlers");
+    },
+  } as unknown as ExtensionAPI);
+});
+
+test("JSONL handles split UTF-8, CRLF, Unicode separators and batches", () => {
+  const received: WorkerCommand[] = [];
+  const read = createWorkerJsonlReader((command) => received.push(command));
+  const prompt = "中文🙂\u2028\u2029\nnext line";
+  const bytes = Buffer.from(
+    `${JSON.stringify({ type: "task", prompt })}\r\n` +
+      `${JSON.stringify({ type: "steer", message: "focus" })}\n` +
+      '{"type":"cancel"}\n',
+  );
+  for (const byte of bytes) read(Buffer.from([byte]));
+  assert.deepEqual(received, [
+    { type: "task", prompt },
+    { type: "steer", message: "focus" },
+    { type: "cancel" },
+  ]);
+});
+
+test("JSONL is byte-bounded per frame, not per TCP chunk", () => {
+  let count = 0;
+  const read = createWorkerJsonlReader(() => count++, 20);
+  read(Buffer.from('{"type":"cancel"}\n'.repeat(100)));
+  assert.equal(count, 100);
+  const incomplete = createWorkerJsonlReader(() => undefined, 10);
+  incomplete(Buffer.from("123456"));
+  assert.throws(() => incomplete(Buffer.from("78901")), /too large/);
+  assert.throws(() => read(Buffer.from("x".repeat(21))), /too large/);
+  const utf8 = createWorkerJsonlReader(() => undefined, 8);
+  assert.throws(() => utf8(Buffer.from("中中中")), /too large/);
+});
+
+test("invalid JSON, UTF-8 and command shapes fail closed", () => {
+  for (const frame of ["\n", "nope\n", "[]\n", "null\n"]) {
+    assert.throws(() =>
+      createWorkerJsonlReader(() => undefined)(Buffer.from(frame)),
+    );
+  }
+  assert.throws(() =>
+    createWorkerJsonlReader(() => undefined)(Buffer.from([0xff, 10])),
+  );
+  for (const value of [
+    null,
+    [],
+    {},
+    { type: "task", prompt: " " },
+    { type: "task", prompt: 1 },
+    { type: "steer", message: "" },
+    { type: "unknown" },
+  ]) {
+    assert.throws(() => parseWorkerCommand(value));
+  }
+});
+
+test("resources start only at TUI session_start; ready authenticates", () => {
+  const h = harness();
+  assert.equal(h.connects, 0);
+  for (const mode of ["rpc", "json", "print"] as const) {
+    h.ctx.mode = mode;
+    h.emit("session_start");
+  }
+  assert.equal(h.connects, 0);
+  h.ctx.mode = "tui";
+  const socket = h.start();
+  assert.deepEqual(socket.frames, [
+    {
+      type: "ready",
+      id: config.id,
+      token: config.token,
+      sessionPath: "/sessions/worker.jsonl",
+    },
+  ]);
+  h.emit("session_shutdown");
+  h.emit("session_shutdown");
+  assert.equal(socket.destroyed, true);
+});
+
+test("busy task/followUp and steer delivery, with only settled completion", () => {
+  const h = harness();
+  const socket = h.start();
+  socket.command({ type: "task", prompt: "first task" });
+  socket.command({ type: "task", prompt: "follow-up" });
+  socket.command({ type: "steer", message: "focus" });
+  assert.equal(h.messages.length, 1, "startup prompts must not race");
+  h.emit("agent_start");
+  assert.deepEqual(h.messages, [
+    { text: "first task", deliverAs: "followUp" },
+    { text: "follow-up", deliverAs: "followUp" },
+    { text: "focus", deliverAs: "steer" },
+  ]);
+  h.emit("message_end", { message: assistant("transient", "error", "retry") });
+  h.emit("agent_end");
+  assert.deepEqual(completions(socket), []);
+  h.emit("agent_start");
+  h.emit("message_end", { message: assistant("final result") });
+  h.emit("agent_end");
+  assert.deepEqual(completions(socket), []);
+  h.emit("agent_settled");
+  h.emit("agent_settled");
+  assert.deepEqual(completions(socket), [
+    {
+      type: "completed",
+      id: config.id,
+      result: "final result\nsecond block",
+      sessionPath: "/sessions/worker.jsonl",
+    },
+  ]);
+  assert.equal(socket.frames.filter((f) => f.type === "started").length, 1);
+  assert.equal(JSON.stringify(socket.frames).includes(config.token), true);
+  assert.equal(
+    JSON.stringify(socket.frames.slice(1)).includes(config.token),
+    false,
+  );
+});
+
+test("tool and finalized message events are structured, without raw payloads", () => {
+  const h = harness();
+  const socket = h.start();
+  socket.command({ type: "task", prompt: "work" });
+  h.emit("agent_start");
+  h.emit("tool_execution_start", {
+    toolName: "bash",
+    toolCallId: "call/1",
+    parentToolCallId: "call",
+    args: { command: "secret" },
+  });
+  h.emit("tool_execution_end", {
+    toolName: "bash",
+    toolCallId: "call/1",
+    isError: true,
+    result: { content: "secret output" },
+  });
+  const events = socket.frames.filter((event) => event.type === "activity");
+  assert.deepEqual(events.slice(1), [
+    {
+      type: "activity",
+      id: config.id,
+      event: "tool_execution_start",
+      toolName: "bash",
+      toolCallId: "call/1",
+      parentToolCallId: "call",
+    },
+    {
+      type: "activity",
+      id: config.id,
+      event: "tool_execution_end",
+      toolName: "bash",
+      toolCallId: "call/1",
+      isError: true,
+    },
+  ]);
+});
+
+test("cancel clears startup controls and does not resubmit canceled native queue", () => {
+  const h = harness();
+  const socket = h.start();
+  socket.command({ type: "task", prompt: "work" });
+  socket.command({ type: "task", prompt: "queued" });
+  socket.command({ type: "cancel" });
+  socket.command({ type: "task", prompt: "must wait" });
+  assert.equal(h.aborts, 1);
+  assert.equal(h.editor, "local unfinished draft");
+  h.emit("agent_start");
+  assert.equal(h.messages.length, 1);
+  h.emit("agent_end");
+  assert.equal(completions(socket).length, 0);
+  h.emit("agent_settled");
+  assert.equal(completions(socket)[0]?.canceled, true);
+  socket.command({ type: "task", prompt: "new task" });
+  assert.equal(h.messages.at(-1)?.text, "new task");
+});
+
+test("cancel before input interception prevents startup and completes once", () => {
+  const h = harness();
+  const socket = h.start();
+  socket.command({ type: "task", prompt: "work" });
+  socket.command({ type: "cancel" });
+  assert.deepEqual(h.emit("input", { source: "extension", text: "work" }), {
+    action: "handled",
+  });
+  assert.equal(completions(socket).length, 1);
+  assert.equal(completions(socket)[0]?.canceled, true);
+  h.emit("agent_settled");
+  assert.equal(completions(socket).length, 1);
+});
+
+test("idle steer/cancel do not create work; pending commands are bounded", () => {
+  const h = harness();
+  const socket = h.start();
+  socket.command({ type: "steer", message: "no task" });
+  socket.command({ type: "cancel" });
+  assert.equal(h.messages.length, 0);
+  assert.equal(h.aborts, 0);
+  for (let n = 0; n <= MAX_PENDING_COMMANDS; n++) {
+    socket.command({ type: "task", prompt: `task ${n}` });
+  }
+  h.emit("agent_start");
+  assert.equal(h.messages.length, MAX_PENDING_COMMANDS);
+  assert.ok(
+    socket.frames.some(
+      (event) =>
+        event.type === "activity" && event.event === "control_rejected",
+    ),
+  );
+});
+
+test("final errors, aborts, all text blocks and byte-safe truncation", () => {
+  for (const reason of ["error", "aborted", "stop"]) {
+    const h = harness();
+    const socket = h.start();
+    socket.command({ type: "task", prompt: "work" });
+    h.emit("agent_start");
+    h.emit("message_end", {
+      message: assistant("中文🙂".repeat(MAX_RESULT_BYTES), reason, "failure"),
+    });
+    h.emit("agent_settled");
+    const final = completions(socket)[0];
+    assert.ok(final);
+    assert.ok(Buffer.byteLength(final.result) <= MAX_RESULT_BYTES);
+    assert.equal(final.result.includes("\ufffd"), false);
+    assert.equal(final.truncated, true);
+    assert.equal(final.error, reason === "error" ? "failure" : undefined);
+    assert.equal(final.canceled, reason === "aborted" ? true : undefined);
+  }
+});
+
+test("missing model or credentials completes rather than waiting for Pi events", async () => {
+  const missing = harness();
+  const noModelSocket = missing.start();
+  missing.ctx.model = undefined;
+  noModelSocket.command({ type: "task", prompt: "work" });
+  assert.match(completions(noModelSocket)[0]?.error ?? "", /No Pi model/);
+  assert.equal(missing.messages.length, 0);
+
+  const h = harness();
+  const socket = h.start();
+  h.ctx.modelRegistry.hasConfiguredAuth = () => false;
+  h.ctx.modelRegistry.getApiKeyAndHeaders = async () => ({
+    ok: false,
+    error: "No credentials",
+  });
+  socket.command({ type: "task", prompt: "work" });
+  await setImmediate();
+  assert.match(completions(socket)[0]?.error ?? "", /No credentials/);
+  assert.equal(h.messages.length, 0);
+});
+
+test("cancel or shutdown during auth preflight cannot submit stale work", async () => {
+  for (const action of ["cancel", "shutdown"]) {
+    const h = harness();
+    const socket = h.start();
+    let resolve: (() => void) | undefined;
+    h.ctx.modelRegistry.hasConfiguredAuth = () => false;
+    h.ctx.modelRegistry.getApiKeyAndHeaders = () =>
+      new Promise((done) => {
+        resolve = () => done({ ok: true });
+      });
+    socket.command({ type: "task", prompt: "work" });
+    if (action === "cancel") socket.command({ type: "cancel" });
+    else h.emit("session_shutdown");
+    assert.ok(resolve);
+    resolve();
+    await setImmediate();
+    assert.equal(h.messages.length, 0);
+    if (action === "cancel") {
+      assert.equal(completions(socket)[0]?.canceled, true);
+    }
+  }
+});
+
+test("synchronous Pi submission failures produce completed errors", () => {
+  const h = harness();
+  const socket = h.start();
+  h.pi.sendUserMessage = () => {
+    throw new Error("submission failed");
+  };
+  socket.command({ type: "task", prompt: "work" });
+  assert.match(completions(socket)[0]?.error ?? "", /submission failed/);
+});
+
+test("disconnect, malformed input and backpressure detach without aborting Pi", () => {
+  for (const failure of ["close", "error", "oversize", "invalid", "slow"]) {
+    const h = harness();
+    const socket = h.start();
+    socket.command({ type: "task", prompt: "work" });
+    h.emit("agent_start");
+    if (failure === "close") socket.destroy();
+    if (failure === "error") socket.emit("error", new Error("offline"));
+    if (failure === "oversize") {
+      socket.emit("data", Buffer.alloc(MAX_COMMAND_BYTES + 1, 65));
+    }
+    if (failure === "invalid") socket.emit("data", Buffer.from("garbage\n"));
+    if (failure === "slow") {
+      socket.writableLength = 1024 * 1024;
+      h.emit("agent_end");
+    }
+    assert.equal(socket.destroyed, true);
+    const count = socket.frames.length;
+    socket.command({ type: "cancel" });
+    h.emit("message_end", { message: assistant("still works") });
+    h.emit("agent_settled");
+    assert.equal(socket.frames.length, count);
+    assert.equal(h.aborts, 0);
+    assert.equal(h.connects, 1, "must not reconnect or replay tasks");
+  }
+});
+
+test("session replacement closes the old connection and reports the fresh path", () => {
+  const h = harness();
+  const old = h.start();
+  const replacement = h.start();
+  assert.equal(old.destroyed, true);
+  old.command({ type: "task", prompt: "stale" });
+  replacement.command({ type: "task", prompt: "fresh" });
+  assert.equal(h.messages.length, 1);
+  assert.equal(h.messages[0]?.text, "fresh");
+});
+
+test("real loopback TCP uses JSONL without taking over Pi stdio", async (t) => {
+  const server = createServer();
+  t.after(() => server.close());
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  const address = server.address();
+  assert.ok(address && typeof address === "object");
+  const accepted = once(server, "connection");
+  const h = harness(() =>
+    // The factory uses node:net by default; the test only overrides the port.
+    createTestConnection(address.port),
+  );
+  h.emit("session_start");
+  const [connection] = (await accepted) as [Socket];
+  t.after(() => {
+    h.emit("session_shutdown");
+    connection.destroy();
+  });
+  connection.setEncoding("utf8");
+  const [ready] = (await once(connection, "data")) as [string];
+  assert.deepEqual(JSON.parse(ready), {
+    type: "ready",
+    id: config.id,
+    token: config.token,
+    sessionPath: "/sessions/worker.jsonl",
+  });
+  const delivered = once(h.sent, "message");
+  connection.write('{"type":"task","prompt":"TCP task"}\n');
+  await delivered;
+  assert.equal(h.messages[0]?.text, "TCP task");
+  connection.destroy();
+  await setImmediate();
+  assert.equal(h.aborts, 0);
+});
+
+function createTestConnection(port: number): Socket {
+  return createConnection({ host: "127.0.0.1", port });
+}

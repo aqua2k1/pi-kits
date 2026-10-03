@@ -53,7 +53,7 @@ function smoke(paths: readonly string[], agentDir: string): string {
   return child.stdout;
 }
 
-test("four kits explicitly declare ten independent runtime entries", () => {
+test("four kits explicitly declare eleven independent runtime entries", () => {
   const entries: string[] = [];
   for (const kit of kits) {
     const dir = join(root, "packages", `${kit}-kit`);
@@ -65,6 +65,10 @@ test("four kits explicitly declare ten independent runtime entries", () => {
     assert.equal(manifest.private, true);
     for (const entry of manifest.pi.extensions) {
       assert.ok(!entry.includes(".test.") && !entry.includes("/lib/"));
+      assert.ok(
+        !entry.endsWith("/worker.ts"),
+        "workers load only via explicit -e",
+      );
       const path = resolve(dir, entry);
       assert.ok(existsSync(path), path);
       entries.push(path);
@@ -83,8 +87,8 @@ test("four kits explicitly declare ten independent runtime entries", () => {
     }
     assert.equal(manifest.dependencies["@pi-kits/config"], "0.1.0");
   }
-  assert.equal(entries.length, 10);
-  assert.equal(new Set(entries).size, 10);
+  assert.equal(entries.length, 11);
+  assert.equal(new Set(entries).size, 11);
   const repository = JSON.parse(
     readFileSync(join(root, "package.json"), "utf8"),
   );

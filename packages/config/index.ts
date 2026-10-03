@@ -133,6 +133,11 @@ export function resolvePiKitsConfig(raw: PiKitsFileConfig = {}) {
       askUserQuestion: {
         enabled: raw.workflow?.askUserQuestion?.enabled ?? true,
       },
+      subagent: {
+        enabled: raw.workflow?.subagent?.enabled ?? true,
+        mux: raw.workflow?.subagent?.mux,
+        maxConcurrent: raw.workflow?.subagent?.maxConcurrent ?? 4,
+      },
       commit: {
         enabled: raw.workflow?.commit?.enabled ?? true,
         model: raw.workflow?.commit?.model,

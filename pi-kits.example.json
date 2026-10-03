@@ -24,6 +24,7 @@
   "workflow": {
     "enabled": true,
     "askUserQuestion": { "enabled": true },
+    "subagent": { "mux": "herdr", "enabled": true, "maxConcurrent": 4 },
     "commit": {
       "enabled": true,
       "timeoutMs": 120000,

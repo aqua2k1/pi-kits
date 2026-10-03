@@ -1,11 +1,14 @@
 # pi-workflow-kit
 
-A Pi package containing three explicit extension entries:
+A Pi package containing four explicit extension entries:
 
 - `src/extensions/commit/index.ts`: `/commit` and `--commit`.
 - `src/extensions/notify/index.ts`: idle TUI completion notifications.
 - `src/extensions/ask-user-question/index.ts`: `ask_user_question` tabbed terminal
   questionnaire and native RPC dialogs.
+- `src/extensions/subagent/index.ts`: opt-in Herdr background tasks and terminal
+  views. `src/extensions/subagent/worker.ts` is a worker bridge loaded only via
+  explicit `-e`, not a manifest entry.
 
 ## Load
 
@@ -185,12 +188,73 @@ Model memory is stored in `workflow.commit.lastModel` inside
 expansion). Updates preserve other configuration fields. Legacy
 `extensions/commit/last_model.json` is ignored and never migrated or modified.
 
+## Herdr subagents (MVP)
+
+Subagents run general tasks in the background using Herdr's native Pi terminals
+plus a worker bridge. The extension does not build its own PTY. Task parameters
+include `model` and `thinking`; this first version does not support scheduling,
+worktree management, or custom agents.
+
+Configure agent-dir `pi-kits.json` and `/reload`:
+
+```json
+{
+  "workflow": {
+    "subagent": { "mux": "herdr", "enabled": true, "maxConcurrent": 4 }
+  }
+}
+```
+
+Configuration is validated and defaulted through `@pi-kits/config`. `mux` accepts
+only `"herdr"` and has no default; `enabled` defaults to `true`.
+`maxConcurrent` limits executing tasks, not retained idle Pi terminals; it is an
+integer from 1 to 32, defaulting to 4. Completed terminals remain available for
+inspection until parent-session cleanup. Activation requires
+`workflow.enabled`, `workflow.subagent.enabled`, explicit `mux: "herdr"`, and
+exactly `HERDR_ENV === '1'`. There is no environment probing, automatic mux
+selection, or fallback. If unconfigured, disabled, or outside that Herdr
+environment, the entry registers no tools, hooks, or commands.
+
+| Tool | Purpose |
+| --- | --- |
+| `subagent` | Start a general background task. |
+| `get_subagent_result` | Retrieve a task's status and result. |
+| `steer_subagent` | Send guidance to a running task. |
+| `stop_subagent` | Cancel a queued or running task. |
+
+Use `/subagent:views [id] right|down` to open a view attached to an existing Pi
+terminal, on the right or below. The attached view allows inspection and control
+of that Pi terminal. Closing a view only detaches it; it does not kill the worker.
+Use `/subagent:views <id> close` to close an attachment from the parent Pi, or
+`focus` to focus an existing view. Running `/subagent:views` without arguments
+opens the selection menu. Views are native control attachments, not read-only
+viewers.
+
+`stop_subagent` cancels the task and retains its terminal when Pi cooperates;
+if cancellation does not settle within five seconds, the terminal is destroyed.
+Parent session shutdown/reload cleans up owned workers and views. Workers share
+the filesystem and credentials and are not a sandbox. They start with
+`--no-approve`, so trust-gated project resources are not loaded automatically.
+
+The worker bridge uses authenticated loopback TCP JSONL, not terminal screen
+parsing. Command frames and returned results are bounded to 64 KiB; truncated
+results identify the session file. State is session-scoped: cross-process task
+recovery, automatic reconnect, and session resume are not implemented. IPC loss
+triggers worker cleanup before releasing its queue slot. Failed cleanup is
+reported as `disconnected`; use `stop_subagent` to retry.
+
+Only `src/extensions/subagent/index.ts` is listed in the root and workflow-kit
+Pi manifests. The background Pi loads `src/extensions/subagent/worker.ts` via an
+explicit `-e`; the worker is never auto-loaded as a package resource.
+
 ## Configuration
 
 Use the `workflow` section of agent-dir `pi-kits.json`; edit then `/reload`.
-`enabled` disables the kit, while `commit.enabled` and `notify.enabled` gate
-individual entries. `commit.model` sets the first picker option, ahead of model
-memory and the current model; `thinking` and `timeoutMs` configure generation.
+`enabled` disables the kit, while `commit.enabled`, `notify.enabled`,
+`askUserQuestion.enabled`, and `subagent.enabled` gate individual entries.
+Subagents additionally require an explicit mux and the Herdr environment above.
+`commit.model` sets the first picker option, ahead of model memory and the current
+model; `thinking` and `timeoutMs` configure generation.
 `rememberModel: false` disables reading/writing `commit.lastModel`; the factory
 still reads configuration to apply feature switches and generation settings.
 `notify.quietPeriodMs` controls the idle delay (default 1000 ms); disabling notify

@@ -6,7 +6,7 @@ import { SCRIPT_PATHS } from "./core.ts";
 
 const packageRoot = new URL("../../../", import.meta.url);
 
-test("manifest exposes only the three extension factories and the pure API", () => {
+test("manifest exposes only the four extension factories and the pure API", () => {
   const manifest = JSON.parse(
     readFileSync(new URL("package.json", packageRoot), "utf8"),
   );
@@ -15,6 +15,7 @@ test("manifest exposes only the three extension factories and the pure API", () 
     "./src/extensions/commit/index.ts",
     "./src/extensions/notify/index.ts",
     "./src/extensions/ask-user-question/index.ts",
+    "./src/extensions/subagent/index.ts",
   ]);
   assert.equal(
     manifest.exports["./notifications"],

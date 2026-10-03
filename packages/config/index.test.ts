@@ -32,6 +32,11 @@ test("absent config uses defaults without creating a file", (t) => {
   assert.equal(config.workflow.commit.timeoutMs, 120_000);
   assert.equal(config.workflow.commit.rememberModel, true);
   assert.equal(config.workflow.notify.quietPeriodMs, 1_000);
+  assert.deepEqual(config.workflow.subagent, {
+    enabled: true,
+    mux: undefined,
+    maxConcurrent: 4,
+  });
   assert.equal(config.web.search.enabled, true);
   assert.equal(config.web.search.routing.provider, "searxng");
   assert.equal(config.web.search.timeoutMs, 15_000);
@@ -68,6 +73,35 @@ test("partial config preserves explicit false and zero", () => {
   assert.equal(config.web.fetch.enabled, true);
 });
 
+test("subagent settings require explicit mux and preserve defaults", () => {
+  for (const subagent of [{}, { enabled: true }]) {
+    assert.deepEqual(
+      parsePiKitsConfig(JSON.stringify({ workflow: { subagent } })).workflow
+        .subagent,
+      { enabled: true, mux: undefined, maxConcurrent: 4 },
+    );
+  }
+  assert.deepEqual(
+    parsePiKitsConfig('{"workflow":{"subagent":{"mux":"herdr"}}}').workflow
+      .subagent,
+    { enabled: true, mux: "herdr", maxConcurrent: 4 },
+  );
+  for (const maxConcurrent of [1, 32]) {
+    const config = parsePiKitsConfig(
+      JSON.stringify({
+        workflow: {
+          subagent: { enabled: false, mux: "herdr", maxConcurrent },
+        },
+      }),
+    );
+    assert.deepEqual(config.workflow.subagent, {
+      enabled: false,
+      mux: "herdr",
+      maxConcurrent,
+    });
+  }
+});
+
 test("fresh snapshots pick up edits without retaining mutable defaults", (t) => {
   const dir = mkdtempSync(join(tmpdir(), "pi-kits-config-"));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
@@ -92,6 +126,14 @@ for (const [name, value] of [
   ],
   ["invalid timeout", '{"workflow":{"commit":{"timeoutMs":0}}}'],
   ["invalid thinking", '{"workflow":{"commit":{"thinking":"invalid"}}}'],
+  ["unsupported mux", '{"workflow":{"subagent":{"mux":"tmux"}}}'],
+  ["null mux", '{"workflow":{"subagent":{"mux":null}}}'],
+  ["invalid subagent enabled", '{"workflow":{"subagent":{"enabled":"true"}}}'],
+  ["zero concurrency", '{"workflow":{"subagent":{"maxConcurrent":0}}}'],
+  ["overflow concurrency", '{"workflow":{"subagent":{"maxConcurrent":33}}}'],
+  ["fractional concurrency", '{"workflow":{"subagent":{"maxConcurrent":1.5}}}'],
+  ["string concurrency", '{"workflow":{"subagent":{"maxConcurrent":"4"}}}'],
+  ["unknown subagent field", '{"workflow":{"subagent":{"agent":"custom"}}}'],
   ["unknown provider", '{"web":{"search":{"routing":{"provider":"invalid"}}}}'],
   ["invalid results", '{"web":{"search":{"maxResults":11}}}'],
   [
@@ -173,12 +215,15 @@ test("published JSON schema and example match runtime validation", () => {
     ),
     JSON.parse(JSON.stringify(PI_KITS_SCHEMA)),
   );
-  assert.doesNotThrow(() =>
-    parsePiKitsConfig(
-      readFileSync(
-        new URL("../../pi-kits.example.json", import.meta.url),
-        "utf8",
-      ),
+  const example = parsePiKitsConfig(
+    readFileSync(
+      new URL("../../pi-kits.example.json", import.meta.url),
+      "utf8",
     ),
   );
+  assert.deepEqual(example.workflow.subagent, {
+    enabled: true,
+    mux: "herdr",
+    maxConcurrent: 4,
+  });
 });

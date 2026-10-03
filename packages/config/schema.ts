@@ -49,6 +49,11 @@ export const PI_KITS_SCHEMA = Type.Object(
     workflow: section({
       enabled,
       askUserQuestion: feature(),
+      subagent: section({
+        enabled,
+        mux: Type.Optional(Type.Literal("herdr")),
+        maxConcurrent: integer(1, 32, 4),
+      }),
       commit: section({
         enabled,
         model: Type.Optional(text()),

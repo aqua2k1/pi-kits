@@ -16,11 +16,42 @@ Requires Pi and Node.js >= 22.19.
 | --- | --- |
 | [workspace-kit](packages/workspace-kit/README.md) | nvim, lazygit, yazi, open files/URLs, reply and request previews |
 | [usage-kit](packages/usage-kit/README.md) | Provider usage and token/cost reports |
-| [workflow-kit](packages/workflow-kit/README.md) | Conventional Commits, desktop notifications, and user questions |
+| [workflow-kit](packages/workflow-kit/README.md) | Conventional Commits, desktop notifications, user questions, and opt-in Herdr subagents |
 | [web-kit](packages/web-kit/README.md) | Web search and web/GitHub fetching |
 
 Select `gruvbox` in `/settings`. Toggle resources with `pi config`.
 
 ## Configuration
 
-[Configuration example](pi-kits.example.json)
+Settings live in agent-dir `pi-kits.json` (honoring `PI_CODING_AGENT_DIR`),
+validated and defaulted through `@pi-kits/config`. Edit then `/reload`.
+See the [configuration example](pi-kits.example.json) and
+[JSON schema](pi-kits.schema.json).
+
+### Herdr subagents (MVP)
+
+Opt in with `workflow.subagent`:
+
+```json
+{
+  "workflow": {
+    "subagent": { "mux": "herdr", "enabled": true, "maxConcurrent": 4 }
+  }
+}
+```
+
+Only `herdr` is supported. Activation requires `HERDR_ENV === '1'`,
+`workflow.enabled`, `subagent.enabled`, and explicit `mux: "herdr"`.
+`enabled` defaults to `true`, but `mux` is undefined by default, so no mux
+configuration means no activation. Disabled or unconfigured subagents register
+no tools, hooks, or commands. There is no environment probing or fallback.
+`maxConcurrent` is an integer from 1 to 32 (default 4).
+
+Tools: `subagent`, `get_subagent_result`, `steer_subagent`, `stop_subagent`.
+`/subagent:views [id] right|down` opens a view attached to an existing Pi terminal
+for inspection and control; closing the view does not kill the worker.
+Background tasks use Herdr's native Pi terminals plus a worker bridge, not a
+custom PTY. `worker.ts` is loaded only via explicit `-e`, never a package manifest
+entry. The first version supports general tasks with `model` and `thinking`
+parameters, not scheduled tasks, worktree management, or custom agents.
+See [workflow-kit](packages/workflow-kit/README.md#herdr-subagents-mvp) for details.
