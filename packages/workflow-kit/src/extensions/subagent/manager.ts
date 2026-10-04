@@ -1,6 +1,9 @@
 import { randomBytes, randomUUID } from "node:crypto";
 import { createServer, type Server, type Socket } from "node:net";
+import { homedir } from "node:os";
+import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { getAgentDir, SUBAGENT_DEFAULT_EXTENSIONS } from "@pi-kits/config";
 import type { AgentDefinition } from "./agents.ts";
 import {
   type MuxAdapter,
@@ -74,6 +77,7 @@ interface AgentRecord {
 
 export interface ManagerOptions {
   maxConcurrent?: number;
+  extensionAllowlist?: readonly string[];
   startupTimeoutMs?: number;
   cancelTimeoutMs?: number;
   workerPath?: string;
@@ -383,6 +387,20 @@ export class SubagentManager {
         this.options.workerPath ??
           fileURLToPath(new URL("./worker.ts", import.meta.url)),
       ];
+      for (const extension of new Set(
+        (this.options.extensionAllowlist ?? SUBAGENT_DEFAULT_EXTENSIONS).map(
+          (entry) => entry.trim(),
+        ),
+      )) {
+        const path = extension.trim();
+        const expanded = path.startsWith("~/")
+          ? resolve(homedir(), path.slice(2))
+          : path;
+        argv.push(
+          "-e",
+          path.startsWith("builtin:") ? path : resolve(getAgentDir(), expanded),
+        );
+      }
       const agent = record.options.agent;
       const model = agent?.model ?? record.options.model;
       const thinking = agent?.thinking ?? record.options.thinking;
@@ -674,6 +692,13 @@ function taskCommand(options: SpawnOptions) {
           instructions: {
             systemPrompt: options.agent.systemPrompt,
             promptMode: options.agent.promptMode,
+            ...(options.agent.tools !== undefined
+              ? {
+                  tools: options.agent.tools.filter(
+                    (name) => !options.agent?.disallowedTools?.includes(name),
+                  ),
+                }
+              : {}),
           },
         }
       : {}),

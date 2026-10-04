@@ -13,16 +13,7 @@ export const THINKING_LEVELS = [
   "max",
 ] as const;
 export type ThinkingLevel = (typeof THINKING_LEVELS)[number];
-const BUILTIN_TOOLS = new Set([
-  "read",
-  "bash",
-  "edit",
-  "write",
-  "grep",
-  "find",
-  "ls",
-  "powershell",
-]);
+const TOOL_NAME = /^[a-zA-Z_][a-zA-Z0-9_.:-]*$/;
 const FIELDS = new Set([
   "description",
   "display_name",
@@ -116,8 +107,8 @@ export function parseAgentDefinition(
         return item.trim();
       })
       .filter(Boolean);
-    if (names.some((tool) => !BUILTIN_TOOLS.has(tool))) {
-      fail(`${field} contains an unsupported built-in tool`);
+    if (names.some((tool) => !TOOL_NAME.test(tool))) {
+      fail(`${field} contains an invalid tool name`);
     }
     return [...new Set(names)];
   };

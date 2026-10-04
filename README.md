@@ -46,6 +46,9 @@ Only `herdr` is supported. Activation requires `HERDR_ENV === '1'`,
 configuration means no activation. Disabled or unconfigured subagents register
 no tools, hooks, or commands. There is no environment probing or fallback.
 `maxConcurrent` is an integer from 1 to 32 (default 4).
+`extensionAllowlist` explicitly loads trusted extensions in every worker, defaulting
+to `["builtin:codemode", "builtin:tool-search"]`. An explicit list replaces these
+defaults; `[]` loads only the worker bridge. Parent extensions are not inherited.
 
 Tools: `subagent`, `get_subagent_result`, `steer_subagent`, `stop_subagent`.
 `/subagent:views [id] [open|focus|close]` manages views attached to existing Pi

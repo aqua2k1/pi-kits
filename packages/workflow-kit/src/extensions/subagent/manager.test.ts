@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import { connect, type Socket } from "node:net";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import { test } from "node:test";
 import { setTimeout as delay } from "node:timers/promises";
+import { useAgentDir } from "../../test-utils/agent-dir.ts";
 import { parseAgentDefinition } from "./agents.ts";
 import { SubagentManager } from "./manager.ts";
 import type {
@@ -129,7 +132,7 @@ test("manager is lazy, starts an authenticated worker and returns structured res
   assert.equal(start.env.PI_KITS_SUBAGENT_WORKER, "1");
   assert.ok(start.argv.includes("--no-approve"));
   assert.ok(start.argv.includes("--no-extensions"));
-  assert.equal(start.argv.filter((arg) => arg === "-e").length, 1);
+  assert.equal(start.argv.filter((arg) => arg === "-e").length, 3);
   assert.ok(start.argv.includes("sonnet"));
   assert.deepEqual(mux.commands.get(agent.id), [
     { type: "task", prompt: task.prompt },
@@ -204,6 +207,8 @@ test("named agent configuration controls worker argv and structured system instr
   assert.equal(argv[argv.indexOf("--exclude-tools") + 1], "write");
   assert.ok(argv.includes("--no-context-files"));
   assert.ok(argv.includes("--no-extensions"));
+  assert.ok(argv.includes("builtin:codemode"));
+  assert.ok(argv.includes("builtin:tool-search"));
   assert.deepEqual(mux.commands.get(agent.id), [
     {
       type: "task",
@@ -211,6 +216,7 @@ test("named agent configuration controls worker argv and structured system instr
       instructions: {
         systemPrompt: "System instructions",
         promptMode: "replace",
+        tools: ["read", "grep"],
       },
     },
   ]);
@@ -234,6 +240,43 @@ test("empty agent tools disable all tools and append mode retains normal context
   await until(() => mux.commands.get(agent.id)?.length === 1);
   assert.ok(mux.started[0].argv.includes("--no-tools"));
   assert.ok(!mux.started[0].argv.includes("--no-context-files"));
+});
+
+test("explicit extension allowlists replace defaults, including an empty list", async (t) => {
+  for (const extensionAllowlist of [
+    [],
+    ["builtin:mcp", "/trusted/custom.ts"],
+  ]) {
+    const mux = new FakeMux();
+    const manager = new SubagentManager(mux, { extensionAllowlist });
+    t.after(() => manager.close());
+    const agent = manager.spawn(task);
+    await until(() => mux.commands.get(agent.id)?.length === 1);
+    const argv = mux.started[0].argv;
+    const extensions = argv.flatMap((arg, i) =>
+      arg === "-e" ? [argv[i + 1]] : [],
+    );
+    assert.equal(extensions.length, extensionAllowlist.length + 1);
+    assert.deepEqual(extensions.slice(1), extensionAllowlist);
+    assert.ok(!argv.includes("builtin:codemode"));
+    assert.ok(!argv.includes("builtin:tool-search"));
+    assert.ok(argv.includes("--no-extensions"));
+  }
+});
+
+test("extension paths resolve from the agent directory, never the task cwd", async (t) => {
+  const agentDir = useAgentDir(t);
+  const mux = new FakeMux();
+  const manager = new SubagentManager(mux, {
+    extensionAllowlist: ["extensions/custom file.ts", "~/trusted.ts"],
+  });
+  t.after(() => manager.close());
+  const agent = manager.spawn({ ...task, cwd: "/untrusted/project" });
+  await until(() => mux.commands.get(agent.id)?.length === 1);
+  const argv = mux.started[0].argv;
+  assert.ok(argv.includes(join(agentDir, "extensions/custom file.ts")));
+  assert.ok(argv.includes(join(homedir(), "trusted.ts")));
+  assert.ok(!argv.includes("/untrusted/project/extensions/custom file.ts"));
 });
 
 test("oversized agent instructions fail before worker creation", () => {

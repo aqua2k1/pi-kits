@@ -21,6 +21,7 @@ const MAX_ACTIVITY_BYTES = 4096;
 export interface WorkerInstructions {
   systemPrompt: string;
   promptMode: "replace" | "append";
+  tools?: string[];
 }
 
 export type WorkerCommand =
@@ -132,7 +133,10 @@ export function parseWorkerCommand(value: unknown): WorkerCommand {
       !instructions ||
       typeof instructions !== "object" ||
       typeof instructions.systemPrompt !== "string" ||
-      !["replace", "append"].includes(instructions.promptMode ?? "")
+      !["replace", "append"].includes(instructions.promptMode ?? "") ||
+      (instructions.tools !== undefined &&
+        (!Array.isArray(instructions.tools) ||
+          instructions.tools.some((name) => typeof name !== "string" || !name)))
     ) {
       throw new Error("Invalid worker instructions");
     }
@@ -142,6 +146,9 @@ export function parseWorkerCommand(value: unknown): WorkerCommand {
       instructions: {
         systemPrompt: instructions.systemPrompt,
         promptMode: instructions.promptMode as WorkerInstructions["promptMode"],
+        ...(instructions.tools !== undefined
+          ? { tools: instructions.tools }
+          : {}),
       },
     };
   }
@@ -371,6 +378,17 @@ export function registerWorkerBridge(
     const ctx = context;
     preparing = true;
     try {
+      if (command.type === "task" && command.instructions?.tools) {
+        const activeTools = new Set(pi.getActiveTools());
+        const missing = command.instructions.tools.filter(
+          (name) => !activeTools.has(name),
+        );
+        if (missing.length) {
+          throw new Error(
+            `Requested tools are unavailable: ${missing.join(", ")}. Check workflow.subagent.extensionAllowlist.`,
+          );
+        }
+      }
       if (!ctx.model) throw new Error("No Pi model selected");
       if (!ctx.modelRegistry.hasConfiguredAuth(ctx.model)) {
         const auth = await ctx.modelRegistry.getApiKeyAndHeaders(ctx.model);

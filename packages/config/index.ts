@@ -9,9 +9,17 @@ import {
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { Value } from "typebox/value";
-import { PI_KITS_SCHEMA, type PiKitsFileConfig } from "./schema.ts";
+import {
+  PI_KITS_SCHEMA,
+  type PiKitsFileConfig,
+  SUBAGENT_DEFAULT_EXTENSIONS,
+} from "./schema.ts";
 
-export { PI_KITS_SCHEMA, type PiKitsFileConfig } from "./schema.ts";
+export {
+  PI_KITS_SCHEMA,
+  type PiKitsFileConfig,
+  SUBAGENT_DEFAULT_EXTENSIONS,
+} from "./schema.ts";
 export const PI_KITS_CONFIG_FILE = "pi-kits.json";
 export const WEB_DEFAULTS = {
   provider: "searxng" as const,
@@ -137,6 +145,10 @@ export function resolvePiKitsConfig(raw: PiKitsFileConfig = {}) {
         enabled: raw.workflow?.subagent?.enabled ?? true,
         mux: raw.workflow?.subagent?.mux,
         maxConcurrent: raw.workflow?.subagent?.maxConcurrent ?? 4,
+        extensionAllowlist: [
+          ...(raw.workflow?.subagent?.extensionAllowlist ??
+            SUBAGENT_DEFAULT_EXTENSIONS),
+        ],
       },
       commit: {
         enabled: raw.workflow?.commit?.enabled ?? true,

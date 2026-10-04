@@ -4,7 +4,7 @@ import {
   type ExtensionAPI,
   type ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
-import { readPiKitsConfig } from "@pi-kits/config";
+import { readPiKitsConfig, SUBAGENT_DEFAULT_EXTENSIONS } from "@pi-kits/config";
 import { Type } from "typebox";
 import {
   DOCKED_PANEL_CLOSED,
@@ -49,6 +49,7 @@ export function registerSubagents(
   pi: ExtensionAPI,
   adapter: MuxAdapter,
   maxConcurrent = 4,
+  extensionAllowlist: readonly string[] = SUBAGENT_DEFAULT_EXTENSIONS,
 ): void {
   let manager: SubagentManager | undefined;
   let status: SubagentStatusWidget | undefined;
@@ -57,6 +58,7 @@ export function registerSubagents(
     context = ctx ?? context;
     manager ??= new SubagentManager(adapter, {
       maxConcurrent,
+      extensionAllowlist,
       onComplete(snapshot) {
         pi.sendMessage(
           {
@@ -265,5 +267,10 @@ export default function subagentExtension(pi: ExtensionAPI): void {
   }
   const adapter = new HerdrAdapter();
   if (!adapter.check_env()) return;
-  registerSubagents(pi, adapter, workflow.subagent.maxConcurrent);
+  registerSubagents(
+    pi,
+    adapter,
+    workflow.subagent.maxConcurrent,
+    workflow.subagent.extensionAllowlist,
+  );
 }

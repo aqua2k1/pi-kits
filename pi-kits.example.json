@@ -24,7 +24,12 @@
   "workflow": {
     "enabled": true,
     "askUserQuestion": { "enabled": true },
-    "subagent": { "mux": "herdr", "enabled": true, "maxConcurrent": 4 },
+    "subagent": {
+      "mux": "herdr",
+      "enabled": true,
+      "maxConcurrent": 4,
+      "extensionAllowlist": ["builtin:codemode", "builtin:tool-search"]
+    },
     "commit": {
       "enabled": true,
       "timeoutMs": 120000,

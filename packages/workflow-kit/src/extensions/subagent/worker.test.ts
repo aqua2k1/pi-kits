@@ -90,6 +90,7 @@ function harness(connect?: (config: WorkerConfig) => Socket) {
       handlers.set(name, handler);
       return () => handlers.delete(name);
     },
+    getActiveTools: () => ["read", "codemode"],
     sendUserMessage(text: string, options?: { deliverAs?: string }) {
       messages.push({ text, deliverAs: options?.deliverAs });
       sent.emit("message");
@@ -338,6 +339,35 @@ test("structured agent instructions replace/append system prompts and persist in
   assert.equal(before(), undefined);
 });
 
+test("missing requested tools fail before a model turn instead of being ignored", () => {
+  const h = harness();
+  const socket = h.start();
+  socket.command({
+    type: "task",
+    prompt: "work",
+    instructions: {
+      systemPrompt: "test",
+      promptMode: "replace",
+      tools: ["web_search"],
+    },
+  });
+  assert.equal(h.messages.length, 0);
+  assert.match(
+    completions(socket)[0].error ?? "",
+    /web_search.*extensionAllowlist/,
+  );
+  socket.command({
+    type: "task",
+    prompt: "work",
+    instructions: {
+      systemPrompt: "test",
+      promptMode: "replace",
+      tools: ["read", "codemode"],
+    },
+  });
+  assert.equal(h.messages.length, 1);
+});
+
 test("worker rejects malformed prompt instructions rather than ignoring restrictions", () => {
   for (const instructions of [
     null,
@@ -346,6 +376,8 @@ test("worker rejects malformed prompt instructions rather than ignoring restrict
     {},
     { systemPrompt: 42, promptMode: "replace" },
     { systemPrompt: "x", promptMode: "typo" },
+    { systemPrompt: "x", promptMode: "replace", tools: "codemode" },
+    { systemPrompt: "x", promptMode: "replace", tools: [false] },
   ]) {
     assert.throws(
       () => parseWorkerCommand({ type: "task", prompt: "work", instructions }),

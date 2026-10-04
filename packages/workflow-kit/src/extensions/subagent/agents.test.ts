@@ -68,7 +68,7 @@ test("project agents replace same-name global files as a whole, case-insensitive
 
 test("project replacements skip invalid or oversized global contents", (t) => {
   const f = fixture(t);
-  f.file("global", "review.md", "---\ntools: codemode\n---\nGlobal prompt");
+  f.file("global", "review.md", "---\nextensions: true\n---\nGlobal prompt");
   f.file("global", "large.md", "x".repeat(64 * 1024 + 1));
   f.file("project", "review.md", "---\ntools: none\n---\nProject prompt");
   f.file("project", "large.md", "Project prompt");
@@ -76,7 +76,7 @@ test("project replacements skip invalid or oversized global contents", (t) => {
   assert.equal(agents.get("review")?.source, "project");
   assert.deepEqual(agents.get("review")?.tools, []);
   assert.equal(agents.get("large")?.systemPrompt, "Project prompt");
-  f.file("project", "review.md", "---\ntools: codemode\n---\nInvalid project");
+  f.file("project", "review.md", "---\nextensions: true\n---\nInvalid project");
   assert.throws(() => loadAgentDefinitions(f.cwd, f.agentDir), /Invalid agent/);
 });
 
@@ -121,6 +121,20 @@ run_in_background: false
   assert.equal(agent.runInBackground, false);
 });
 
+test("tool names can select native CLI and whitelisted extension tools", () => {
+  const agent = parseAgentDefinition(
+    "---\ntools: read, codemode, tool_search, web_search\n---\nPrompt",
+    "/agents/explorer.md",
+    "global",
+  );
+  assert.deepEqual(agent.tools, [
+    "read",
+    "codemode",
+    "tool_search",
+    "web_search",
+  ]);
+});
+
 test("explicit empty/none tools never fall back to unrestricted tools", () => {
   for (const value of ["none", "[]", '""']) {
     const agent = parseAgentDefinition(
@@ -138,7 +152,7 @@ test("explicit empty/none tools never fall back to unrestricted tools", () => {
 
 test("invalid and unsupported settings fail closed, never silently widen permissions", () => {
   for (const fields of [
-    "tools: bogus",
+    "tools: invalid tool",
     "tools: null",
     "tools: 123",
     "tools: [false]",

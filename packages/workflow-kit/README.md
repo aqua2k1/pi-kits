@@ -253,10 +253,10 @@ if cancellation does not settle within five seconds, the terminal is destroyed.
 Parent session shutdown/reload cleans up owned workers and views. Workers share
 the filesystem and credentials and are not a sandbox. They start with
 `--no-approve`, so trust-gated project resources are not loaded automatically.
-Workers also use `--no-extensions` and load only the worker bridge explicitly;
-parent/user extensions, including custom tools and permission extensions, are
-not inherited. This prevents unrelated or older installed extensions from
-blocking worker startup.
+Workers also use `--no-extensions` and explicitly load the worker bridge plus
+`workflow.subagent.extensionAllowlist`. Defaults are `builtin:codemode` and
+`builtin:tool-search`; arbitrary parent/user extensions, including permission
+extensions, are not inherited. Add trusted extensions to this list explicitly.
 
 The worker bridge uses authenticated loopback TCP JSONL, not terminal screen
 parsing. Command frames and returned results are bounded to 64 KiB; truncated
@@ -324,7 +324,7 @@ Supported YAML frontmatter fields use the reference extension's snake_case names
 | `display_name` | Type name; shown beside the task in widgets/views. |
 | `model` | Call parameter, then parent model. |
 | `thinking` | Call parameter, then parent thinking level. |
-| `tools` | Native Pi defaults; CSV or YAML array, `none`/empty disables all tools. |
+| `tools` | Native Pi defaults; CSV or YAML array, `none`/empty disables all tools. Built-in and whitelisted extension tool names are accepted. |
 | `disallowed_tools` | No additional denylist; CSV or YAML array of built-in tools. |
 | `prompt_mode` | `replace`: body replaces the worker system prompt and context-file discovery is disabled. `append` appends to the worker's normal Pi prompt. |
 | `enabled` | `true`; `false` disables selection. |
@@ -332,17 +332,46 @@ Supported YAML frontmatter fields use the reference extension's snake_case names
 
 Configured model, thinking, and background mode take precedence over call
 parameters. Thinking supports `off`, `minimal`, `low`, `medium`, `high`, `xhigh`,
-and `max`. Tool names are Pi built-ins (`read`, `bash`, `edit`, `write`, `grep`,
-`find`, `ls`, `powershell`); a denylist is applied after the allowlist. Tool
+and `max`. Tool names include Pi built-ins (`read`, `bash`, `edit`, `write`,
+`grep`, `find`, `ls`, `powershell`), `codemode`, `tool_search`, and tools registered
+by explicitly whitelisted extensions. A denylist is applied after the allowlist;
+missing requested tools fail before a model turn instead of being silently
+ignored. Codemode cannot use tools outside the CLI allowlist/denylist. Tool
 selection is not a sandbox: `bash` can still change files.
 
 The Markdown body is sent as bounded structured IPC, not substituted into shell
 commands or interpreted as a filename. Its prompt remains active after completion
-for native terminal interaction. Workers still load only the worker bridge;
-`append` does not fork the parent conversation or inherit its extensions. Other
+for native terminal interaction. Workers load the bridge and the shared extension
+allowlist; `append` does not fork the parent conversation or inherit its extensions. Other
 reference fields (`extensions`, `skills`, `max_turns`, `memory`, `isolation`,
 `inherit_context`, etc.) are not implemented and are rejected, not silently
 ignored. Agent files and complete task IPC frames each have a 64 KiB limit.
+
+### Worker extension allowlist
+
+Configure `workflow.subagent.extensionAllowlist` in agent-dir `pi-kits.json`:
+
+```json
+{
+  "workflow": {
+    "subagent": {
+      "mux": "herdr",
+      "extensionAllowlist": ["builtin:codemode", "builtin:tool-search"]
+    }
+  }
+}
+```
+
+Every worker explicitly loads this shared list alongside its bridge. The list
+replaces the defaults as a whole: `[]` loads only the bridge. It controls **which
+extension code is loaded**, while each agent\'s `tools` selects **which tools are
+enabled**; loading codemode does not automatically activate it. Agent Markdown
+cannot add extensions. Add trusted extension files/directories explicitly for
+custom tools; paths may be absolute, `~/...`, or relative to the agent directory
+(not the task/project cwd). Built-in extension names use `builtin:<name>`; the
+tool `tool_search` is provided by `builtin:tool-search`. Reload the parent after
+changing the whitelist. Extensions run with full process permissions, so this
+is a loading policy, not an OS sandbox.
 
 ## Configuration
 

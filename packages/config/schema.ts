@@ -1,5 +1,10 @@
 import { type Static, type TProperties, Type } from "typebox";
 
+export const SUBAGENT_DEFAULT_EXTENSIONS = [
+  "builtin:codemode",
+  "builtin:tool-search",
+] as const;
+
 const enabled = Type.Optional(Type.Boolean({ default: true }));
 const text = () => Type.String({ minLength: 1, pattern: "\\S" });
 const integer = (minimum: number, maximum: number, value?: number) =>
@@ -53,6 +58,15 @@ export const PI_KITS_SCHEMA = Type.Object(
         enabled,
         mux: Type.Optional(Type.Literal("herdr")),
         maxConcurrent: integer(1, 32, 4),
+        extensionAllowlist: Type.Optional(
+          Type.Array(
+            Type.String({
+              minLength: 1,
+              pattern: "^(?=.*\\S)[^\\x00-\\x1f\\x7f]+$",
+            }),
+            { uniqueItems: true, default: [...SUBAGENT_DEFAULT_EXTENSIONS] },
+          ),
+        ),
       }),
       commit: section({
         enabled,

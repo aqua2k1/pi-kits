@@ -16,6 +16,7 @@ import {
   parsePiKitsConfig,
   readPiKitsConfig,
   readPiKitsFile,
+  SUBAGENT_DEFAULT_EXTENSIONS,
   updatePiKitsConfig,
 } from "./index.ts";
 
@@ -36,6 +37,7 @@ test("absent config uses defaults without creating a file", (t) => {
     enabled: true,
     mux: undefined,
     maxConcurrent: 4,
+    extensionAllowlist: [...SUBAGENT_DEFAULT_EXTENSIONS],
   });
   assert.equal(config.web.search.enabled, true);
   assert.equal(config.web.search.routing.provider, "searxng");
@@ -78,13 +80,23 @@ test("subagent settings require explicit mux and preserve defaults", () => {
     assert.deepEqual(
       parsePiKitsConfig(JSON.stringify({ workflow: { subagent } })).workflow
         .subagent,
-      { enabled: true, mux: undefined, maxConcurrent: 4 },
+      {
+        enabled: true,
+        mux: undefined,
+        maxConcurrent: 4,
+        extensionAllowlist: [...SUBAGENT_DEFAULT_EXTENSIONS],
+      },
     );
   }
   assert.deepEqual(
     parsePiKitsConfig('{"workflow":{"subagent":{"mux":"herdr"}}}').workflow
       .subagent,
-    { enabled: true, mux: "herdr", maxConcurrent: 4 },
+    {
+      enabled: true,
+      mux: "herdr",
+      maxConcurrent: 4,
+      extensionAllowlist: [...SUBAGENT_DEFAULT_EXTENSIONS],
+    },
   );
   for (const maxConcurrent of [1, 32]) {
     const config = parsePiKitsConfig(
@@ -98,7 +110,48 @@ test("subagent settings require explicit mux and preserve defaults", () => {
       enabled: false,
       mux: "herdr",
       maxConcurrent,
+      extensionAllowlist: [...SUBAGENT_DEFAULT_EXTENSIONS],
     });
+  }
+});
+
+test("explicit subagent extension allowlists replace defaults, including empty", () => {
+  for (const extensionAllowlist of [
+    [],
+    ["builtin:mcp", "/trusted/custom.ts"],
+  ]) {
+    const config = parsePiKitsConfig(
+      JSON.stringify({
+        workflow: { subagent: { extensionAllowlist } },
+      }),
+    );
+    assert.deepEqual(
+      config.workflow.subagent.extensionAllowlist,
+      extensionAllowlist,
+    );
+    assert.notEqual(
+      config.workflow.subagent.extensionAllowlist,
+      extensionAllowlist,
+    );
+  }
+  for (const extensionAllowlist of [
+    null,
+    "builtin:codemode",
+    [""],
+    [" "],
+    [false],
+    ["x", "x"],
+    ["x\n"],
+  ]) {
+    assert.throws(
+      () =>
+        parsePiKitsConfig(
+          JSON.stringify({
+            workflow: { subagent: { extensionAllowlist } },
+          }),
+        ),
+      /Invalid pi-kits.json/,
+    );
   }
 });
 
@@ -108,10 +161,15 @@ test("fresh snapshots pick up edits without retaining mutable defaults", (t) => 
   writeFileSync(getPiKitsConfigPath(dir), '{"usage":{"enabled":false}}');
   const first = readPiKitsConfig(dir);
   first.workspace.enabled = false;
+  first.workflow.subagent.extensionAllowlist.length = 0;
   writeFileSync(getPiKitsConfigPath(dir), "{}");
   const second = readPiKitsConfig(dir);
   assert.equal(second.usage.enabled, true);
   assert.equal(second.workspace.enabled, true);
+  assert.deepEqual(
+    second.workflow.subagent.extensionAllowlist,
+    SUBAGENT_DEFAULT_EXTENSIONS,
+  );
 });
 
 for (const [name, value] of [
@@ -225,5 +283,6 @@ test("published JSON schema and example match runtime validation", () => {
     enabled: true,
     mux: "herdr",
     maxConcurrent: 4,
+    extensionAllowlist: [...SUBAGENT_DEFAULT_EXTENSIONS],
   });
 });
