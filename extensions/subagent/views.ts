@@ -4,7 +4,6 @@ import type {
 } from "@earendil-works/pi-coding-agent";
 import {
   type KeybindingsManager,
-  matchesKey,
   SelectList,
   type TUI,
   type TuiMouseEvent,
@@ -18,7 +17,6 @@ import {
   dockedPanelLayout,
   runDockedPanel,
 } from "../../shared/ui/docked-panel/index.ts";
-import { layoutTabs, type TabLayout, tabAt } from "../../shared/ui/tabs.ts";
 import {
   type AgentSource,
   agentDisplayStatus,
@@ -35,13 +33,10 @@ export interface ViewChoice {
 
 export class SubagentViewsPanel {
   private selectedId?: string;
-  private phase: "agents" | "actions";
-  private actionIndex = 0;
   private finished = false;
   private disposed = false;
   private readonly unsubscribe: () => void;
-  private tabs: TabLayout[] = [];
-  private hits: { y: number; index: number }[] = [];
+  private hits: { y: number; agentId: string }[] = [];
 
   constructor(
     private readonly tui: TUI,
@@ -52,7 +47,6 @@ export class SubagentViewsPanel {
     initialId?: string,
   ) {
     this.selectedId = initialId ?? source.list()[0]?.id;
-    this.phase = initialId ? "actions" : "agents";
     this.unsubscribe = source.subscribe(() => {
       if (!this.finished) this.tui.requestRender();
     });
@@ -68,18 +62,6 @@ export class SubagentViewsPanel {
     return { agents, index, agent: agents[index] };
   }
 
-  private actions(): { value: ViewAction; label: string }[] {
-    const { agent } = this.selected();
-    if (!agent?.terminalId) return [];
-    if (agent.viewId) {
-      return [
-        { value: "focus", label: "Focus existing view" },
-        { value: "close", label: "Close view · keep worker running" },
-      ];
-    }
-    return [{ value: "open", label: "Open view · automatic right-side stack" }];
-  }
-
   cancel(): void {
     if (this.finished) return;
     this.finished = true;
@@ -91,7 +73,6 @@ export class SubagentViewsPanel {
     this.disposed = true;
     this.finished = true;
     this.unsubscribe();
-    this.tabs = [];
     this.hits = [];
   }
 
@@ -99,18 +80,16 @@ export class SubagentViewsPanel {
 
   private confirm(): void {
     const { agent } = this.selected();
-    if (!agent) return;
-    if (this.phase === "agents") {
-      this.phase = "actions";
-      this.actionIndex = 0;
-      this.tui.requestRender();
-      return;
-    }
-    const actions = this.actions();
-    const action = actions[Math.min(this.actionIndex, actions.length - 1)];
-    if (!action) return;
+    if (!agent?.terminalId) return;
     this.finished = true;
-    this.done({ agentId: agent.id, action: action.value });
+    this.done({ agentId: agent.id, action: agent.viewId ? "focus" : "open" });
+  }
+
+  private move(delta: number): void {
+    const { agents, index } = this.selected();
+    const next = Math.max(0, Math.min(agents.length - 1, index + delta));
+    this.selectedId = agents[next]?.id;
+    this.tui.requestRender();
   }
 
   handleInput(data: string): void {
@@ -123,140 +102,83 @@ export class SubagentViewsPanel {
       this.confirm();
       return;
     }
-    if (matchesKey(data, "left") || matchesKey(data, "backspace")) {
-      this.phase = "agents";
-    } else if (matchesKey(data, "tab") || matchesKey(data, "right")) {
-      this.phase = this.phase === "agents" ? "actions" : "agents";
-      this.actionIndex = 0;
-    } else {
-      let delta = 0;
-      if (this.keys.matches(data, "tui.select.up")) delta = -1;
-      if (this.keys.matches(data, "tui.select.down")) delta = 1;
-      if (this.keys.matches(data, "tui.select.pageUp")) delta = -5;
-      if (this.keys.matches(data, "tui.select.pageDown")) delta = 5;
-      if (!delta) return;
-      const { agents, index } = this.selected();
-      if (this.phase === "agents") {
-        const next = Math.max(0, Math.min(agents.length - 1, index + delta));
-        this.selectedId = agents[next]?.id;
-      } else {
-        this.actionIndex = Math.max(
-          0,
-          Math.min(this.actions().length - 1, this.actionIndex + delta),
-        );
-      }
-    }
-    this.tui.requestRender();
+    if (this.keys.matches(data, "tui.select.up")) this.move(-1);
+    else if (this.keys.matches(data, "tui.select.down")) this.move(1);
+    else if (this.keys.matches(data, "tui.select.pageUp")) this.move(-5);
+    else if (this.keys.matches(data, "tui.select.pageDown")) this.move(5);
   }
 
   handleMouse(event: TuiMouseEvent): TuiMouseEventResult | undefined {
     if (this.finished) return;
     if (event.type === "wheel" && event.wheelDelta) {
-      const { agents, index } = this.selected();
-      if (this.phase === "agents") {
-        const next = Math.max(
-          0,
-          Math.min(agents.length - 1, index + event.wheelDelta),
-        );
-        this.selectedId = agents[next]?.id;
-      } else {
-        this.actionIndex = Math.max(
-          0,
-          Math.min(
-            this.actions().length - 1,
-            this.actionIndex + event.wheelDelta,
-          ),
-        );
-      }
-      this.tui.requestRender();
+      this.move(event.wheelDelta);
       return { handled: true };
     }
     if (event.button !== "left") return;
-    const tab = tabAt(this.tabs, event.x, event.y - 1);
     const hit = this.hits.find((item) => item.y === event.y);
-    if (tab === undefined && !hit) return;
+    if (!hit || !this.source.list().some((agent) => agent.id === hit.agentId))
+      return;
     if (event.type === "press") return { handled: true, focus: true };
     if (event.type !== "click") return;
-    if (tab !== undefined) {
-      this.phase = tab === 0 ? "agents" : "actions";
-      this.actionIndex = 0;
-    } else if (hit) {
-      if (this.phase === "agents") {
-        this.selectedId = this.source.list()[hit.index]?.id;
-      } else {
-        this.actionIndex = hit.index;
-        this.confirm();
-      }
-    }
+    this.selectedId = hit.agentId;
+    this.confirm();
     if (!this.finished) this.tui.requestRender();
     return { handled: true, focus: !this.finished };
   }
 
   render(width: number): string[] {
     this.hits = [];
-    this.tabs = [];
     if (width < 1) return [];
-    const layout = dockedPanelLayout(this.tui.terminal.rows);
+    const layout = {
+      ...dockedPanelLayout(this.tui.terminal.rows),
+      showTabs: false,
+    };
     const frame = new DockedPanelFrame(
       layout,
       width,
       this.theme,
       "Subagent views",
     );
-    const phase = this.phase === "agents" ? 0 : 1;
-    this.tabs =
-      layout.showTabs && layout.rows >= 7
-        ? layoutTabs(["[Agents]", "[Actions]"], phase, width)
-        : [];
-    const lines = frame.heading(this.tabs, phase);
+    const lines = frame.heading([], 0);
     const { agents, index, agent } = this.selected();
     const description = agent
       ? agentTitle(agent)
       : "No subagents in this session";
-    lines.push(truncateToWidth(description, width));
-    if (layout.rows >= 7 && agent) {
-      lines.push(
-        truncateToWidth(
-          this.theme.fg(
-            "muted",
-            `${agent.id.slice(0, 8)} · ${agentDisplayStatus(agent)} · ${agent.sessionState === "interactive" ? "User interaction" : agentStats(agent)}`,
-          ),
-          width,
-        ),
-      );
-    }
-    const actions = this.actions();
-    const items =
-      phase === 0
-        ? agents.map((item) => ({
-            value: item.id,
-            label: `${statusIcon(item, this.theme, Date.now())} ${agentTitle(item)} · ${item.id.slice(0, 8)} · ${agentDisplayStatus(item)}`,
-          }))
-        : actions.map((action) => ({
-            value: action.value,
-            label: action.label,
-          }));
-    const selected =
-      phase === 0
-        ? index
-        : Math.min(this.actionIndex, Math.max(0, items.length - 1));
+    const items = agents.map((item) => ({
+      value: item.id,
+      label: `${statusIcon(item, this.theme, Date.now())} ${agentTitle(item)} · ${item.id.slice(0, 8)} · ${agentDisplayStatus(item)}`,
+    }));
     if (layout.rows < 7) {
+      if (agent && layout.rows >= 2)
+        this.hits = [
+          { y: layout.rows >= 3 ? layout.rows - 2 : 1, agentId: agent.id },
+        ];
       return frame.finish([
-        ...frame.heading([], phase),
+        ...lines,
         ...frame.compactBody({
           progress: agent ? agentDisplayStatus(agent) : "No agents",
           title: [description],
           detail: [],
           kind: "value",
           active: () => [
-            truncateToWidth(
-              items[selected]?.label ??
-                (agent ? "Terminal not ready" : "No subagents"),
-              width,
-            ),
+            truncateToWidth(items[index]?.label ?? "No subagents", width),
           ],
         }),
       ]);
+    }
+    lines.push(truncateToWidth(description, width));
+    if (agent) {
+      lines.push(
+        truncateToWidth(
+          this.theme.fg(
+            "muted",
+            agent.terminalId
+              ? `${agent.id.slice(0, 8)} · ${agentDisplayStatus(agent)} · ${agent.sessionState === "interactive" ? "User interaction" : agentStats(agent)}`
+              : "Terminal not ready; waiting…",
+          ),
+          width,
+        ),
+      );
     }
     const { budget, visible } = dockedListBudget(
       layout,
@@ -272,29 +194,25 @@ export class SubagentViewsPanel {
         scrollInfo: (text) => this.theme.fg("dim", text),
         noMatch: (text) => this.theme.fg("warning", text),
       });
-      list.setSelectedIndex(selected);
+      list.setSelectedIndex(index);
       const startY = lines.length;
       const rendered = list.render(width).slice(0, budget);
       const first = Math.max(
         0,
-        Math.min(selected - Math.floor(visible / 2), items.length - visible),
+        Math.min(index - Math.floor(visible / 2), items.length - visible),
       );
-      this.hits = items.slice(first, first + visible).map((_item, offset) => ({
+      this.hits = items.slice(first, first + visible).map((item, offset) => ({
         y: startY + offset,
-        index: first + offset,
+        agentId: item.value,
       }));
       lines.push(...rendered);
-    } else if (items.length && layout.rows >= 3) {
-      lines.push(
-        truncateToWidth(this.theme.fg("accent", items[selected].label), width),
-      );
-    } else if (phase === 1 && agent) {
-      lines.push(this.theme.fg("muted", "Terminal not ready; waiting…"));
     }
-    lines.push(this.theme.fg("muted", "Enter: select · Esc: close"));
+    lines.push(
+      this.theme.fg("muted", "Click / Enter: open or focus · Esc: close panel"),
+    );
     return frame.finish(
       lines,
-      "↑↓ select · Enter · Tab switch · ← back · Esc close",
+      "↑↓ select · Click / Enter open or focus · Esc close panel",
     );
   }
 }

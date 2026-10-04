@@ -232,10 +232,12 @@ only execute the supplied placement instruction. Concurrent opens are serialized
 across agents. Closing a view only detaches it; it does not kill the worker.
 Use `/subagent:views <id> close` to close an attachment from the parent Pi, or
 `focus` to focus an existing view. Running `/subagent:views` without arguments
-opens the shared lower-half docked panel with live Agents/Actions tabs; passing
-only an ID opens its actions directly. Up/Down selects, Enter confirms, Tab
-switches tabs, Left returns to agents, and Esc closes the panel. Fullscreen mode
-also supports mouse selection. Closing the panel does not affect workers.
+opens the shared lower-half docked panel with a single live agent list, without
+tabs or a second action menu. Passing only an ID preselects that agent.
+Clicking an agent or pressing Enter immediately opens its view, or focuses the
+existing view. Up/Down and the mouse wheel select; Esc closes only the panel.
+Queued agents without a terminal cannot open a view yet. Use the explicit
+`close` command above to detach a view without stopping its worker.
 Subagent task/control tool rows default to a compact task title, status, and
 one-line result/error preview. IDs, paths, timestamps, counters, and full prompts/results appear only
 when expanded with Ctrl+O. Rendering does not change tool data or JSON/print output.

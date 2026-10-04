@@ -99,16 +99,14 @@ function panel(source: Source, initialId?: string, rows = 24) {
   };
 }
 
-test("views uses shared docked frame and automatic open action without direction choices", () => {
+test("views uses a single agent list and Enter immediately opens the selected view", () => {
   const source = new Source();
   source.agents = [agent("one"), agent("two")];
   const h = panel(source);
   assert.match(h.component.render(80).join("\n"), /Subagent views/);
   h.component.handleInput("\x1b[B");
-  h.component.handleInput("\r");
-  const actions = h.component.render(80).join("\n");
-  assert.match(actions, /Open view/);
-  assert.doesNotMatch(actions, /Split right|Split down/);
+  const list = h.component.render(80).join("\n");
+  assert.doesNotMatch(list, /\[Agents\]|\[Actions\]|Split right|Split down/);
   h.component.handleInput("\r");
   assert.deepEqual(h.result, { agentId: "two", action: "open" });
   h.component.dispose();
@@ -128,12 +126,7 @@ test("view menu updates live and preserves selection by agent identity", () => {
   ]);
   assert.equal(h.renders, 2);
   h.component.handleInput("\r");
-  h.component.render(80);
-  h.component.handleInput("\x1b[B");
-  h.component.handleInput("\x1b[B");
-  h.component.handleInput("\x1b[B");
-  h.component.handleInput("\r");
-  assert.deepEqual(h.result, { agentId: "two", action: "close" });
+  assert.deepEqual(h.result, { agentId: "two", action: "focus" });
   h.component.dispose();
 });
 
@@ -173,12 +166,11 @@ test("docked panel is half-height and width safe at narrow/short sizes", () => {
   }
 });
 
-test("mouse selects tabs and action rows using component-local coordinates", () => {
+test("clicking an agent row directly opens or focuses its view", () => {
   const source = new Source();
-  source.agents = [agent()];
+  source.agents = [agent(), { ...agent("two"), viewId: "existing" }];
   const h = panel(source);
   const lines = h.component.render(80);
-  const actionsX = lines[1].indexOf("[Actions]");
   const click = (x: number, y: number) =>
     ({
       type: "click",
@@ -186,10 +178,93 @@ test("mouse selects tabs and action rows using component-local coordinates", () 
       x,
       y,
     }) as TuiMouseEvent;
-  h.component.handleMouse(click(actionsX + 1, 1));
-  const actions = h.component.render(80);
-  const openY = actions.findIndex((line) => line.includes("Open view"));
-  h.component.handleMouse(click(4, openY));
+  const targetY = lines.findIndex((line) => line.includes("任务 two · two"));
+  assert.ok(targetY >= 0);
+  h.component.handleMouse(click(4, targetY));
+  assert.deepEqual(h.result, { agentId: "two", action: "focus" });
+  h.component.dispose();
+});
+
+test("clicking a ready agent opens immediately and completes only once", () => {
+  const source = new Source();
+  source.agents = [agent("one"), agent("two")];
+  const h = panel(source);
+  const lines = h.component.render(80);
+  const y = lines.findIndex((line) => line.includes("任务 two · two"));
+  const event = { type: "click", button: "left", x: 4, y } as TuiMouseEvent;
+  assert.ok(y >= 0);
+  assert.equal(
+    h.component.handleMouse({ ...event, type: "press" })?.focus,
+    true,
+  );
+  assert.equal(h.completions, 0);
+  h.component.handleMouse(event);
+  h.component.handleMouse(event);
+  h.component.handleInput("\r");
+  assert.deepEqual(h.result, { agentId: "two", action: "open" });
+  assert.equal(h.completions, 1);
+  h.component.dispose();
+});
+
+test("mouse row identity survives live reordering and ignores removed agents", () => {
+  for (const removed of [false, true]) {
+    const source = new Source();
+    source.agents = [agent("one"), agent("two")];
+    const h = panel(source);
+    const lines = h.component.render(80);
+    const y = lines.findIndex((line) => line.includes("任务 two · two"));
+    source.update(
+      removed
+        ? [agent("one"), agent("replacement")]
+        : [agent("two"), agent("one")],
+    );
+    h.component.handleMouse({
+      type: "click",
+      button: "left",
+      x: 4,
+      y,
+    } as TuiMouseEvent);
+    assert.equal(h.completions, removed ? 0 : 1);
+    if (!removed)
+      assert.deepEqual(h.result, { agentId: "two", action: "open" });
+    h.component.dispose();
+  }
+});
+
+test("compact panels keep the visible selected agent clickable", () => {
+  for (const rows of [4, 6, 8, 10, 12]) {
+    const source = new Source();
+    source.agents = [agent("one"), agent("two")];
+    const h = panel(source, "two", rows);
+    const lines = h.component.render(80);
+    const y = lines.findIndex((line) => line.includes("任务 two · two"));
+    assert.ok(y >= 0, `Missing agent row at ${rows} terminal rows`);
+    h.component.handleMouse({
+      type: "click",
+      button: "left",
+      x: 4,
+      y,
+    } as TuiMouseEvent);
+    assert.deepEqual(h.result, { agentId: "two", action: "open" });
+    h.component.dispose();
+  }
+});
+
+test("queued clicks stay in the agent list until the terminal is ready", () => {
+  const source = new Source();
+  source.agents = [{ ...agent("one", "queued"), terminalId: undefined }];
+  const h = panel(source);
+  const lines = h.component.render(80);
+  const y = lines.findIndex((line) => line.includes("任务 one · one"));
+  h.component.handleMouse({
+    type: "click",
+    button: "left",
+    x: 4,
+    y,
+  } as TuiMouseEvent);
+  assert.equal(h.completions, 0);
+  source.update([agent()]);
+  h.component.handleInput("\r");
   assert.deepEqual(h.result, { agentId: "one", action: "open" });
   h.component.dispose();
 });
