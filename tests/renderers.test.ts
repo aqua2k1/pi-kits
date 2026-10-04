@@ -16,6 +16,7 @@ import { useAgentDir } from "./helpers/agent-dir.ts";
 
 const theme = {
   fg: (_color: string, value: string) => value,
+  bg: (_color: string, value: string) => value,
   bold: (value: string) => value,
 } as Theme;
 function registrations() {
@@ -85,7 +86,14 @@ test("all ten public tools and the completion message register shared-style rend
     notification(message, { expanded: false, outputPad: 0 }, theme)
       ?.render(200)
       .join("\n") ?? "";
-  assert.equal(compact, "Subagent · Task A · completed\nDone");
+  assert.equal(
+    compact
+      .split("\n")
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .join("\n"),
+    "Subagent · Task A · completed\nDone",
+  );
   assert.ok(!compact.includes("private-id"));
   const full =
     notification(message, { expanded: true, outputPad: 0 }, theme)

@@ -11,6 +11,7 @@ import {
 
 const theme = {
   fg: (_color: string, value: string) => value,
+  bg: (_color: string, value: string) => value,
   bold: (value: string) => value,
 } as Theme;
 const context = (isError = false) =>
@@ -68,6 +69,39 @@ test("shared renderers distinguish streaming and errors without claiming success
       ).render(80)[0],
       status,
     );
+  }
+});
+
+test("shared messages apply full-width background in both modes", () => {
+  const message = compactMessage("Notification", () => ({
+    status: "completed",
+    preview: "中文🙂",
+  }));
+  const backgroundTheme = {
+    ...theme,
+    bg: (color: string, value: string) => {
+      assert.equal(color, "customMessageBg");
+      return `\x1b[45m${value}\x1b[49m`;
+    },
+  } as Theme;
+  for (const expanded of [false, true]) {
+    for (const width of [8, 80]) {
+      const lines = message(
+        {
+          role: "custom",
+          timestamp: 0,
+          customType: "test",
+          content: "Full message",
+          details: { value: "metadata" },
+          display: true,
+        },
+        { expanded, outputPad: 0 },
+        backgroundTheme,
+      )?.render(width);
+      assert.ok(lines && lines.length > 0);
+      assert.ok(lines.every((line) => line.includes("\x1b[45m")));
+      assert.ok(lines.every((line) => visibleWidth(line) === width));
+    }
   }
 });
 

@@ -4,6 +4,7 @@ import type {
   ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
 import {
+  Box,
   stripTerminalSequences,
   Text,
   truncateToWidth,
@@ -133,11 +134,19 @@ export function compactMessage(
       typeof message.content === "string"
         ? message.content
         : textContent(message.content);
-    if (options.expanded) return expandedResult(content, message.details);
-    return summaryComponent(
-      summarize(message.details) ?? { status: "result", preview: content },
-      theme,
-      label,
+    const box = new Box(1, 1, (text) => theme.bg("customMessageBg", text));
+    box.addChild(
+      options.expanded
+        ? expandedResult(content, message.details)
+        : summaryComponent(
+            summarize(message.details) ?? {
+              status: "result",
+              preview: content,
+            },
+            theme,
+            label,
+          ),
     );
+    return box;
   };
 }
