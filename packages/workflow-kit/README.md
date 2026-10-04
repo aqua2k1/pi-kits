@@ -236,6 +236,10 @@ opens the shared lower-half docked panel with live Agents/Actions tabs; passing
 only an ID opens its actions directly. Up/Down selects, Enter confirms, Tab
 switches tabs, Left returns to agents, and Esc closes the panel. Fullscreen mode
 also supports mouse selection. Closing the panel does not affect workers.
+Subagent task/control tool rows default to a compact task title, status, and
+one-line result/error preview. IDs, paths, timestamps, counters, and full prompts/results appear only
+when expanded with Ctrl+O. Rendering does not change tool data or JSON/print output.
+
 Views are native control attachments, not read-only viewers.
 
 In TUI mode, a live tree-style status area stays above the editor while tasks are

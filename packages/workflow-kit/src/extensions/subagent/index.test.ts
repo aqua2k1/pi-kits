@@ -167,4 +167,16 @@ test("registration is lazy and does not invoke mux operations", () => {
   const capture = registrations();
   registerSubagents(capture.pi, adapter);
   assert.equal(capture.tools.length, 5);
+  for (const name of [
+    "subagent",
+    "get_subagent_result",
+    "steer_subagent",
+    "stop_subagent",
+  ]) {
+    assert.equal(typeof capture.definitions.get(name)?.renderCall, "function");
+    assert.equal(
+      typeof capture.definitions.get(name)?.renderResult,
+      "function",
+    );
+  }
 });

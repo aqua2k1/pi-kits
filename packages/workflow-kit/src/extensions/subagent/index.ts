@@ -14,6 +14,7 @@ import { loadAgentDefinitions, resolveAgentDefinition } from "./agents.ts";
 import { HerdrAdapter } from "./herdr.ts";
 import { type AgentSnapshot, SubagentManager } from "./manager.ts";
 import type { MuxAdapter } from "./mux.ts";
+import { renderSubagentResult, subagentCallRenderer } from "./renderers.ts";
 import { SubagentStatusWidget } from "./status-widget.ts";
 import { showSubagentViews } from "./views.ts";
 
@@ -85,6 +86,8 @@ export function registerSubagents(
     defineTool({
       name: "subagent",
       label: "Subagent",
+      renderCall: subagentCallRenderer("Subagent"),
+      renderResult: renderSubagentResult,
       description:
         "Run a task in an independent Pi session hosted by Herdr. Background by default. Optionally select a user-defined subagent_type; use list_subagent_types to discover names. Agent configuration takes precedence over call parameters. Workers share the filesystem and are not a sandbox. Use /subagent:views for native terminal control.",
       parameters: Type.Object({
@@ -151,6 +154,8 @@ export function registerSubagents(
     defineTool({
       name: "get_subagent_result",
       label: "Subagent result",
+      renderCall: subagentCallRenderer("Subagent result"),
+      renderResult: renderSubagentResult,
       description: "Read a subagent's status and result, optionally waiting.",
       parameters: Type.Object({
         agent_id: agentId,
@@ -168,6 +173,8 @@ export function registerSubagents(
     defineTool({
       name: "steer_subagent",
       label: "Steer subagent",
+      renderCall: subagentCallRenderer("Steer subagent"),
+      renderResult: renderSubagentResult,
       description:
         "Send guidance to a running subagent after its current tools.",
       parameters: Type.Object({
@@ -190,6 +197,8 @@ export function registerSubagents(
     defineTool({
       name: "stop_subagent",
       label: "Stop subagent",
+      renderCall: subagentCallRenderer("Stop subagent"),
+      renderResult: renderSubagentResult,
       description: "Cancel a queued or running task without closing its view.",
       parameters: Type.Object({ agent_id: agentId }),
       async execute(_id, params) {
