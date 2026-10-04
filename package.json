@@ -17,7 +17,7 @@
     "notify": "./extensions/notify/index.ts",
     "ask-user-question": "./extensions/ask-user-question/index.ts",
     "subagent": "./extensions/subagent/index.ts",
-    "web": "./extensions/web/index.ts",
+    "web-kits": "./extensions/web/index.ts",
     "workspace-kit": [
       "./extensions/terminal/index.ts",
       "./extensions/open/index.ts",
@@ -34,7 +34,8 @@
       "./extensions/ask-user-question/index.ts",
       "./extensions/subagent/index.ts"
     ],
-    "web-kit": "./extensions/web/index.ts"
+    "web-kit": "./extensions/web/index.ts",
+    "web": "./extensions/web/index.ts"
   },
   "pi": {
     "extensions": [

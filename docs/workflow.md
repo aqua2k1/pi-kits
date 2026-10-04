@@ -462,7 +462,7 @@ To select only named resources from an installed package, use an object:
   "builtin:tool-search",
   {
     "source": "git:github.com/aqua2k1/pi-kits",
-    "extensions": ["web-kit"]
+    "extensions": ["web-kits"]
   },
   "npm:@narumitw/pi-chrome-devtools"
 ]
@@ -470,7 +470,7 @@ To select only named resources from an installed package, use an object:
 
 Pi locates the package, then the resolver reads its `package.json`
 `extensionResources` declaration. The repository exposes each independent
-extension name (for example `stats`, `subagent`, and `web`). Each individual
+extension name (for example `stats`, `subagent`, and `web-kits`). Each individual
 extension package also declares its own name. Existing `workspace-kit`,
 `usage-kit`, `workflow-kit`, and `web-kit` names remain as compatibility resource
 declarations, not directory names or special cases in subagent code.
@@ -478,8 +478,9 @@ For example, the repository declares:
 
 ```json
 "extensionResources": {
-  "web": "./extensions/web/index.ts",
-  "web-kit": "./extensions/web/index.ts"
+  "web-kits": "./extensions/web/index.ts",
+  "web-kit": "./extensions/web/index.ts",
+  "web": "./extensions/web/index.ts"
 }
 ```
 
@@ -489,7 +490,7 @@ Pi manifest. Unknown names, absent declarations, and undeclared/escaping paths
 fail before worker creation; there is no name-to-path guess or whole-package
 fallback. `extensions: []` loads nothing from that source and does not resolve
 or install it. The configuration example uses this empty selection deliberately;
-change it to `["web-kit"]` to opt in. Defaults still load only codemode and
+change it to `["web-kits"]` to opt in. Defaults still load only codemode and
 tool-search. Packages without named declarations (such as Chrome DevTools) can
 still be loaded using their plain source string.
 

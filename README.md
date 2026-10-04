@@ -27,7 +27,7 @@ Pi manifest. There are no kit groups or redundant `src/extensions` intermediate 
 | `notify` | Desktop completion notifications | [Workflow](docs/workflow.md) |
 | `ask-user-question` | Native user questions | [Workflow](docs/workflow.md) |
 | `subagent` | Opt-in Herdr subagents | [Workflow](docs/workflow.md#herdr-subagents-mvp) |
-| `web` | Web search and web/GitHub fetching | [Web](extensions/web/README.md) |
+| `web-kits` | Web search and web/GitHub fetching | [Web](extensions/web/README.md) |
 
 Shared runtime helpers live in `shared/`, configuration in `shared/config/`,
 test helpers in `tests/helpers/`, and themes in `themes/`.
@@ -36,6 +36,7 @@ From a checkout, load one extension with `pi -e ./extensions/stats`.
 Package metadata exposes each resource name above. Existing `workspace-kit`,
 `usage-kit`, `workflow-kit`, and `web-kit` selections remain as compatibility
 resource declarations; they no longer correspond to package directories.
+`web-kits` is the public web resource name; `web` and `web-kit` remain compatible aliases.
 Configuration sections (`workspace`, `usage`, `workflow`, `web`) are unchanged.
 
 Select `gruvbox` in `/settings`. Toggle resources with `pi config`.
@@ -70,7 +71,7 @@ to `["builtin:codemode", "builtin:tool-search"]`. An explicit list replaces thes
 defaults; `[]` loads only the worker bridge. Entries use native Pi extension
 sources, including npm/git packages, built-ins, and files/directories. To select
 only web from this Git package, use
-`{ "source": "git:github.com/aqua2k1/pi-kits", "extensions": ["web-kit"] }`.
+`{ "source": "git:github.com/aqua2k1/pi-kits", "extensions": ["web-kits"] }`.
 Logical names are declared in package metadata, not tied to installation paths.
 Parent extensions are not inherited.
 

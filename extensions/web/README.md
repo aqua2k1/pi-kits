@@ -1,7 +1,8 @@
 # Pi web extension (`pi-web`)
 
 This package lives in `extensions/web` in the `pi-kits` workspace and provides
-two Pi tools:
+two Pi tools. Its public resource name is `web-kits`; `web` and `web-kit`
+remain compatible aliases in `extensionResources`:
 
 - `web_search` — searches current information through SearXNG or Codex
   `alpha/search`.
