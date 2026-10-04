@@ -218,8 +218,9 @@ environment, the entry registers no tools, hooks, or commands.
 | Tool | Purpose |
 | --- | --- |
 | `subagent` | Start an ad-hoc task or select a user-defined agent type. |
+| `resume_subagent` | Continue a finished task in its retained Pi session/history. |
 | `list_subagent_types` | Discover user-defined agents and their source/configuration. |
-| `get_subagent_result` | Retrieve a task's status and result. |
+| `get_subagent_result` | Retrieve the current managed round's status/result and live session state. |
 | `steer_subagent` | Send guidance to a running task. |
 | `stop_subagent` | Cancel a queued or running task. |
 
@@ -262,7 +263,31 @@ Native conversations update session activity through IPC and remain visible in
 the widget until Pi settles, including retries and continuations. They do not
 overwrite the managed result/statistics, emit another completion notification,
 or acquire a managed concurrency slot. An IPC task cannot take over native work.
-Programmatic resume is not yet implemented.
+Use `resume_subagent` with `agent_id`, a new `prompt`, optional `description`,
+and optional `run_in_background`. It keeps the same ID, process, terminal, view,
+session file/history (including native conversations), and original agent
+instructions. Agent files are not re-read. The worker's current model/thinking/
+tool settings are not reset, so native user changes remain in effect; requested
+agent tools must still be available as with spawn. Omitted description retains
+the current task name.
+The original agent's `run_in_background` setting takes precedence; otherwise
+resume defaults to background, just like spawn.
+
+Resume requires a finished managed task and an idle, retained, connected worker;
+completed, cooperatively stopped, and errored rounds may resume. Interactive,
+active, closed, or disconnected sessions are rejected without replacing their
+results. No process is restarted. Each accepted resume increments `round` and
+resets the current result/error, per-round usage, timestamps, waiter claims, and
+completion notification. Earlier results remain in tool history and Pi's session
+file. Foreground waits are bound to their round even if another round starts.
+
+Resumed rounds enter the same FIFO concurrency queue as new tasks. If native
+work starts while queued, dispatch fails rather than taking over the user.
+The worker also atomically checks idle at receipt to cover IPC races. Canceling
+a queued/preflight resume never aborts native work. If cancellation or connection
+loss occurs before the worker confirms ownership of a dispatched round, its
+terminal is retained and the concurrency claim is held rather than killing
+potential native work; parent shutdown/reload can clean up retained workers.
 
 `stop_subagent` cancels the managed task, not independent native/user work, and
 retains its terminal when Pi cooperates;
@@ -278,9 +303,11 @@ extensions, are not inherited. Add trusted extensions to this list explicitly.
 The worker bridge uses authenticated loopback TCP JSONL, not terminal screen
 parsing. Command frames and returned results are bounded to 64 KiB; truncated
 results identify the session file. State is session-scoped: cross-process task
-recovery, automatic reconnect, and session resume are not implemented. IPC loss
-triggers worker cleanup before releasing its queue slot. Failed cleanup is
-reported as `disconnected`; use `stop_subagent` to retry.
+recovery and automatic reconnect are not implemented. IPC loss during an
+acknowledged active round triggers worker cleanup before releasing its queue
+slot. Failed cleanup is reported as `disconnected`; use `stop_subagent` to
+retry. Unacknowledged resumed rounds instead retain the worker and slot as
+described above; finished sessions retain their last task result.
 
 Only `src/extensions/subagent/index.ts` is listed in the root and workflow-kit
 Pi manifests. The background Pi loads `src/extensions/subagent/worker.ts` via an

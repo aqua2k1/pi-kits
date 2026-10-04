@@ -128,6 +128,44 @@ export function registerSubagents(
 
   pi.registerTool(
     defineTool({
+      name: "resume_subagent",
+      label: "Resume subagent",
+      renderCall: subagentCallRenderer("Resume subagent"),
+      renderResult: renderSubagentResult,
+      description:
+        "Continue a finished managed task in the same retained Pi process/session/history. Re-enters the shared concurrency queue. Requires idle sessionState; rejects native/user interaction, closed or disconnected workers. Retains original agent instructions and current worker model/thinking/tool settings, including native changes. Background by default, respecting original agent configuration.",
+      parameters: Type.Object({
+        agent_id: agentId,
+        prompt: Type.String({
+          minLength: 1,
+          maxLength: 100_000,
+          pattern: "\\S",
+        }),
+        description: Type.Optional(
+          Type.String({ minLength: 1, maxLength: 200 }),
+        ),
+        run_in_background: Type.Optional(Type.Boolean({ default: true })),
+      }),
+      async execute(_id, params, signal, _onUpdate, ctx) {
+        signal?.throwIfAborted();
+        const current = getManager(ctx);
+        const snapshot = current.resume(params.agent_id, {
+          prompt: params.prompt,
+          description: params.description,
+        });
+        if (
+          (current.backgroundPreference(params.agent_id) ??
+            params.run_in_background) !== false
+        ) {
+          return toolResult(snapshot);
+        }
+        return toolResult(await current.result(snapshot.id, true, signal));
+      },
+    }),
+  );
+
+  pi.registerTool(
+    defineTool({
       name: "list_subagent_types",
       label: "Subagent types",
       description:

@@ -63,8 +63,15 @@ class FakeMux implements MuxAdapter {
     return { id: options.agentId };
   }
 
-  emit(id: string, event: object) {
-    this.sockets.get(id)?.write(`${JSON.stringify(event)}\n`);
+  emit(id: string, event: Record<string, unknown>) {
+    const command = this.commands
+      .get(id)
+      ?.findLast((item) => item.type === "task");
+    const frame =
+      event.type === "ready" || event.type === "session_state"
+        ? event
+        : { round: command?.round, ...event };
+    this.sockets.get(id)?.write(`${JSON.stringify(frame)}\n`);
   }
 
   async inspect(): Promise<{ alive: boolean }> {
@@ -520,4 +527,387 @@ test("shutdown is idempotent and rejects further work", async () => {
   assert.deepEqual(mux.destroyed, [id]);
   assert.throws(() => manager.spawn(task), /closed/);
   assert.throws(() => manager.get("missing"), /Unknown subagent/);
+});
+
+test("resume reuses identity, terminal, view and agent configuration with fresh per-round results", async (t) => {
+  const mux = new FakeMux();
+  const notifications: number[] = [];
+  const manager = new SubagentManager(mux, {
+    onComplete: (snapshot) => notifications.push(snapshot.round ?? 0),
+  });
+  t.after(() => manager.close());
+  const agent = parseAgentDefinition(
+    "---\nmodel: agent/model\ntools: []\nrun_in_background: false\n---\nKeep original role",
+    "/agents/review.md",
+    "global",
+  );
+  const first = manager.spawn({ ...task, agent });
+  await until(() => mux.commands.get(first.id)?.length === 1);
+  await manager.openView(first.id);
+  mux.emit(first.id, {
+    type: "stats",
+    turnCount: 9,
+    toolUses: 7,
+    totalTokens: 123,
+    compactionCount: 2,
+    contextPercent: 80,
+  });
+  mux.emit(first.id, { type: "completed", result: "First", truncated: true });
+  await until(() => manager.get(first.id).status === "completed");
+  const original = manager.get(first.id);
+  const next = manager.resume(first.id, {
+    prompt: "Continue from history",
+    description: "Follow-up",
+  });
+  assert.equal(next.round, 2);
+  assert.equal(next.id, original.id);
+  assert.equal(next.terminalId, original.terminalId);
+  assert.equal(next.viewId, original.viewId);
+  assert.equal(next.sessionPath, original.sessionPath);
+  assert.equal(next.subagentType, original.subagentType);
+  assert.equal(next.description, "Follow-up");
+  assert.equal(next.result, undefined);
+  assert.equal(next.completedAt, undefined);
+  assert.equal(next.truncated, undefined);
+  assert.equal(next.turnCount, 0);
+  assert.equal(next.contextPercent, undefined);
+  assert.equal(manager.backgroundPreference(first.id), false);
+  await until(() => mux.commands.get(first.id)?.length === 2);
+  assert.equal(mux.started.length, 1, "No new process or CLI configuration");
+  assert.deepEqual(mux.commands.get(first.id)?.[1], {
+    ...mux.commands.get(first.id)?.[0],
+    prompt: "Continue from history",
+    round: 2,
+  });
+  const waiter = manager.result(first.id, true);
+  mux.emit(first.id, { type: "completed", result: "Second" });
+  assert.equal((await waiter).result, "Second");
+  assert.deepEqual(
+    notifications,
+    [1],
+    "Foreground resumed round must not notify",
+  );
+  manager.resume(first.id, { prompt: "Third" });
+  await until(() => mux.commands.get(first.id)?.length === 3);
+  mux.emit(first.id, { type: "completed", result: "Third" });
+  await until(() => manager.get(first.id).status === "completed");
+  assert.deepEqual(
+    notifications,
+    [1, 3],
+    "Background rounds notify independently",
+  );
+  assert.deepEqual(mux.destroyed, []);
+});
+
+test("resume rejects active, interactive, disconnected, closed and invalid tasks without changing prior results", async (t) => {
+  const mux = new FakeMux();
+  const manager = new SubagentManager(mux);
+  t.after(() => manager.close());
+  const first = manager.spawn(task);
+  assert.throws(
+    () => manager.resume(first.id, { prompt: "Again" }),
+    /finished/,
+  );
+  await until(() => mux.commands.get(first.id)?.length === 1);
+  mux.emit(first.id, { type: "completed", result: "Keep me" });
+  await until(() => manager.get(first.id).status === "completed");
+  assert.throws(() => manager.resume(first.id, { prompt: " " }), /blank/);
+  assert.throws(
+    () => manager.resume(first.id, { prompt: "x".repeat(70000) }),
+    /64 KiB/,
+  );
+  assert.equal(manager.get(first.id).round, 1);
+  mux.emit(first.id, { type: "session_state", state: "interactive" });
+  await until(() => manager.get(first.id).sessionState === "interactive");
+  assert.throws(() => manager.resume(first.id, { prompt: "Again" }), /idle/);
+  assert.equal(manager.get(first.id).result, "Keep me");
+  mux.sockets.get(first.id)?.destroy();
+  await until(() => manager.get(first.id).sessionState === "disconnected");
+  assert.throws(
+    () => manager.resume(first.id, { prompt: "Again" }),
+    /connected/,
+  );
+  assert.equal(manager.get(first.id).result, "Keep me");
+  assert.equal(mux.started.length, 1);
+  await manager.close();
+  assert.throws(() => manager.resume(first.id, { prompt: "Again" }), /closed/);
+});
+
+test("resume shares FIFO concurrency and canceling a queued round cannot resurrect its queue entry", async (t) => {
+  const mux = new FakeMux();
+  const manager = new SubagentManager(mux, { maxConcurrent: 1 });
+  t.after(() => manager.close());
+  const first = manager.spawn(task);
+  await until(() => mux.commands.get(first.id)?.length === 1);
+  mux.emit(first.id, { type: "completed", result: "First" });
+  await until(() => manager.get(first.id).status === "completed");
+  const blocker = manager.spawn(task);
+  await until(() => mux.commands.get(blocker.id)?.length === 1);
+  assert.equal(
+    manager.resume(first.id, { prompt: "Canceled" }).status,
+    "queued",
+  );
+  const canceled = manager.result(first.id, true);
+  manager.stop(first.id);
+  assert.equal((await canceled).status, "stopped");
+  const ahead = manager.spawn(task);
+  manager.resume(first.id, { prompt: "Third" });
+  mux.emit(blocker.id, { type: "completed", result: "Blocker" });
+  await until(() => mux.commands.get(ahead.id)?.length === 1);
+  assert.equal(mux.commands.get(first.id)?.length, 1);
+  mux.emit(ahead.id, { type: "completed", result: "Ahead" });
+  await until(() => mux.commands.get(first.id)?.length === 2);
+  assert.equal(mux.commands.get(first.id)?.[1].round, 3);
+  assert.equal(mux.commands.get(first.id)?.[1].prompt, "Third");
+  assert.equal(mux.started.length, 3);
+});
+
+test("native work beginning while resume is queued rejects dispatch without canceling the user", async (t) => {
+  const mux = new FakeMux();
+  const manager = new SubagentManager(mux, { maxConcurrent: 1 });
+  t.after(() => manager.close());
+  const first = manager.spawn(task);
+  await until(() => mux.commands.get(first.id)?.length === 1);
+  mux.emit(first.id, { type: "completed", result: "First" });
+  await until(() => manager.get(first.id).status === "completed");
+  const blocker = manager.spawn(task);
+  await until(() => mux.commands.get(blocker.id)?.length === 1);
+  manager.resume(first.id, { prompt: "Waited continuation" });
+  mux.emit(first.id, { type: "session_state", state: "interactive" });
+  await until(() => manager.get(first.id).sessionState === "interactive");
+  mux.emit(blocker.id, { type: "completed", result: "Blocker" });
+  const result = await manager.result(first.id, true);
+  assert.equal(result.status, "error");
+  assert.match(result.error ?? "", /native\/user interaction/);
+  assert.equal(result.sessionState, "interactive");
+  assert.equal(mux.commands.get(first.id)?.length, 1);
+  assert.deepEqual(mux.destroyed, []);
+});
+
+test("old waiters and late round events never consume or finish a resumed round", async (t) => {
+  const mux = new FakeMux();
+  const notifications: number[] = [];
+  const manager = new SubagentManager(mux, {
+    onComplete: (snapshot) => notifications.push(snapshot.round ?? 0),
+  });
+  t.after(() => manager.close());
+  const first = manager.spawn(task);
+  await until(() => mux.commands.get(first.id)?.length === 1);
+  const oldWaiter = manager.result(first.id, true);
+  const unsubscribe = manager.subscribe(() => {
+    if (
+      manager.get(first.id).round === 1 &&
+      manager.get(first.id).status === "completed"
+    ) {
+      manager.resume(first.id, { prompt: "Next" });
+    }
+  });
+  mux.emit(first.id, { type: "completed", result: "Old result" });
+  const old = await oldWaiter;
+  unsubscribe();
+  assert.equal(old.round, 1);
+  assert.equal(old.result, "Old result");
+  await until(() => mux.commands.get(first.id)?.length === 2);
+  mux.emit(first.id, { type: "stats", round: 1, turnCount: 99 });
+  mux.emit(first.id, { type: "completed", round: 1, result: "Stale result" });
+  mux.emit(first.id, {
+    type: "completed",
+    round: undefined,
+    result: "Unscoped stale result",
+  });
+  mux.emit(first.id, { type: "session_state", round: 1, state: "interactive" });
+  mux.emit(first.id, { type: "stats", turnCount: 2 });
+  await until(() => manager.get(first.id).turnCount === 2);
+  assert.equal(manager.get(first.id).status, "running");
+  assert.equal(manager.get(first.id).result, undefined);
+  assert.notEqual(manager.get(first.id).sessionState, "interactive");
+  mux.emit(first.id, { type: "completed", result: "New result" });
+  await until(() => manager.get(first.id).status === "completed");
+  assert.deepEqual(
+    notifications,
+    [2],
+    "Old waiter cannot suppress the new round notification",
+  );
+});
+
+test("stopped and errored retained workers resume; missing terminals do not restart", async (t) => {
+  const mux = new FakeMux();
+  const manager = new SubagentManager(mux);
+  t.after(() => manager.close());
+  const first = manager.spawn(task);
+  await until(() => mux.commands.get(first.id)?.length === 1);
+  mux.emit(first.id, { type: "completed", canceled: true, result: "Canceled" });
+  await until(() => manager.get(first.id).status === "stopped");
+  manager.resume(first.id, { prompt: "Retry" });
+  await until(() => mux.commands.get(first.id)?.length === 2);
+  mux.emit(first.id, {
+    type: "completed",
+    result: "",
+    error: "Provider error",
+  });
+  await until(() => manager.get(first.id).status === "error");
+  t.mock.method(mux, "inspect", async () => ({ alive: false }));
+  manager.resume(first.id, { prompt: "No restart" });
+  assert.equal((await manager.result(first.id, true)).status, "error");
+  assert.equal(mux.started.length, 1);
+  assert.deepEqual(mux.destroyed, []);
+});
+
+test("cancel before resume inspection finishes never sends a task or kills the retained process", async (t) => {
+  const mux = new FakeMux();
+  const manager = new SubagentManager(mux);
+  t.after(() => manager.close());
+  const first = manager.spawn(task);
+  await until(() => mux.commands.get(first.id)?.length === 1);
+  mux.emit(first.id, { type: "completed", result: "First" });
+  await until(() => manager.get(first.id).status === "completed");
+  let release = () => {};
+  t.mock.method(
+    mux,
+    "inspect",
+    () =>
+      new Promise<{ alive: boolean }>((resolve) => {
+        release = () => resolve({ alive: true });
+      }),
+  );
+  manager.resume(first.id, { prompt: "Canceled before dispatch" });
+  assert.equal(manager.stop(first.id).status, "stopped");
+  release();
+  await delay(10);
+  assert.equal(mux.commands.get(first.id)?.length, 1);
+  assert.deepEqual(mux.destroyed, []);
+});
+
+test("unacknowledged resume cancellation never kills native work and retains the concurrency claim", async (t) => {
+  const mux = new FakeMux();
+  const manager = new SubagentManager(mux, {
+    maxConcurrent: 1,
+    cancelTimeoutMs: 5,
+  });
+  t.after(() => manager.close());
+  const first = manager.spawn(task);
+  await until(() => mux.commands.get(first.id)?.length === 1);
+  mux.emit(first.id, { type: "completed", result: "First" });
+  await until(() => manager.get(first.id).status === "completed");
+  manager.resume(first.id, { prompt: "Resume awaiting acceptance" });
+  await until(() => mux.commands.get(first.id)?.length === 2);
+  manager.stop(first.id);
+  await until(() => manager.get(first.id).status === "disconnected");
+  const queued = manager.spawn(task);
+  assert.equal(manager.get(queued.id).status, "queued");
+  assert.deepEqual(mux.destroyed, []);
+  mux.emit(first.id, { type: "completed", result: "", canceled: true });
+  await until(() => mux.commands.get(queued.id)?.length === 1);
+});
+
+test("accepted resume cancellation may clean up an unresponsive owned worker", async (t) => {
+  const mux = new FakeMux();
+  const manager = new SubagentManager(mux, {
+    cancelTimeoutMs: 5,
+  });
+  t.after(() => manager.close());
+  const first = manager.spawn(task);
+  await until(() => mux.commands.get(first.id)?.length === 1);
+  mux.emit(first.id, { type: "completed", result: "First" });
+  await until(() => manager.get(first.id).status === "completed");
+  manager.resume(first.id, { prompt: "Accepted continuation" });
+  await until(() => mux.commands.get(first.id)?.length === 2);
+  mux.emit(first.id, { type: "session_state", state: "running", round: 2 });
+  await until(() => manager.get(first.id).sessionState === "running");
+  const waiter = manager.result(first.id, true);
+  manager.stop(first.id);
+  assert.equal((await waiter).status, "stopped");
+  assert.equal(manager.get(first.id).sessionState, "closed");
+  assert.deepEqual(mux.destroyed, [first.id]);
+  assert.throws(
+    () => manager.resume(first.id, { prompt: "No restart" }),
+    /connected/,
+  );
+});
+
+test("connection loss before resume acknowledgement preserves the worker and concurrency claim", async (t) => {
+  const mux = new FakeMux();
+  const manager = new SubagentManager(mux, { maxConcurrent: 1 });
+  t.after(() => manager.close());
+  const first = manager.spawn(task);
+  await until(() => mux.commands.get(first.id)?.length === 1);
+  mux.emit(first.id, { type: "completed", result: "First" });
+  await until(() => manager.get(first.id).status === "completed");
+  manager.resume(first.id, { prompt: "Unconfirmed continuation" });
+  await until(() => mux.commands.get(first.id)?.length === 2);
+  mux.sockets.get(first.id)?.destroy();
+  await until(() => manager.get(first.id).status === "disconnected");
+  assert.deepEqual(mux.destroyed, []);
+  const next = manager.spawn(task);
+  assert.equal(manager.get(next.id).status, "queued");
+  assert.equal(manager.stop(first.id).status, "disconnected");
+  assert.deepEqual(mux.destroyed, []);
+});
+
+test("a stale cancellation timer cannot change a later resumed round", async (t) => {
+  const mux = new FakeMux();
+  const manager = new SubagentManager(mux);
+  t.after(() => manager.close());
+  const first = manager.spawn(task);
+  await until(() => mux.commands.get(first.id)?.length === 1);
+  mux.emit(first.id, { type: "completed", result: "First" });
+  await until(() => manager.get(first.id).status === "completed");
+  manager.resume(first.id, { prompt: "Second" });
+  await until(() => mux.commands.get(first.id)?.length === 2);
+  const timeout = globalThis.setTimeout;
+  let expired = () => {};
+  t.mock.method(
+    globalThis,
+    "setTimeout",
+    (callback: () => void, ms?: number) => {
+      expired = callback;
+      return timeout(callback, ms);
+    },
+  );
+  manager.stop(first.id);
+  mux.emit(first.id, { type: "completed", canceled: true, result: "" });
+  await until(() => manager.get(first.id).status === "stopped");
+  manager.resume(first.id, { prompt: "Third" });
+  await until(() => mux.commands.get(first.id)?.at(-1)?.round === 3);
+  expired();
+  assert.equal(manager.get(first.id).status, "running");
+  assert.deepEqual(mux.destroyed, []);
+});
+
+test("resume cannot race an already-started terminal cleanup after cooperative completion", async (t) => {
+  const mux = new FakeMux();
+  const manager = new SubagentManager(mux, { cancelTimeoutMs: 5 });
+  t.after(() => manager.close());
+  const first = manager.spawn(task);
+  await until(() => mux.commands.get(first.id)?.length === 1);
+  mux.emit(first.id, { type: "completed", result: "First" });
+  await until(() => manager.get(first.id).status === "completed");
+  manager.resume(first.id, { prompt: "Second" });
+  await until(() => mux.commands.get(first.id)?.length === 2);
+  mux.emit(first.id, { type: "session_state", state: "running", round: 2 });
+  await until(() => manager.get(first.id).sessionState === "running");
+  let release = () => {};
+  let destroying = false;
+  const destroy = mux.destroy.bind(mux);
+  t.mock.method(mux, "destroy", async (handle: TerminalHandle) => {
+    destroying = true;
+    await new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    await destroy(handle);
+  });
+  manager.stop(first.id);
+  await until(() => destroying);
+  try {
+    mux.emit(first.id, { type: "completed", canceled: true, result: "" });
+    await until(() => manager.get(first.id).status === "stopped");
+    assert.throws(
+      () => manager.resume(first.id, { prompt: "Unsafe restart" }),
+      /cleanup/,
+    );
+    assert.equal(manager.get(first.id).round, 2);
+  } finally {
+    release();
+  }
+  await until(() => manager.get(first.id).sessionState === "closed");
 });

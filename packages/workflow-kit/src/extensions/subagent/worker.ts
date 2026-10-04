@@ -24,10 +24,11 @@ export interface WorkerInstructions {
   tools?: string[];
 }
 
-export type WorkerCommand =
+export type WorkerCommand = (
   | { type: "task"; prompt: string; instructions?: WorkerInstructions }
   | { type: "steer"; message: string }
-  | { type: "cancel" };
+  | { type: "cancel" }
+) & { round?: number };
 
 export type WorkerActivityName =
   | "agent_start"
@@ -39,7 +40,7 @@ export type WorkerActivityName =
 
 export type WorkerSessionState = "idle" | "running" | "interactive";
 
-export type WorkerEvent =
+export type WorkerEvent = (
   | {
       type: "session_state";
       id: string;
@@ -77,7 +78,8 @@ export type WorkerEvent =
       canceled?: boolean;
       truncated?: boolean;
       sessionPath?: string;
-    };
+    }
+) & { round?: number };
 
 export interface WorkerConfig {
   host: "127.0.0.1";
@@ -126,14 +128,23 @@ export function parseWorkerCommand(value: unknown): WorkerCommand {
     throw new Error("Expected a worker command object");
   }
   const command = value as Record<string, unknown>;
-  if (command.type === "cancel") return { type: "cancel" };
+  if (
+    command.round !== undefined &&
+    (typeof command.round !== "number" ||
+      !Number.isSafeInteger(command.round) ||
+      command.round < 1)
+  )
+    throw new Error("Invalid worker round");
+  const round =
+    command.round === undefined ? {} : { round: command.round as number };
+  if (command.type === "cancel") return { type: "cancel", ...round };
   if (
     command.type === "task" &&
     typeof command.prompt === "string" &&
     command.prompt.trim()
   ) {
     if (command.instructions === undefined) {
-      return { type: "task", prompt: command.prompt };
+      return { type: "task", prompt: command.prompt, ...round };
     }
     const instructions =
       command.instructions as Partial<WorkerInstructions> | null;
@@ -151,6 +162,7 @@ export function parseWorkerCommand(value: unknown): WorkerCommand {
     return {
       type: "task",
       prompt: command.prompt,
+      ...round,
       instructions: {
         systemPrompt: instructions.systemPrompt,
         promptMode: instructions.promptMode as WorkerInstructions["promptMode"],
@@ -165,7 +177,7 @@ export function parseWorkerCommand(value: unknown): WorkerCommand {
     typeof command.message === "string" &&
     command.message.trim()
   ) {
-    return { type: "steer", message: command.message };
+    return { type: "steer", message: command.message, ...round };
   }
   throw new Error("Invalid worker command");
 }
@@ -239,6 +251,8 @@ export function registerWorkerBridge(
   let sessionActivity: string | undefined;
   let context: ExtensionContext | undefined;
   let active = false;
+  let round: number | undefined;
+  let lastRound = 0;
   let started = false;
   let canceling = false;
   let pendingCommands = 0;
@@ -264,6 +278,9 @@ export function registerWorkerBridge(
 
   function send(event: WorkerEvent): void {
     if (!connected || !socket || socket.destroyed) return;
+    if (round !== undefined && event.type !== "ready") {
+      event = { round, ...event };
+    }
     const frame = `${JSON.stringify(event)}\n`;
     if (
       socket.writableLength + Buffer.byteLength(frame) >
@@ -302,6 +319,7 @@ export function registerWorkerBridge(
     generation += 1;
     preparing = false;
     active = false;
+    round = undefined;
     started = false;
     canceling = false;
     pendingCommands = 0;
@@ -358,6 +376,17 @@ export function registerWorkerBridge(
 
   function receive(command: WorkerCommand): void {
     if (!connected || !context) return;
+    // Control and task frames from a previous round must not touch a new batch.
+    if (command.type !== "task" && command.round !== round) return;
+    if (command.type === "task") {
+      if (active && command.round !== round) return;
+      if (
+        !active &&
+        ((command.round !== undefined && command.round <= lastRound) ||
+          (command.round === undefined && lastRound > 1))
+      )
+        return;
+    }
     if (command.type === "cancel") {
       if (!active) return;
       canceling = true;
@@ -396,11 +425,17 @@ export function registerWorkerBridge(
       !active &&
       (sessionState === "interactive" || !context.isIdle())
     ) {
-      reportSession("interactive", sessionActivity ?? "Thinking…", true);
+      lastRound = Math.max(lastRound, command.round ?? 1);
+      // Non-agent operations (e.g. manual compaction) may have no agent_settled.
+      // Reject runtime busy without latching a synthetic interactive state.
+      if (sessionState === "interactive") {
+        reportSession("interactive", sessionActivity ?? "Thinking…", true);
+      }
       send({
         type: "completed",
         id: config.id,
         result: "",
+        ...(command.round !== undefined ? { round: command.round } : {}),
         error: "Subagent is busy with user interaction; wait until idle.",
         sessionPath: context.sessionManager.getSessionFile(),
       });
@@ -410,6 +445,8 @@ export function registerWorkerBridge(
     if (!active) {
       reset();
       active = true;
+      round = command.round;
+      lastRound = Math.max(lastRound, round ?? 1);
       if (command.type === "task") instructions = command.instructions;
       reportSession("running");
     }
@@ -479,6 +516,7 @@ export function registerWorkerBridge(
     reset();
     sessionState = "idle";
     sessionActivity = undefined;
+    lastRound = 0;
     context = ctx;
     if (ctx.mode !== "tui") return;
     const connection = dependencies.connect(config);

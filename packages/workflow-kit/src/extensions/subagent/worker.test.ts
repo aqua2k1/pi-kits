@@ -394,6 +394,97 @@ test("IPC tasks cannot take over native work, and task cancellation does not abo
   assert.equal(h.messages.length, 1);
 });
 
+test("round numbers are validated and survive parsing for every control command", () => {
+  assert.deepEqual(
+    parseWorkerCommand({ type: "task", prompt: "next", round: 2 }),
+    {
+      type: "task",
+      prompt: "next",
+      round: 2,
+    },
+  );
+  assert.deepEqual(
+    parseWorkerCommand({ type: "steer", message: "guidance", round: 2 }),
+    {
+      type: "steer",
+      message: "guidance",
+      round: 2,
+    },
+  );
+  assert.deepEqual(parseWorkerCommand({ type: "cancel", round: 2 }), {
+    type: "cancel",
+    round: 2,
+  });
+  for (const round of [0, -1, 1.5, "2", null, Number.MAX_SAFE_INTEGER + 1]) {
+    assert.throws(() => parseWorkerCommand({ type: "cancel", round }), /round/);
+  }
+});
+
+test("resumed round events are scoped and stale cancellation cannot interrupt a new round", () => {
+  const h = harness();
+  const socket = h.start();
+  socket.command({ type: "task", prompt: "first" });
+  h.emit("agent_start");
+  h.emit("message_end", { message: assistant("First") });
+  h.emit("agent_settled");
+  socket.command({ type: "task", prompt: "second", round: 2 });
+  h.emit("agent_start");
+  socket.command({ type: "cancel", round: 1 });
+  socket.command({ type: "cancel" });
+  socket.command({ type: "steer", message: "old guidance", round: 1 });
+  socket.command({ type: "task", prompt: "old replay", round: 1 });
+  assert.equal(h.aborts, 0);
+  assert.equal(h.messages.length, 2);
+  h.emit("message_end", { message: assistant("Second") });
+  h.emit("agent_settled");
+  assert.equal(completions(socket)[1].round, 2);
+  assert.equal(completions(socket)[1].result, "Second\nsecond block");
+  const stats = socket.frames.filter((frame) => frame.type === "stats").at(-1);
+  assert.equal(stats?.round, 2);
+  assert.equal(stats?.turnCount, 1, "Statistics start fresh");
+  h.emit("before_agent_start", { systemPrompt: "base" });
+  assert.deepEqual(socket.frames.at(-1), {
+    type: "session_state",
+    id: config.id,
+    state: "interactive",
+    activity: "Thinking…",
+  });
+  socket.command({ type: "task", prompt: "old replay", round: 2 });
+  socket.command({ type: "task", prompt: "legacy replay" });
+  assert.equal(completions(socket).length, 2);
+  socket.command({
+    type: "task",
+    prompt: "Cannot steal native work",
+    round: 3,
+  });
+  assert.equal(completions(socket)[2].round, 3);
+  assert.match(completions(socket)[2].error ?? "", /user interaction/);
+  socket.command({ type: "cancel", round: 3 });
+  assert.equal(h.aborts, 0);
+  h.emit("agent_settled");
+  socket.command({ type: "task", prompt: "Fourth", round: 4 });
+  h.emit("agent_start");
+  socket.command({ type: "cancel", round: 4 });
+  assert.equal(h.aborts, 1);
+  h.emit("agent_settled");
+  assert.equal(completions(socket)[3].round, 4);
+  assert.equal(completions(socket)[3].canceled, true);
+});
+
+test("runtime busy without agent hooks rejects resume without permanently latching interactive", (t) => {
+  const h = harness();
+  const socket = h.start();
+  let busy = true;
+  t.mock.method(h.ctx, "isIdle", () => !busy);
+  socket.command({ type: "task", prompt: "Busy", round: 2 });
+  assert.equal(h.messages.length, 0);
+  assert.match(completions(socket)[0].error ?? "", /busy/);
+  busy = false;
+  socket.command({ type: "task", prompt: "Now available", round: 3 });
+  assert.equal(h.messages.length, 1);
+  assert.equal(h.aborts, 0);
+});
+
 test("missing requested tools fail before a model turn instead of being ignored", () => {
   const h = harness();
   const socket = h.start();

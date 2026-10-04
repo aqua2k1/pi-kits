@@ -9,6 +9,7 @@ import type {
 } from "@earendil-works/pi-coding-agent";
 import { useAgentDir } from "../../test-utils/agent-dir.ts";
 import subagentExtension, { registerSubagents } from "./index.ts";
+import { type ResumeOptions, SubagentManager } from "./manager.ts";
 import type { MuxAdapter } from "./mux.ts";
 
 function environment(t: TestContext, env: Record<string, string | undefined>) {
@@ -100,6 +101,7 @@ test("configured Herdr enables tools with HERDR_ENV alone, without backend probi
   subagentExtension(capture.pi);
   assert.deepEqual(capture.tools, [
     "subagent",
+    "resume_subagent",
     "list_subagent_types",
     "get_subagent_result",
     "steer_subagent",
@@ -158,6 +160,88 @@ test("agent catalogue uses project overrides and unknown/disabled names never la
   }
 });
 
+test("resume tool respects retained background preferences and aborted callers never enqueue work", async (t) => {
+  const capture = registrations();
+  const adapter = new Proxy({} as MuxAdapter, {
+    get() {
+      assert.fail("Tool presentation must not spawn a process");
+    },
+  });
+  registerSubagents(capture.pi, adapter);
+  const tool = capture.definitions.get("resume_subagent");
+  assert.ok(tool);
+  let preference: boolean | undefined;
+  let resumed = 0;
+  let waited = 0;
+  t.mock.method(
+    SubagentManager.prototype,
+    "backgroundPreference",
+    () => preference,
+  );
+  t.mock.method(
+    SubagentManager.prototype,
+    "resume",
+    (id: string, options: ResumeOptions) => {
+      resumed += 1;
+      assert.equal(id, "same-id");
+      assert.equal(options.prompt, "Continue");
+      return { id, description: "Original task", status: "queued", round: 2 };
+    },
+  );
+  t.mock.method(
+    SubagentManager.prototype,
+    "result",
+    async (id: string, wait: boolean) => {
+      assert.equal(wait, true);
+      waited += 1;
+      return {
+        id,
+        description: "Original task",
+        status: "completed",
+        round: 2,
+      };
+    },
+  );
+  const ctx = { mode: "print" } as ExtensionToolContext;
+  for (const [configured, requested, expectedWait] of [
+    [undefined, undefined, false],
+    [undefined, false, true],
+    [false, true, true],
+    [true, false, false],
+  ] as const) {
+    preference = configured;
+    const before = waited;
+    const result = await tool.execute(
+      "call",
+      {
+        agent_id: "same-id",
+        prompt: "Continue",
+        run_in_background: requested,
+      },
+      undefined,
+      undefined,
+      ctx,
+    );
+    assert.equal(waited - before, expectedWait ? 1 : 0);
+    assert.equal(
+      (result.details as { status: string }).status,
+      expectedWait ? "completed" : "queued",
+    );
+  }
+  const signal = AbortSignal.abort(new Error("Already canceled"));
+  await assert.rejects(
+    tool.execute(
+      "call",
+      { agent_id: "same-id", prompt: "Continue" },
+      signal,
+      undefined,
+      ctx,
+    ),
+    /Already canceled/,
+  );
+  assert.equal(resumed, 4);
+});
+
 test("registration is lazy and does not invoke mux operations", () => {
   const adapter = new Proxy({} as MuxAdapter, {
     get() {
@@ -166,9 +250,10 @@ test("registration is lazy and does not invoke mux operations", () => {
   });
   const capture = registrations();
   registerSubagents(capture.pi, adapter);
-  assert.equal(capture.tools.length, 5);
+  assert.equal(capture.tools.length, 6);
   for (const name of [
     "subagent",
+    "resume_subagent",
     "get_subagent_result",
     "steer_subagent",
     "stop_subagent",

@@ -29,6 +29,7 @@ export interface AgentSnapshot {
   id: string;
   description: string;
   status: AgentStatus;
+  round?: number;
   sessionState?: SessionState;
   sessionActivity?: string;
   subagentType?: string;
@@ -68,16 +69,30 @@ interface AgentRecord {
   terminal?: TerminalHandle;
   view?: ViewHandle;
   socket?: Socket;
+  execution: Execution;
+  ready?: () => void;
+  rejectReady?: (error: Error) => void;
+  cancelTimer?: ReturnType<typeof setTimeout>;
+  terminating?: Promise<void>;
+}
+
+interface Execution {
+  round: number;
+  reused: boolean;
+  dispatched: boolean;
+  accepted: boolean;
   consumed: boolean;
   waiters: number;
   notified: boolean;
   finished: boolean;
   resolve: (snapshot: AgentSnapshot) => void;
   completion: Promise<AgentSnapshot>;
-  ready?: () => void;
-  rejectReady?: (error: Error) => void;
-  cancelTimer?: ReturnType<typeof setTimeout>;
-  terminating?: Promise<void>;
+  snapshot?: AgentSnapshot;
+}
+
+export interface ResumeOptions {
+  prompt: string;
+  description?: string;
 }
 
 export interface ManagerOptions {
@@ -100,7 +115,7 @@ export class SubagentManager {
   private readonly listeners = new Set<() => void>();
   private readonly views = new Map<string, AgentRecord>();
   private viewMutation: Promise<void> = Promise.resolve();
-  private readonly queue: AgentRecord[] = [];
+  private readonly queue: { record: AgentRecord; execution: Execution }[] = [];
   private readonly sockets = new Set<Socket>();
   private readonly launches = new Set<Promise<void>>();
   private server?: Server;
@@ -143,15 +158,12 @@ export class SubagentManager {
       throw new Error("Task prompt must not be blank.");
     }
     validateCommand(taskCommand(options));
-    let resolve: AgentRecord["resolve"] = () => undefined;
-    const completion = new Promise<AgentSnapshot>((done) => {
-      resolve = done;
-    });
     const record: AgentRecord = {
       snapshot: {
         id: randomUUID(),
         description: options.description,
         status: "queued",
+        round: 1,
         ...(options.agent
           ? {
               subagentType: options.agent.name,
@@ -168,15 +180,70 @@ export class SubagentManager {
       },
       options,
       token: randomBytes(32).toString("hex"),
-      consumed: false,
-      waiters: 0,
-      notified: false,
-      finished: false,
-      completion,
-      resolve,
+      execution: createExecution(1),
     };
     this.records.set(record.snapshot.id, record);
-    this.queue.push(record);
+    this.queue.push({ record, execution: record.execution });
+    this.pump();
+    this.changed();
+    return this.snapshot(record);
+  }
+
+  backgroundPreference(id: string): boolean | undefined {
+    return this.record(id).options.agent?.runInBackground;
+  }
+
+  resume(id: string, options: ResumeOptions): AgentSnapshot {
+    if (this.disposed) throw new Error("Subagent manager is closed.");
+    const record = this.record(id);
+    if (!record.execution.finished) {
+      throw new Error("Only a finished managed task can be resumed.");
+    }
+    if (record.terminating) {
+      throw new Error(
+        "Worker cleanup is still in progress; resume is unavailable.",
+      );
+    }
+    if (!record.terminal || !record.socket || record.socket.destroyed) {
+      throw new Error(
+        "Resume requires a retained, connected Pi worker; no automatic restart.",
+      );
+    }
+    if (record.snapshot.sessionState !== "idle") {
+      throw new Error(
+        "Resume requires an idle session; wait for native/user interaction to settle.",
+      );
+    }
+    if (!options.prompt.trim())
+      throw new Error("Task prompt must not be blank.");
+    const next = { ...record.options, ...options };
+    next.description = options.description ?? record.options.description;
+    const round = record.execution.round + 1;
+    if (!Number.isSafeInteger(round))
+      throw new Error("Subagent round limit reached.");
+    validateCommand({ ...taskCommand(next), round });
+    record.options = next;
+    record.execution = createExecution(round, true);
+    record.snapshot = {
+      ...record.snapshot,
+      description: next.description,
+      round,
+      status: "queued",
+      result: undefined,
+      error: undefined,
+      truncated: undefined,
+      activity: undefined,
+      sessionActivity: undefined,
+      createdAt: Date.now(),
+      startedAt: undefined,
+      completedAt: undefined,
+      turnCount: 0,
+      toolUses: 0,
+      totalTokens: 0,
+      contextPercent: undefined,
+      compactionCount: 0,
+    };
+    this.queue.push({ record, execution: record.execution });
     this.pump();
     this.changed();
     return this.snapshot(record);
@@ -184,19 +251,20 @@ export class SubagentManager {
 
   async result(id: string, wait = false, signal?: AbortSignal) {
     const record = this.record(id);
-    if (wait && !record.finished) {
-      // Each waiter holds its own claim; one aborted waiter cannot release
-      // another caller's claim or cause a duplicate completion notification.
-      record.waiters += 1;
+    const execution = record.execution;
+    if (wait && !execution.finished) {
+      // Claims and resolved snapshots belong to a round, not the reusable worker.
+      execution.waiters += 1;
       try {
-        await waitFor(record.completion, signal);
-        record.consumed = true;
+        const snapshot = await waitFor(execution.completion, signal);
+        execution.consumed = true;
+        return { ...snapshot };
       } finally {
-        record.waiters -= 1;
-        if (record.finished) this.notify(record);
+        execution.waiters -= 1;
+        if (execution.finished) this.notify(record, execution);
       }
     }
-    if (record.finished) record.consumed = true;
+    if (execution.finished) execution.consumed = true;
     return this.snapshot(record);
   }
 
@@ -211,8 +279,12 @@ export class SubagentManager {
 
   stop(id: string): AgentSnapshot {
     const record = this.record(id);
-    if (record.finished) return this.snapshot(record);
-    if (record.snapshot.status === "queued") {
+    const execution = record.execution;
+    if (execution.finished) return this.snapshot(record);
+    if (
+      record.snapshot.status === "queued" ||
+      (record.execution.reused && !record.execution.dispatched)
+    ) {
       this.finish(record, "stopped");
     } else if (record.snapshot.status !== "stopping") {
       const starting = record.snapshot.status === "starting";
@@ -221,11 +293,24 @@ export class SubagentManager {
       if (starting) {
         record.rejectReady?.(new Error("Subagent stopped during startup."));
       } else if (disconnected || !record.socket) {
-        void this.terminate(record, "stopped");
+        if (record.execution.reused && !record.execution.accepted) {
+          // An unacknowledged command is not permission to kill native work.
+          record.snapshot.status = "disconnected";
+        } else {
+          void this.terminate(record, "stopped");
+        }
       } else {
         this.send(record, { type: "cancel" });
         record.cancelTimer = setTimeout(() => {
-          void this.terminate(record, "stopped");
+          if (record.execution !== execution || execution.finished) return;
+          if (execution.reused && !execution.accepted) {
+            record.snapshot.status = "disconnected";
+            record.snapshot.error =
+              "Resume cancellation unconfirmed; worker retained to protect native/user work. Concurrency slot retained.";
+            this.changed();
+          } else {
+            void this.terminate(record, "stopped");
+          }
         }, this.options.cancelTimeoutMs ?? 5_000);
       }
     }
@@ -306,7 +391,7 @@ export class SubagentManager {
     this.disposed = true;
     for (const record of this.records.values()) {
       record.rejectReady?.(new Error("Parent session closed."));
-      if (!record.finished) this.finish(record, "stopped");
+      if (!record.execution.finished) this.finish(record, "stopped");
     }
     for (const socket of this.sockets) socket.destroy();
     await Promise.allSettled([...this.launches]);
@@ -351,15 +436,55 @@ export class SubagentManager {
       this.active < (this.options.maxConcurrent ?? 4) &&
       this.queue.length
     ) {
-      const record = this.queue.shift();
-      if (!record || record.finished) continue;
+      const entry = this.queue.shift();
+      if (!entry) continue;
+      const { record, execution } = entry;
+      if (record.execution !== execution || execution.finished) continue;
       this.active += 1;
       record.snapshot.status = "starting";
       record.snapshot.startedAt = Date.now();
       this.changed();
-      const launch = this.start(record);
+      const launch = execution.reused
+        ? this.startResumed(record, execution)
+        : this.start(record);
       this.launches.add(launch);
       void launch.finally(() => this.launches.delete(launch));
+    }
+  }
+
+  private async startResumed(
+    record: AgentRecord,
+    execution: Execution,
+  ): Promise<void> {
+    try {
+      if (
+        !record.terminal ||
+        !(await this.adapter.inspect(record.terminal)).alive
+      ) {
+        throw new Error(
+          "Retained Pi terminal is unavailable; no automatic restart.",
+        );
+      }
+      if (record.execution !== execution || execution.finished || this.disposed)
+        return;
+      if (record.snapshot.sessionState !== "idle") {
+        throw new Error(
+          "Subagent became busy with native/user interaction while resume was queued.",
+        );
+      }
+      record.snapshot.status = "running";
+      record.snapshot.activity = "Thinking…";
+      execution.dispatched = true;
+      this.send(record, taskCommand(record.options));
+      this.changed();
+    } catch (error) {
+      if (record.execution === execution && !execution.finished) {
+        this.finish(
+          record,
+          "error",
+          error instanceof Error ? error.message : String(error),
+        );
+      }
     }
   }
 
@@ -367,7 +492,7 @@ export class SubagentManager {
     let timer: ReturnType<typeof setTimeout> | undefined;
     try {
       const endpoint = await this.listen();
-      if (record.finished || this.disposed) return;
+      if (record.execution.finished || this.disposed) return;
       if (record.snapshot.status === "stopping") {
         this.finish(record, "stopped");
         return;
@@ -431,7 +556,7 @@ export class SubagentManager {
         },
       });
       if (
-        record.finished ||
+        record.execution.finished ||
         this.disposed ||
         this.get(record.snapshot.id).status === "stopping"
       ) {
@@ -439,7 +564,7 @@ export class SubagentManager {
         return;
       }
       await ready;
-      if (record.finished || this.disposed) return;
+      if (record.execution.finished || this.disposed) return;
       if (this.get(record.snapshot.id).status === "stopping") {
         await this.terminate(record, "stopped");
         return;
@@ -450,6 +575,7 @@ export class SubagentManager {
       }
       record.snapshot.activity = "Thinking…";
       this.changed();
+      record.execution.dispatched = true;
       this.send(record, taskCommand(record.options));
     } catch (error) {
       if (error instanceof TerminalStartError) {
@@ -492,7 +618,7 @@ export class SubagentManager {
     const operation = this.viewOperation(async () => {
       if (await this.destroyTerminal(record)) {
         this.finish(record, status, error);
-      } else if (!record.finished) {
+      } else if (!record.execution.finished) {
         record.snapshot.status = "disconnected";
         record.snapshot.error =
           "Worker cleanup failed; concurrency slot retained. Retry stop_subagent.";
@@ -551,7 +677,7 @@ export class SubagentManager {
             if (
               event.type !== "ready" ||
               !candidate ||
-              candidate.finished ||
+              candidate.execution.finished ||
               candidate.socket ||
               event.token !== candidate.token
             ) {
@@ -587,7 +713,28 @@ export class SubagentManager {
           this.changed();
         }
         record.rejectReady?.(new Error("Pi worker disconnected."));
-        if (!record.finished && !record.terminating && !record.ready) {
+        if (
+          !record.execution.finished &&
+          record.execution.reused &&
+          !record.execution.accepted
+        ) {
+          if (record.execution.dispatched) {
+            record.snapshot.status = "disconnected";
+            record.snapshot.error =
+              "Pi worker disconnected before resume acceptance; concurrency slot retained to protect native/user work.";
+            this.changed();
+          } else {
+            this.finish(
+              record,
+              "error",
+              "Pi worker disconnected before resume dispatch.",
+            );
+          }
+        } else if (
+          !record.execution.finished &&
+          !record.terminating &&
+          !record.ready
+        ) {
           void this.terminate(
             record,
             record.snapshot.status === "stopping" ? "stopped" : "error",
@@ -599,6 +746,8 @@ export class SubagentManager {
   }
 
   private event(record: AgentRecord, event: Record<string, unknown>): void {
+    if (event.round !== undefined && event.round !== record.execution.round)
+      return;
     if (event.type === "session_state") {
       if (
         typeof event.state !== "string" ||
@@ -608,6 +757,14 @@ export class SubagentManager {
       }
       if (record.snapshot.sessionState === "closed") return;
       record.snapshot.sessionState = event.state as WorkerSessionState;
+      if (
+        event.state === "running" &&
+        !record.execution.finished &&
+        record.execution.dispatched &&
+        (record.execution.round === 1 || event.round === record.execution.round)
+      ) {
+        record.execution.accepted = true;
+      }
       record.snapshot.sessionActivity =
         event.state === "interactive" && typeof event.activity === "string"
           ? event.activity.slice(0, 4096)
@@ -615,7 +772,12 @@ export class SubagentManager {
       this.changed();
       return;
     }
-    if (record.finished) return;
+    if (
+      record.execution.finished ||
+      (record.execution.round > 1 && event.round !== record.execution.round)
+    )
+      return;
+    if (event.type === "started") record.execution.accepted = true;
     if (event.type === "stats") {
       for (const key of [
         "turnCount",
@@ -681,41 +843,67 @@ export class SubagentManager {
     if (!record.socket || record.socket.destroyed) {
       throw new Error("Pi worker is not connected.");
     }
+    if (record.execution.round > 1)
+      command = { ...command, round: record.execution.round };
     validateCommand(command);
     record.socket.write(`${JSON.stringify(command)}\n`);
   }
 
   private finish(record: AgentRecord, status: AgentStatus, error?: string) {
-    if (record.finished) return;
+    const execution = record.execution;
+    if (execution.finished) return;
     const wasActive = record.snapshot.status !== "queued";
-    record.finished = true;
+    execution.finished = true;
     clearTimeout(record.cancelTimer);
+    record.cancelTimer = undefined;
     record.snapshot.status = status;
     record.snapshot.error = error;
     record.snapshot.completedAt = Date.now();
-    this.changed();
     if (wasActive) this.active -= 1;
-    record.resolve(this.snapshot(record));
-    this.notify(record);
+    execution.snapshot = this.snapshot(record);
+    execution.resolve(execution.snapshot);
+    this.notify(record, execution);
+    this.changed();
     this.pump();
   }
 
-  private notify(record: AgentRecord): void {
+  private notify(record: AgentRecord, execution = record.execution): void {
     if (
       this.disposed ||
-      record.consumed ||
-      record.waiters > 0 ||
-      record.notified
+      execution.consumed ||
+      execution.waiters > 0 ||
+      execution.notified
     ) {
       return;
     }
-    record.notified = true;
+    execution.notified = true;
     try {
-      this.options.onComplete?.(this.snapshot(record));
+      this.options.onComplete?.({
+        ...(execution.snapshot ?? this.snapshot(record)),
+      });
     } catch {
       // A parent notification failure cannot invalidate a completed task.
     }
   }
+}
+
+function createExecution(round: number, reused = false): Execution {
+  let resolve: Execution["resolve"] = () => undefined;
+  const completion = new Promise<AgentSnapshot>((done) => {
+    resolve = done;
+  });
+  return {
+    round,
+    reused,
+    dispatched: false,
+    accepted: false,
+    consumed: false,
+    waiters: 0,
+    notified: false,
+    finished: false,
+    completion,
+    resolve,
+  };
 }
 
 function taskCommand(options: SpawnOptions) {

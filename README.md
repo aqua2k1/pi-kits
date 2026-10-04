@@ -50,7 +50,10 @@ no tools, hooks, or commands. There is no environment probing or fallback.
 to `["builtin:codemode", "builtin:tool-search"]`. An explicit list replaces these
 defaults; `[]` loads only the worker bridge. Parent extensions are not inherited.
 
-Tools: `subagent`, `get_subagent_result`, `steer_subagent`, `stop_subagent`.
+Tools: `subagent`, `resume_subagent`, `get_subagent_result`, `steer_subagent`,
+`stop_subagent`, and `list_subagent_types`. Resume reuses an idle, retained Pi
+session/history and enters the same concurrency queue; it never restarts a
+closed/disconnected worker or interrupts native user interaction.
 `/subagent:views [id] [open|focus|close]` manages views attached to existing Pi
 terminals for inspection and control. The shared manager places the first view
 right of the parent and subsequent views below the last surviving view; every
