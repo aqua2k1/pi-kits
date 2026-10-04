@@ -1,7 +1,16 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import type { Theme, ToolDefinition } from "@earendil-works/pi-coding-agent";
-import { stripTerminalSequences, visibleWidth } from "@earendil-works/pi-tui";
+import {
+  initTheme,
+  type Theme,
+  type ToolDefinition,
+  ToolExecutionComponent,
+} from "@earendil-works/pi-coding-agent";
+import {
+  stripTerminalSequences,
+  type TUI,
+  visibleWidth,
+} from "@earendil-works/pi-tui";
 import type { AgentSnapshot } from "./manager.ts";
 import { renderSubagentResult, subagentCallRenderer } from "./renderers.ts";
 
@@ -176,7 +185,82 @@ test("tool calls show model and short ID but hide prompts until expanded", () =>
   assert.ok(expanded.includes(snapshot.id));
 });
 
-test("tool calls reuse resolved identity from the result or manager", () => {
+test("starting results do not re-enter rendering or duplicate the call header", () => {
+  const starting = { ...snapshot, status: "starting" as const, result: "" };
+  let invalidations = 0;
+  const state = {};
+  const context = {
+    expanded: false,
+    executionStarted: true,
+    state,
+    invalidate() {
+      invalidations += 1;
+    },
+  } as RenderContext;
+  const call = subagentCallRenderer("Subagent")(
+    { description: starting.description },
+    theme,
+    context,
+  );
+  assert.equal(call.render(200).length, 1);
+  for (let i = 0; i < 3; i++) {
+    // Pi supplies separate contexts sharing the same state object and creates
+    // the call component before invoking the result renderer.
+    const result = renderSubagentResult(
+      { content: [], details: { ...starting } },
+      { expanded: false, isPartial: false },
+      theme,
+      { ...context, state },
+    );
+    const lines = [...call.render(200), ...result.render(200)];
+    assert.equal(lines.length, 1);
+    assert.match(lines[0], /Reviewer · Model Name .* · starting$/);
+  }
+  assert.equal(
+    invalidations,
+    0,
+    "Result rendering must not synchronously invalidate Pi's tool card",
+  );
+  const expanded = subagentCallRenderer("Subagent")(
+    { prompt: "Private task prompt" },
+    theme,
+    { ...context, expanded: true },
+  );
+  assert.match(expanded.render(200).join("\n"), /Private task prompt/);
+});
+
+test("Pi tool card keeps exactly one starting header across repeated updates", () => {
+  initTheme("dark", false);
+  const card = new ToolExecutionComponent(
+    "subagent",
+    "test-call",
+    { description: snapshot.description },
+    {},
+    {
+      renderCall: subagentCallRenderer("Subagent"),
+      renderResult: renderSubagentResult,
+    },
+    { requestRender() {} } as unknown as TUI,
+    process.cwd(),
+  );
+  card.markExecutionStarted();
+  for (let i = 0; i < 3; i++) {
+    card.updateResult({
+      content: [],
+      details: { ...snapshot, status: "starting", result: "" },
+      isError: false,
+    });
+    card.invalidate();
+    const lines = card.render(200).map(stripTerminalSequences);
+    assert.equal(
+      lines.filter((line) => line.includes(snapshot.description)).length,
+      1,
+    );
+    assert.match(lines.join("\n"), /Reviewer · Model Name .* · starting/);
+  }
+});
+
+test("result owns the identity header; calls without results use manager identity", () => {
   const context = {
     expanded: false,
     state: {},
@@ -191,7 +275,7 @@ test("tool calls reuse resolved identity from the result or manager", () => {
   const renderer = subagentCallRenderer("Subagent");
   const expected =
     "✓ Reviewer · Model Name · LIVE_CODEMODE_SUCCESS · 07ea6fc5 · completed";
-  assert.equal(renderer({}, theme, context).render(200)[0], expected);
+  assert.deepEqual(renderer({}, theme, context).render(200), []);
   const lookup = subagentCallRenderer("Subagent result", () => snapshot);
   assert.equal(
     lookup({ agent_id: snapshot.id }, theme, {

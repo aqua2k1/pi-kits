@@ -36,8 +36,12 @@ export const subagentCallRenderer =
         status: context.executionStarted ? "running" : "queued",
       };
     return {
+      // Pi renders the call before the result. Read shared state at render
+      // time so the result can own the header without a re-entrant invalidate.
       render: (width) =>
-        width > 0 ? [truncateToWidth(agentHeader(snapshot, theme), width)] : [],
+        width > 0 && !record(context.state).subagentSnapshot
+          ? [truncateToWidth(agentHeader(snapshot, theme), width)]
+          : [],
       invalidate() {},
     };
   };
@@ -85,7 +89,6 @@ export const renderSubagentResult: ResultRenderer = (
     if (state.subagentSnapshot !== result.details) {
       state.subagentSnapshot = result.details;
       context.state = state;
-      context.invalidate?.();
     }
   }
   return compactResult((data) =>
