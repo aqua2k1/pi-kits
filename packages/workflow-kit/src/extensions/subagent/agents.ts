@@ -151,7 +151,10 @@ export function loadAgentDefinitions(
   cwd: string,
   agentDir = getAgentDir(),
 ): Map<string, AgentDefinition> {
-  const agents = new Map<string, AgentDefinition>();
+  const files = new Map<
+    string,
+    { path: string; source: AgentDefinition["source"] }
+  >();
   for (const [dir, source] of [
     [join(agentDir, "agents"), "global"],
     [join(cwd, ".pi", "agents"), "project"],
@@ -171,25 +174,28 @@ export function loadAgentDefinitions(
       ) {
         continue;
       }
-      const path = join(dir, entry.name);
-      let text: string;
-      try {
-        const info = statSync(path);
-        if (!info.isFile() || info.size > MAX_FILE_BYTES) {
-          throw new Error("size");
-        }
-        text = readFileSync(path, "utf8");
-      } catch {
-        throw new Error(`Cannot read agent file ${path} (limit 64 KiB)`);
-      }
-      const definition = parseAgentDefinition(text, path, source);
-      const key = definition.name.toLowerCase();
+      const key = basename(entry.name, ".md").toLowerCase();
       if (seen.has(key)) {
-        throw new Error(`Duplicate agent name in ${dir}: ${definition.name}`);
+        throw new Error(`Duplicate agent name in ${dir}: ${entry.name}`);
       }
       seen.add(key);
-      agents.set(key, definition);
+      files.set(key, { path: join(dir, entry.name), source });
     }
+  }
+  const agents = new Map<string, AgentDefinition>();
+  // Resolve precedence before reading: replaced global contents are irrelevant.
+  for (const [key, { path, source }] of files) {
+    let text: string;
+    try {
+      const info = statSync(path);
+      if (!info.isFile() || info.size > MAX_FILE_BYTES) {
+        throw new Error("size");
+      }
+      text = readFileSync(path, "utf8");
+    } catch {
+      throw new Error(`Cannot read agent file ${path} (limit 64 KiB)`);
+    }
+    agents.set(key, parseAgentDefinition(text, path, source));
   }
   return agents;
 }

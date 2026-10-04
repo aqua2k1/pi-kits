@@ -66,6 +66,20 @@ test("project agents replace same-name global files as a whole, case-insensitive
   );
 });
 
+test("project replacements skip invalid or oversized global contents", (t) => {
+  const f = fixture(t);
+  f.file("global", "review.md", "---\ntools: codemode\n---\nGlobal prompt");
+  f.file("global", "large.md", "x".repeat(64 * 1024 + 1));
+  f.file("project", "review.md", "---\ntools: none\n---\nProject prompt");
+  f.file("project", "large.md", "Project prompt");
+  const agents = loadAgentDefinitions(f.cwd, f.agentDir);
+  assert.equal(agents.get("review")?.source, "project");
+  assert.deepEqual(agents.get("review")?.tools, []);
+  assert.equal(agents.get("large")?.systemPrompt, "Project prompt");
+  f.file("project", "review.md", "---\ntools: codemode\n---\nInvalid project");
+  assert.throws(() => loadAgentDefinitions(f.cwd, f.agentDir), /Invalid agent/);
+});
+
 test("disabled project configuration shadows an enabled global type", (t) => {
   const f = fixture(t);
   f.file("global", "review.md", "Global prompt");

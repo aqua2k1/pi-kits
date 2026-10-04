@@ -280,7 +280,8 @@ own Markdown files in these directories:
 The filename without `.md` is the type name, matching `gotgenes/pi-subagents`.
 Names are resolved case-insensitively. A project file **replaces the entire**
 same-name global definition, not individual fields; `enabled: false` can hide a
-global type. Duplicate names within one directory are errors. Definitions are
+global type. Replaced global files are not read or validated. Duplicate names
+within one directory are errors. Definitions are
 read afresh when listing or spawning; editing a file affects new tasks, not
 already queued/running tasks. Invalid definitions fail explicitly rather than
 falling back to a less restricted global configuration.
