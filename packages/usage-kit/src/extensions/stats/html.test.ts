@@ -4,6 +4,7 @@ import path from "node:path";
 import { test } from "node:test";
 import { aggregateEntries } from "./core.ts";
 import {
+  openStatsHtml,
   renderStatsHtml,
   serializeStatsSnapshot,
   writeStatsHtmlSnapshot,
@@ -154,6 +155,27 @@ test("renderStatsHtml is self-contained and includes model bars", () => {
   assert.doesNotMatch(html, /\{\{STATS_DATA\}\}/);
   assert.doesNotMatch(html, /<script[^>]+src=/);
   assert.doesNotMatch(html, /<link[^>]+href=/);
+});
+
+test("stats uses the shared desktop opener and reports launch failures", async (t) => {
+  const directories: string[] = [];
+  t.after(() => {
+    for (const directory of directories)
+      rmSync(directory, { recursive: true, force: true });
+  });
+  const snapshot = aggregateEntries([]);
+  const file = await openStatsHtml(snapshot, async (target) => {
+    directories.push(path.dirname(target));
+    return { ok: true, message: "Opened" };
+  });
+  assert.equal(path.basename(file), "stats.html");
+  await assert.rejects(
+    openStatsHtml(snapshot, async (target) => {
+      directories.push(path.dirname(target));
+      return { ok: false, message: "Opener unavailable" };
+    }),
+    /Opener unavailable/,
+  );
 });
 
 test("writeStatsHtmlSnapshot writes a browser-ready snapshot file", async () => {

@@ -375,8 +375,8 @@ Supported YAML frontmatter fields use the reference extension's snake_case names
 | `run_in_background` | Call parameter, then `true`. |
 
 Configured model, thinking, background mode, and `inherit_context` take
-precedence over call parameters, including explicit `false`. Thinking supports `off`, `minimal`, `low`, `medium`, `high`, `xhigh`,
-and `max`. Tool names include Pi built-ins (`read`, `bash`, `edit`, `write`,
+precedence over call parameters, including explicit `false`. Thinking is a
+non-empty string passed directly to Pi; Pi owns the supported levels. Tool names include Pi built-ins (`read`, `bash`, `edit`, `write`,
 `grep`, `find`, `ls`, `powershell`), `codemode`, `tool_search`, and tools registered
 by explicitly whitelisted extensions. A denylist is applied after the allowlist;
 missing requested tools fail before a model turn instead of being silently

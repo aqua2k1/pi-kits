@@ -20,15 +20,6 @@ import { SubagentStatusWidget } from "./status-widget.ts";
 import { showSubagentViews } from "./views.ts";
 
 const agentId = Type.String({ minLength: 1, description: "Subagent ID" });
-const thinking = Type.Union([
-  Type.Literal("off"),
-  Type.Literal("minimal"),
-  Type.Literal("low"),
-  Type.Literal("medium"),
-  Type.Literal("high"),
-  Type.Literal("xhigh"),
-  Type.Literal("max"),
-]);
 
 function toolResult(snapshot: AgentSnapshot) {
   const text = JSON.stringify(snapshot, null, 2);
@@ -101,7 +92,12 @@ export function registerSubagents(
         }),
         description: Type.String({ minLength: 1, maxLength: 200 }),
         model: Type.Optional(Type.String({ minLength: 1 })),
-        thinking: Type.Optional(thinking),
+        thinking: Type.Optional(
+          Type.String({
+            minLength: 1,
+            description: "Thinking level passed directly to Pi.",
+          }),
+        ),
         run_in_background: Type.Optional(Type.Boolean({ default: true })),
       }),
       async execute(_id, params, signal, _onUpdate, ctx) {

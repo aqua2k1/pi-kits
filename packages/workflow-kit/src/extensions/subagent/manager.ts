@@ -11,7 +11,11 @@ import {
   TerminalStartError,
   type ViewHandle,
 } from "./mux.ts";
-import type { WorkerSessionState } from "./worker.ts";
+import {
+  isWorkerSessionState,
+  MAX_COMMAND_BYTES,
+  type WorkerSessionState,
+} from "./protocol.ts";
 
 export type AgentStatus =
   | "queued"
@@ -756,12 +760,12 @@ export class SubagentManager {
     if (event.type === "session_state") {
       if (
         typeof event.state !== "string" ||
-        !["idle", "running", "interactive"].includes(event.state)
+        !isWorkerSessionState(event.state)
       ) {
         throw new Error("Invalid worker session state");
       }
       if (record.snapshot.sessionState === "closed") return;
-      record.snapshot.sessionState = event.state as WorkerSessionState;
+      record.snapshot.sessionState = event.state;
       if (
         event.state === "running" &&
         !record.execution.finished &&
@@ -933,7 +937,7 @@ function taskCommand(options: SpawnOptions) {
 }
 
 function validateCommand(command: object): void {
-  if (Buffer.byteLength(JSON.stringify(command)) > 64 * 1024) {
+  if (Buffer.byteLength(JSON.stringify(command)) > MAX_COMMAND_BYTES) {
     throw new Error("Subagent command exceeds the 64 KiB protocol limit.");
   }
 }

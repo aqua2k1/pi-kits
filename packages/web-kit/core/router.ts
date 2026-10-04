@@ -5,6 +5,7 @@ import {
   toWebSearchError,
   WebSearchError,
 } from "./errors.ts";
+import { resolveFallbackProvider } from "./routing.ts";
 import type {
   RoutedSearchResponse,
   SearchProvider,
@@ -39,10 +40,12 @@ export class WebSearchRouter {
     const request = normalizeSearchRequest(input);
     const order: WebSearchProviderName[] = [route.provider];
     if (route.fallback) {
-      const fallbackProvider =
-        route.fallbackProvider ??
-        (route.provider === "searxng" ? "codex-alpha-search" : "searxng");
-      if (fallbackProvider !== route.provider) order.push(fallbackProvider);
+      const fallbackProvider = resolveFallbackProvider(
+        route.provider,
+        route.fallbackProvider,
+      );
+      if (fallbackProvider && fallbackProvider !== route.provider)
+        order.push(fallbackProvider);
     }
     const attempts: SearchAttempt[] = [];
     for (const name of order) {

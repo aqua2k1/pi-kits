@@ -12,6 +12,7 @@
     "schema.ts"
   ],
   "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*",
     "typebox": "*"
   },
   "scripts": {

@@ -170,12 +170,9 @@ test("extension factory registers its public lifecycle and command without start
   assert.deepEqual(h.requests, []);
 });
 
-test("session and model selection follow source providers and declared aliases", async (t) => {
+test("session and model selection follow source providers without guessing aliases", async (t) => {
   const h = host(t);
-  for (const provider of [
-    chatgptSource.provider,
-    ...(chatgptSource.aliases ?? []),
-  ]) {
+  for (const provider of [chatgptSource.provider]) {
     await h.emit("session_start", provider);
     assert.match(h.text(), /ChatGPT/);
     assert.equal(h.credentials.at(-1), chatgptSource.provider);
@@ -183,7 +180,7 @@ test("session and model selection follow source providers and declared aliases",
   await h.emit("model_select", "deepseek");
   assert.match(h.text(), /DeepSeek/);
   assert.equal(h.credentials.at(-1), "deepseek");
-  for (const provider of ["unsupported-provider", undefined]) {
+  for (const provider of ["openai", "unsupported-provider", undefined]) {
     await h.emit("model_select", provider);
     assert.equal(h.text(), "");
   }
@@ -215,6 +212,16 @@ test("failure without cached data displays the source placeholder and HTTP reaso
   await h.emit("session_start", chatgptSource.provider);
   assert.ok(h.text().includes(chatgptSource.placeholder));
   assert.match(h.text(), /503/);
+});
+
+test("authentication recovery messaging comes from the selected source", async (t) => {
+  const h = host(t);
+  h.setStatus(401);
+  await h.emit("session_start", chatgptSource.provider);
+  assert.ok(h.text().includes(chatgptSource.authFailureMessage ?? ""));
+  await h.emit("model_select", "deepseek");
+  assert.match(h.text(), /DeepSeek.*401/);
+  assert.doesNotMatch(h.text(), /ChatGPT|openai-codex/);
 });
 
 test("missing credentials prevent unauthenticated network requests", async (t) => {

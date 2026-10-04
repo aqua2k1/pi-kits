@@ -38,8 +38,8 @@ function toWindowsPath(linuxPath: string): string {
 export function resolveTarget(raw: string, cwd: string): string {
   const trimmed = raw.trim().replace(/^@+/, "");
   if (isUrl(trimmed)) return trimmed;
-  if (trimmed.startsWith("~")) return trimmed.replace(/^~/, homedir());
-  if (trimmed.startsWith("/")) return trimmed;
+  if (trimmed === "~") return homedir();
+  if (/^~[\\/]/.test(trimmed)) return resolve(homedir(), trimmed.slice(2));
   return resolve(cwd, trimmed);
 }
 

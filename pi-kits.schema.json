@@ -180,36 +180,9 @@
               "pattern": "\\S"
             },
             "thinking": {
-              "anyOf": [
-                {
-                  "type": "string",
-                  "const": "off"
-                },
-                {
-                  "type": "string",
-                  "const": "minimal"
-                },
-                {
-                  "type": "string",
-                  "const": "low"
-                },
-                {
-                  "type": "string",
-                  "const": "medium"
-                },
-                {
-                  "type": "string",
-                  "const": "high"
-                },
-                {
-                  "type": "string",
-                  "const": "xhigh"
-                },
-                {
-                  "type": "string",
-                  "const": "max"
-                }
-              ]
+              "type": "string",
+              "minLength": 1,
+              "pattern": "\\S"
             },
             "timeoutMs": {
               "type": "integer",

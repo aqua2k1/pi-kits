@@ -6,8 +6,9 @@ import {
   rmSync,
   writeFileSync,
 } from "node:fs";
-import { homedir, tmpdir } from "node:os";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { getAgentDir as getPiAgentDir } from "@earendil-works/pi-coding-agent";
 import { Value } from "typebox/value";
 import {
   PI_KITS_SCHEMA,
@@ -40,12 +41,9 @@ function normalizeProvider(
   return provider === "codex" ? "codex-alpha-search" : provider;
 }
 
-/** Match Pi's agent-directory resolution without importing its runtime. */
+/** Pi owns agent-directory syntax and defaults. */
 export function getAgentDir(): string {
-  const configured = process.env.PI_CODING_AGENT_DIR;
-  if (configured === "~") return homedir();
-  if (configured?.startsWith("~/")) return join(homedir(), configured.slice(2));
-  return configured || join(homedir(), ".pi", "agent");
+  return getPiAgentDir();
 }
 
 export function getPiKitsConfigPath(agentDir: string = getAgentDir()): string {

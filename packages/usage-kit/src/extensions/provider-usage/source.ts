@@ -29,8 +29,8 @@ export type UsageData = {
 /** 每个 provider 一个数据源；widget 互斥，由主会话模型 provider 决定显示哪个 */
 export interface WidgetSource {
   provider: string;
-  /** 主会话模型 provider 的别名；认证和缓存仍使用 provider。 */
-  aliases?: readonly string[];
+  /** Source-specific authentication recovery hint. */
+  authFailureMessage?: string;
   /** 首次加载 / 无数据时的占位行 */
   placeholder: string;
   fetch(apiKey: string, signal: AbortSignal): Promise<UsageData | undefined>;

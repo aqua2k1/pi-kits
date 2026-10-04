@@ -166,11 +166,11 @@ export default function (pi: ExtensionAPI) {
       if (
         err instanceof HttpError &&
         err.status === 401 &&
-        currentSource === chatgptSource
+        currentSource.authFailureMessage
       ) {
         caches.delete(currentSource.provider);
         setLine({
-          line: "ChatGPT: token 过期（/login openai-codex 重新登录）",
+          line: currentSource.authFailureMessage,
           windows: [],
         });
         return;
@@ -206,9 +206,7 @@ export default function (pi: ExtensionAPI) {
   ): WidgetSource | undefined {
     const provider = model?.provider;
     if (provider === undefined) return undefined;
-    return sources.find(
-      (s) => s.provider === provider || s.aliases?.includes(provider),
-    );
+    return sources.find((s) => s.provider === provider);
   }
 
   // 未实现的 provider：无事发生（不刷新、不提示）。

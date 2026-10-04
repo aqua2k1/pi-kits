@@ -77,17 +77,7 @@ export const PI_KITS_SCHEMA = Type.Object(
         enabled,
         model: Type.Optional(text()),
         lastModel: Type.Optional(text()),
-        thinking: Type.Optional(
-          Type.Union([
-            Type.Literal("off"),
-            Type.Literal("minimal"),
-            Type.Literal("low"),
-            Type.Literal("medium"),
-            Type.Literal("high"),
-            Type.Literal("xhigh"),
-            Type.Literal("max"),
-          ]),
-        ),
+        thinking: Type.Optional(text()),
         timeoutMs: integer(1_000, 2_147_483_647, 120_000),
         rememberModel: Type.Optional(Type.Boolean({ default: true })),
       }),

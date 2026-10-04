@@ -29,7 +29,7 @@ personal installation, to avoid duplicate widgets, polling, and commands.
 
 - `deepseek`: account balance, with a warning when any currency balance is below
   20.
-- `openai-codex` (also selected by the `openai` alias): ChatGPT plan usage, with a
+- `openai-codex`: ChatGPT plan usage, with a
   warning when any reported usage window is at least 80% used. Credentials are
   still resolved for `openai-codex`.
 

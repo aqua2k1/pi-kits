@@ -83,7 +83,7 @@ function isWhamWindow(value: unknown): value is WhamWindow {
 
 export const chatgptSource: WidgetSource = {
   provider: CHATGPT_PROVIDER,
-  aliases: ["openai"],
+  authFailureMessage: "ChatGPT: token 过期（/login openai-codex 重新登录）",
   placeholder: CHATGPT_PLACEHOLDER,
   async fetch(apiKey, signal) {
     const headers: Record<string, string> = {

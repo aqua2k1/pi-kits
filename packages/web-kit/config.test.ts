@@ -77,9 +77,11 @@ test("parseConfig: separates search and fetch settings", () => {
     },
   );
   assert.throws(() => parseConfig("[]"), invalidConfig);
-  assert.throws(
-    () => parseConfig(JSON.stringify({ routing: { provider: "searxng" } })),
-    invalidConfig,
+  assert.deepEqual(
+    parseConfig(
+      JSON.stringify({ routing: { provider: "searxng" }, future: true }),
+    ),
+    {},
   );
 });
 

@@ -185,6 +185,16 @@ test("tool names can select native CLI and whitelisted extension tools", () => {
   ]);
 });
 
+test("thinking levels and tool naming conventions are owned by Pi, not the agent parser", () => {
+  const agent = parseAgentDefinition(
+    '---\nthinking: future-level\ntools: ["123tool", "native/tool"]\n---\nRole',
+    "/agents/test.md",
+    "project",
+  );
+  assert.equal(agent.thinking, "future-level");
+  assert.deepEqual(agent.tools, ["123tool", "native/tool"]);
+});
+
 test("explicit empty/none tools never fall back to unrestricted tools", () => {
   for (const value of ["none", "[]", '""']) {
     const agent = parseAgentDefinition(
@@ -202,11 +212,12 @@ test("explicit empty/none tools never fall back to unrestricted tools", () => {
 
 test("invalid values for supported fields and malformed YAML still fail closed", () => {
   for (const fields of [
-    "tools: invalid tool",
+    'tools: ["a,b"]',
+    'tools: ["a\\nb"]',
     "tools: null",
     "tools: 123",
     "tools: [false]",
-    "thinking: unlimited",
+    "thinking: false",
     "model: false",
     "enabled: yes",
     "run_in_background: nope",

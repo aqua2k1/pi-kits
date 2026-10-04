@@ -5,11 +5,22 @@ import type {
   MessageEndEvent,
 } from "@earendil-works/pi-coding-agent";
 
+import {
+  MAX_COMMAND_BYTES,
+  MAX_PENDING_COMMANDS,
+  MAX_RESULT_BYTES,
+  type WorkerSessionState,
+} from "./protocol.ts";
+
+export {
+  MAX_COMMAND_BYTES,
+  MAX_PENDING_COMMANDS,
+  MAX_RESULT_BYTES,
+  type WorkerSessionState,
+} from "./protocol.ts";
+
 /** Manager listens on loopback; explicitly load this file with pi -e. */
 export const WORKER_MARKER = "PI_KITS_SUBAGENT_WORKER";
-export const MAX_COMMAND_BYTES = 64 * 1024;
-export const MAX_RESULT_BYTES = 64 * 1024;
-export const MAX_PENDING_COMMANDS = 32;
 const MAX_WRITE_BUFFER_BYTES = 1024 * 1024;
 const MAX_ACTIVITY_BYTES = 4096;
 
@@ -36,8 +47,6 @@ export type WorkerActivityName =
   | "tool_execution_start"
   | "tool_execution_end"
   | "control_rejected";
-
-export type WorkerSessionState = "idle" | "running" | "interactive";
 
 export type WorkerEvent = (
   | {

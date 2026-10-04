@@ -115,6 +115,13 @@ test("subagent settings require explicit mux and preserve defaults", () => {
   }
 });
 
+test("thinking is forwarded without maintaining Pi's level vocabulary", () => {
+  const config = parsePiKitsConfig(
+    '{"workflow":{"commit":{"thinking":"future-level"}}}',
+  );
+  assert.equal(config.workflow.commit.thinking, "future-level");
+});
+
 test("explicit subagent extension allowlists replace defaults, including empty", () => {
   for (const extensionAllowlist of [
     [],
@@ -184,7 +191,7 @@ for (const [name, value] of [
     '{"usage":{"providerUsage":{"intervalMs":2147483648}}}',
   ],
   ["invalid timeout", '{"workflow":{"commit":{"timeoutMs":0}}}'],
-  ["invalid thinking", '{"workflow":{"commit":{"thinking":"invalid"}}}'],
+  ["invalid thinking type", '{"workflow":{"commit":{"thinking":false}}}'],
   ["unsupported mux", '{"workflow":{"subagent":{"mux":"tmux"}}}'],
   ["null mux", '{"workflow":{"subagent":{"mux":null}}}'],
   ["invalid subagent enabled", '{"workflow":{"subagent":{"enabled":"true"}}}'],

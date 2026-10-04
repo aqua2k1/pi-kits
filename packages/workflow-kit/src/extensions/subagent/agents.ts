@@ -3,17 +3,6 @@ import { basename, join } from "node:path";
 import { parseFrontmatter } from "@earendil-works/pi-coding-agent";
 import { getAgentDir } from "@pi-kits/config";
 
-export const THINKING_LEVELS = [
-  "off",
-  "minimal",
-  "low",
-  "medium",
-  "high",
-  "xhigh",
-  "max",
-] as const;
-export type ThinkingLevel = (typeof THINKING_LEVELS)[number];
-const TOOL_NAME = /^[a-zA-Z_][a-zA-Z0-9_.:-]*$/;
 const MAX_FILE_BYTES = 64 * 1024;
 
 export interface AgentDefinition {
@@ -21,7 +10,7 @@ export interface AgentDefinition {
   description: string;
   displayName?: string;
   model?: string;
-  thinking?: ThinkingLevel;
+  thinking?: string;
   tools?: string[];
   disallowedTools?: string[];
   systemPrompt: string;
@@ -93,21 +82,18 @@ export function parseAgentDefinition(
         return item.trim();
       })
       .filter(Boolean);
-    if (names.some((tool) => !TOOL_NAME.test(tool))) {
+    // CLI lists are comma-delimited; leave naming rules and availability to Pi.
+    if (names.some((tool) => /[,\p{Cc}]/u.test(tool))) {
       fail(`${field} contains an invalid tool name`);
     }
     return [...new Set(names)];
   };
-  const thinking = string("thinking");
-  if (thinking && !THINKING_LEVELS.includes(thinking as ThinkingLevel)) {
-    fail("invalid thinking level");
-  }
   return {
     name,
     description: string("description") ?? name,
     displayName: string("display_name"),
     model: string("model"),
-    thinking: thinking as ThinkingLevel | undefined,
+    thinking: string("thinking"),
     tools: tools("tools"),
     disallowedTools: tools("disallowed_tools"),
     systemPrompt: body.trim(),

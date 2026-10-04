@@ -28,6 +28,7 @@
   },
   "private": true,
   "dependencies": {
-    "@pi-kits/config": "0.1.0"
+    "@pi-kits/config": "0.1.0",
+    "pi-workspace-kit": "0.1.0"
   }
 }

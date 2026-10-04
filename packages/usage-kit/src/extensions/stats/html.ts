@@ -1,8 +1,8 @@
-import { spawn } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { doOpen } from "pi-workspace-kit/desktop-open";
 import { modelKeys, type StatsSnapshot, type UsageTotals } from "./core.ts";
 
 const TEMPLATE_URL = new URL("./template.html", import.meta.url);
@@ -163,21 +163,12 @@ export async function writeStatsHtmlSnapshot(
   }
 }
 
-function openBrowser(target: string): void {
-  const [command, args]: [string, string[]] =
-    process.platform === "darwin"
-      ? ["open", [target]]
-      : process.platform === "win32"
-        ? ["rundll32", ["url.dll,FileProtocolHandler", target]]
-        : ["xdg-open", [target]];
-
-  spawn(command, args, { stdio: "ignore", detached: true })
-    .on("error", () => {})
-    .unref();
-}
-
-export async function openStatsHtml(snapshot: StatsSnapshot): Promise<string> {
+export async function openStatsHtml(
+  snapshot: StatsSnapshot,
+  open: typeof doOpen = doOpen,
+): Promise<string> {
   const filePath = await writeStatsHtmlSnapshot(snapshot);
-  openBrowser(filePath);
+  const result = await open(filePath);
+  if (!result.ok) throw new Error(result.message);
   return filePath;
 }

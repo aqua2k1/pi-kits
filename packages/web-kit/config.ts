@@ -216,18 +216,6 @@ export function parseConfig(text: string): WebToolsFileConfig {
   if (!isRecord(raw))
     return invalid("Web tools configuration must be an object.");
 
-  for (const legacyField of [
-    "routing",
-    "timeoutMs",
-    "maxResults",
-    "codex",
-    "searxng",
-  ]) {
-    if (Object.hasOwn(raw, legacyField)) {
-      invalid(`${INVALID_CONFIG} ${legacyField} must be nested under search.`);
-    }
-  }
-
   const config: WebToolsFileConfig = {};
   const enabled = readField<boolean>(raw, "enabled", "boolean");
   if (enabled !== undefined) config.enabled = enabled;

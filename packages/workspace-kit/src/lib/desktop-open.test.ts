@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import type { spawn } from "node:child_process";
 import { EventEmitter } from "node:events";
 import { homedir } from "node:os";
+import { resolve } from "node:path";
 import { test } from "node:test";
 import { isUrl, launchDetached, resolveTarget } from "./desktop-open.ts";
 
@@ -47,6 +48,15 @@ test("desktop targets preserve URLs, home expansion and file completion", () => 
   assert.equal(
     resolveTarget("~/file.md", "/workspace"),
     `${homedir()}/file.md`,
+  );
+  assert.equal(resolveTarget("~", "/workspace"), homedir());
+  assert.equal(
+    resolveTarget("~\\file.md", "/workspace"),
+    resolve(homedir(), "file.md"),
+  );
+  assert.equal(
+    resolveTarget("~literal/file.md", "/workspace"),
+    resolve("/workspace", "~literal/file.md"),
   );
   assert.equal(isUrl("https://example.com"), true);
   assert.equal(isUrl("file.md"), false);

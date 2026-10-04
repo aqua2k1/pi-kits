@@ -14,13 +14,20 @@ import {
   type WebToolsConfigFileSnapshot,
 } from "./config.ts";
 import { errorMessageForCode, toWebSearchError } from "./core/errors.ts";
-import type { WebSearchProviderName } from "./core/types.ts";
+import { resolveFallbackProvider } from "./core/routing.ts";
+import {
+  WEB_SEARCH_PROVIDER_NAMES,
+  type WebSearchProviderName,
+} from "./core/types.ts";
 
 const PROVIDER_LABELS: Record<WebSearchProviderName, string> = {
   searxng: "SearXNG",
   "codex-alpha-search": "Codex alpha/search",
 };
-const COMMAND_ARGUMENTS = ["status", "test searxng", "test codex-alpha-search"];
+const COMMAND_ARGUMENTS = [
+  "status",
+  ...WEB_SEARCH_PROVIDER_NAMES.map((name) => `test ${name}`),
+];
 const DEFAULT_SEARCH_QUERY = "pi web search connectivity";
 type ConfigSource = "env" | "config" | "default" | "none";
 
@@ -65,9 +72,10 @@ function statusText(
   const search = raw.search ?? {};
   const routing = search.routing ?? {};
   const fallbackSource = routing.fallback === undefined ? "default" : "config";
-  const fallbackProvider =
-    config.search.fallbackProvider ??
-    (config.search.provider === "searxng" ? "codex-alpha-search" : "searxng");
+  const fallbackProvider = resolveFallbackProvider(
+    config.search.provider,
+    config.search.fallbackProvider,
+  );
   const fallbackProviderSource =
     routing.fallbackProvider === undefined ? "default" : "config";
   const keySource = source(env.SEARXNG_API_KEY, undefined, false);
@@ -88,7 +96,7 @@ function statusText(
     `  web_fetch: ${fetchEnabled ? "enabled" : "disabled"}`,
     `  search provider: ${PROVIDER_LABELS[config.search.provider]} (${source(undefined, routing.provider, true)})`,
     `  search fallback: ${searchEnabled && config.search.fallback ? "enabled" : "disabled"} (${fallbackSource})`,
-    `  search fallback provider: ${PROVIDER_LABELS[fallbackProvider]} (${fallbackProviderSource})`,
+    `  search fallback provider: ${fallbackProvider ? PROVIDER_LABELS[fallbackProvider] : "none"} (${fallbackProviderSource})`,
     `  search timeout: ${config.search.timeoutMs} ms`,
     `  search default max results: ${config.search.maxResults}`,
     `  SearXNG URL: configured (${source(env.SEARXNG_URL, undefined, true)})`,
