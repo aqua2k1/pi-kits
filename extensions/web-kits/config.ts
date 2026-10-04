@@ -205,7 +205,7 @@ function parseFetchConfig(source: Record<string, unknown>): WebFetchFileConfig {
   return config;
 }
 
-/** Parse the internal web section, not a complete configuration file. */
+/** Parse the internal web-kits section, not a complete configuration file. */
 export function parseConfig(text: string): WebToolsFileConfig {
   let raw: unknown;
   try {
@@ -247,7 +247,7 @@ export async function readConfigSnapshot(
   try {
     const file = parsePiKitsFile(await readFile(path, "utf8"));
     return {
-      rawConfig: parseConfig(JSON.stringify(file.web ?? {})),
+      rawConfig: parseConfig(JSON.stringify(file["web-kits"] ?? {})),
       configPath: path,
       source: "pi-kits",
     };

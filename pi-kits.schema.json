@@ -454,7 +454,7 @@
       "deprecated": true,
       "description": "Legacy group; prefer top-level extension settings."
     },
-    "web": {
+    "web-kits": {
       "type": "object",
       "properties": {
         "enabled": {

@@ -66,7 +66,7 @@ The file is namespaced:
 
 ```json
 {
-  "web": {
+  "web-kits": {
     "search": {},
     "fetch": {}
   }

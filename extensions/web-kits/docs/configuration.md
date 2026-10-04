@@ -1,7 +1,7 @@
 # Pi web kit configuration
 
-`pi-web` reads the unified `pi-kits.json` file through `@pi-kits/config`.
-Its `web` section contains separate `search` and `fetch` settings. Pi owns Codex
+`web-kits` reads the unified `pi-kits.json` file through `@pi-kits/config`.
+Its `web-kits` section contains separate `search` and `fetch` settings. Pi owns Codex
 OAuth credentials, and `gh` owns GitHub authentication.
 
 ## File
@@ -22,21 +22,22 @@ cp pi-kits.example.json \
   ~/.pi/agent/pi-kits.json
 ```
 
-Only `pi-kits.json` is read. A missing file or omitted `web` uses defaults.
+Only `pi-kits.json` is read. A missing file or omitted `web-kits` uses defaults.
+Rename the old top-level `"web"` key to `"web-kits"`; `"web"` is no longer accepted.
 Malformed or unreadable files fail with a classified error, without fallback.
 The kit does not read `web-tools-config.json`.
 
-`web.enabled`, `web.search.enabled`, and `web.fetch.enabled` default to `true`.
-Disabling `web` skips all tools, commands, and spool cleanup. Disabling a
+`web-kits.enabled`, `web-kits.search.enabled`, and `web-kits.fetch.enabled` default to `true`.
+Disabling `web-kits` skips all tools, commands, and spool cleanup. Disabling a
 capability skips its tool; disabled fetch also skips cleanup. `/web-tools`
-remains available for diagnostics when `web` is enabled, and reports disabled
+remains available for diagnostics when `web-kits` is enabled, and reports disabled
 states without running disabled search tests.
 
 ## Complete example
 
 ```json
 {
-  "web": {
+  "web-kits": {
     "enabled": true,
     "search": {
       "enabled": true,
@@ -69,12 +70,12 @@ states without running disabled search tests.
 
 | Path | Type | Default | Meaning |
 | --- | --- | --- | --- |
-| `web.search.routing.provider` | string | `searxng` | `searxng` or `codex-alpha-search`; `codex` is an alias. |
-| `web.search.routing.fallback` | boolean | `false` | Enable provider fallback. |
-| `web.search.routing.fallbackProvider` | string | other provider | Provider used after an eligible failure. |
-| `web.search.timeoutMs` | integer | `15000` | Search attempt timeout, range `1000`–`120000`. |
-| `web.search.maxResults` | integer | `5` | Default result count, range `1`–`10`. |
-| `web.search.codex.model` | string | `gpt-5.4` | Model sent to Codex `alpha/search`. |
+| `web-kits.search.routing.provider` | string | `searxng` | `searxng` or `codex-alpha-search`; `codex` is an alias. |
+| `web-kits.search.routing.fallback` | boolean | `false` | Enable provider fallback. |
+| `web-kits.search.routing.fallbackProvider` | string | other provider | Provider used after an eligible failure. |
+| `web-kits.search.timeoutMs` | integer | `15000` | Search attempt timeout, range `1000`–`120000`. |
+| `web-kits.search.maxResults` | integer | `5` | Default result count, range `1`–`10`. |
+| `web-kits.search.codex.model` | string | `gpt-5.4` | Model sent to Codex `alpha/search`. |
 
 SearXNG URL and key are not accepted in JSON. Use:
 
@@ -86,7 +87,7 @@ export SEARXNG_API_KEY="..."
 ## Tool parameters
 
 `web_search.max_results` is optional. Its registered schema `default` and runtime
-omission behavior both use the resolved startup `web.search.maxResults` value
+omission behavior both use the resolved startup `web-kits.search.maxResults` value
 (including nondefault values); an explicit count overrides it for that call.
 The optional `provider` selects the primary provider only. Configured fallback
 still applies to eligible failures; it is not forced or disabled by that field.
@@ -110,12 +111,12 @@ is not a URL parser or SSRF policy.
 
 | Path | Type | Default | Meaning |
 | --- | --- | --- | --- |
-| `web.fetch.timeoutMs` | integer | `15000` | Native HTTP/API timeout, range `1000`–`120000`. |
-| `web.fetch.github.enabled` | boolean | `true` | Enable GitHub URL handling. |
-| `web.fetch.github.mode` | string | `auto` | `auto`, `clone` or `api`. |
-| `web.fetch.github.maxRepoSizeMB` | integer | `350` | In `auto`, larger repositories prefer API access. |
-| `web.fetch.github.cloneTimeoutSeconds` | integer | `30` | Clone timeout, range `5`–`600`. |
-| `web.fetch.github.clonePath` | string | system temp directory | Root directory for shallow clones. |
+| `web-kits.fetch.timeoutMs` | integer | `15000` | Native HTTP/API timeout, range `1000`–`120000`. |
+| `web-kits.fetch.github.enabled` | boolean | `true` | Enable GitHub URL handling. |
+| `web-kits.fetch.github.mode` | string | `auto` | `auto`, `clone` or `api`. |
+| `web-kits.fetch.github.maxRepoSizeMB` | integer | `350` | In `auto`, larger repositories prefer API access. |
+| `web-kits.fetch.github.cloneTimeoutSeconds` | integer | `30` | Clone timeout, range `5`–`600`. |
+| `web-kits.fetch.github.clonePath` | string | system temp directory | Root directory for shallow clones. |
 
 The final fetched text is always limited to 50 MiB. That hard limit is not
 configurable.

@@ -1,6 +1,6 @@
 # Pi web kit architecture
 
-`pi-web` lives in `extensions/web`. Its explicit Pi manifest declares
+`web-kits` lives in `extensions/web-kits`. Its explicit Pi manifest declares
 `./index.ts` as the only extension entry point; the existing implementation and
 test layout is retained without a `src` move. `/web-tools` and temporary/cache
 paths remain unchanged; configuration uses the shared `pi-kits.json`.
@@ -31,7 +31,7 @@ Pi host
     └── /web-tools command
 
 Boundary
-├── config.ts       -> @pi-kits/config, web.search/web.fetch resolution
+├── config.ts       -> @pi-kits/config, web-kits.search/web-kits.fetch resolution
 ├── composition.ts  -> lazy search/fetch assembly
 ├── schema.ts       -> pure TypeBox schemas and derived output/response types
 └── fetch/format.ts -> bounded preview and local path metadata
@@ -218,11 +218,11 @@ The single configuration file is:
 ~/.pi/agent/pi-kits.json
 ```
 
-Persistent settings are namespaced under `web.search` and `web.fetch`. The
-shared package validates the unified file; web-kit retains routing and fetch
-semantic validation. Missing files and omitted `web` use defaults; invalid or
+Persistent settings are namespaced under `web-kits.search` and `web-kits.fetch`. The
+shared package validates the unified file; web-kits retains routing and fetch
+semantic validation. Missing files and omitted `web-kits` use defaults; invalid or
 unreadable files fail without fallback. All enabled switches default to true;
-`web.enabled: false` returns before registration and cleanup, and disabled fetch
+`web-kits.enabled: false` returns before registration and cleanup, and disabled fetch
 skips spool cleanup. SearXNG URL/key and GitHub credentials stay outside JSON:
 SearXNG uses environment variables, and GitHub uses the local `gh` credential
 store.

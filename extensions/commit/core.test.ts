@@ -332,7 +332,7 @@ test("last model: writes preserve other kit sections and workflow settings", (t)
   const raw = {
     workspace: { terminal: { editor: "vim" } },
     usage: { stats: { enabled: false } },
-    web: { search: { maxResults: 3 } },
+    "web-kits": { search: { maxResults: 3 } },
     workflow: {
       enabled: true,
       notify: { enabled: false, quietPeriodMs: 75 },

@@ -27,18 +27,16 @@ Pi manifest. There are no kit groups or redundant `src/extensions` intermediate 
 | `notify` | Desktop completion notifications | [Workflow](docs/workflow.md) |
 | `ask-user-question` | Native user questions | [Workflow](docs/workflow.md) |
 | `subagent` | Opt-in Herdr subagents | [Workflow](docs/workflow.md#herdr-subagents-mvp) |
-| `web-kits` | Web search and web/GitHub fetching | [Web](extensions/web/README.md) |
+| `web-kits` | Web search and web/GitHub fetching | [Web](extensions/web-kits/README.md) |
 
 Shared runtime helpers live in `shared/`, configuration in `shared/config/`,
 test helpers in `tests/helpers/`, and themes in `themes/`.
 From a checkout, load one extension with `pi -e ./extensions/stats`.
 
-Package metadata exposes each resource name above. Existing `workspace-kit`,
-`usage-kit`, `workflow-kit`, and `web-kit` selections remain as compatibility
-resource declarations; they no longer correspond to package directories.
-`web-kits` is the public web resource name; `web` and `web-kit` remain compatible aliases.
+Package metadata exposes only the independent resource names above.
+`web-kits` is the web extension's directory, package, and resource name.
 Configuration uses top-level extension settings; legacy `workspace`, `usage`,
-and `workflow` sections remain readable for compatibility. The internal `web`
+and `workflow` sections remain readable for compatibility. The internal `web-kits`
 structure is unchanged.
 
 Select `gruvbox` in `/settings`. Toggle resources with `pi config`.
@@ -60,8 +58,8 @@ See the [configuration example](pi-kits.example.json) and
 
 Top-level settings are `terminal`, `open`, `preview`, `contextPreview`,
 `providerUsage`, `stats`, `askUserQuestion`, `subagent`, `commit`, `notify`, and
-`web`. Each extension's `enabled` controls it independently; there is no new
-group-level switch. The internal structure of `web` is unchanged.
+`web-kits`. Each extension's `enabled` controls it independently; there is no new
+group-level switch. The internal structure of `web-kits` is unchanged.
 
 Legacy `workspace`, `usage`, and `workflow` sections are still read. Top-level
 settings override the same legacy fields; unspecified fields retain legacy values

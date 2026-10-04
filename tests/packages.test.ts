@@ -25,7 +25,7 @@ const extensions = [
   "notify",
   "ask-user-question",
   "subagent",
-  "web",
+  "web-kits",
 ];
 
 function smoke(paths: readonly string[], agentDir: string): string {
@@ -72,7 +72,8 @@ test("eleven flat extensions explicitly declare their independent runtime entrie
     const manifest = JSON.parse(
       readFileSync(join(dir, "package.json"), "utf8"),
     );
-    assert.equal(manifest.name, `pi-${name}`);
+    assert.equal(manifest.name, name === "web-kits" ? name : `pi-${name}`);
+    assert.deepEqual(Object.keys(manifest.extensionResources), [name]);
     assert.deepEqual(manifest.pi.extensions, ["./index.ts"]);
     assert.ok(manifest.keywords.includes("pi-package"));
     assert.equal(manifest.private, true);
@@ -111,6 +112,7 @@ test("eleven flat extensions explicitly declare their independent runtime entrie
     readFileSync(join(root, "package.json"), "utf8"),
   );
   assert.ok(repository.keywords.includes("pi-package"));
+  assert.deepEqual(Object.keys(repository.extensionResources), extensions);
   const named = Object.values(repository.extensionResources).flatMap((value) =>
     typeof value === "string" ? [value] : (value as string[]),
   );
@@ -126,17 +128,17 @@ test("eleven flat extensions explicitly declare their independent runtime entrie
   );
 });
 
-test("flat resource declarations select web-kits and preserve legacy web names", async () => {
+test("flat resource declarations select web-kits without legacy aliases", async () => {
   const { resolveWorkerExtensions } = await import(
     "../extensions/subagent/extensions.ts"
   );
   assert.deepEqual(
     await resolveWorkerExtensions([
-      { source: root, extensions: ["stats", "web-kits", "web-kit", "web"] },
+      { source: root, extensions: ["stats", "web-kits"] },
     ]),
     [
       join(root, "extensions/stats/index.ts"),
-      join(root, "extensions/web/index.ts"),
+      join(root, "extensions/web-kits/index.ts"),
     ],
   );
   assert.deepEqual(
@@ -145,6 +147,24 @@ test("flat resource declarations select web-kits and preserve legacy web names",
     ]),
     [join(root, "extensions/stats/index.ts")],
   );
+  assert.deepEqual(
+    await resolveWorkerExtensions([
+      { source: join(root, "extensions/web-kits"), extensions: ["web-kits"] },
+    ]),
+    [join(root, "extensions/web-kits/index.ts")],
+  );
+  for (const name of [
+    "workspace-kit",
+    "usage-kit",
+    "workflow-kit",
+    "web-kit",
+    "web",
+  ]) {
+    await assert.rejects(
+      resolveWorkerExtensions([{ source: root, extensions: [name] }]),
+      /Unknown extension resource/,
+    );
+  }
 });
 
 test("repository declares an independent valid Gruvbox theme", async () => {
@@ -202,7 +222,7 @@ test("unified config disables all kit entries in the real Pi loader", (t) => {
       workspace: { enabled: false },
       usage: { enabled: false },
       workflow: { enabled: false },
-      web: { enabled: false },
+      "web-kits": { enabled: false },
     }),
   );
   assert.doesNotMatch(smoke([root], dir), /--commit/);

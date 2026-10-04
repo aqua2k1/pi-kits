@@ -470,16 +470,13 @@ To select only named resources from an installed package, use an object:
 Pi locates the package, then the resolver reads its `package.json`
 `extensionResources` declaration. The repository exposes each independent
 extension name (for example `stats`, `subagent`, and `web-kits`). Each individual
-extension package also declares its own name. Existing `workspace-kit`,
-`usage-kit`, `workflow-kit`, and `web-kit` names remain as compatibility resource
-declarations, not directory names or special cases in subagent code.
+extension package also declares its own name. Only independent resource names
+are exposed; there are no group names or compatibility aliases.
 For example, the repository declares:
 
 ```json
 "extensionResources": {
-  "web-kits": "./extensions/web/index.ts",
-  "web-kit": "./extensions/web/index.ts",
-  "web": "./extensions/web/index.ts"
+  "web-kits": "./extensions/web-kits/index.ts"
 }
 ```
 
@@ -515,7 +512,7 @@ Legacy `workflow` settings remain readable. Top-level settings override the same
 legacy fields; unspecified fields retain legacy values before defaults are
 applied. Legacy `workflow.enabled: false` still disables its children unless a
 child explicitly sets top-level `enabled` to override it. Legacy `workspace` and
-`usage` follow the same rules; the internal `web` structure is unchanged.
+`usage` follow the same rules; the internal `web-kits` structure is unchanged.
 
 Subagents additionally require an explicit mux and the Herdr environment above.
 `commit.model` sets the first picker option, ahead of model memory and the current

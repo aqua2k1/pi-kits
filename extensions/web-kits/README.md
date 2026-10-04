@@ -1,8 +1,7 @@
-# Pi web extension (`pi-web`)
+# Pi web extension (`web-kits`)
 
-This package lives in `extensions/web` in the `pi-kits` workspace and provides
-two Pi tools. Its public resource name is `web-kits`; `web` and `web-kit`
-remain compatible aliases in `extensionResources`:
+This package lives in `extensions/web-kits` in the `pi-kits` workspace and provides
+two Pi tools. Its package and sole public resource name is `web-kits`:
 
 - `web_search` — searches current information through SearXNG or Codex
   `alpha/search`.
@@ -76,10 +75,10 @@ register the local package:
 
 ```bash
 npm install
-pi install ./extensions/web
+pi install ./extensions/web-kits
 ```
 
-Use `pi install --local ./extensions/web` for project-scoped registration.
+Use `pi install --local ./extensions/web-kits` for project-scoped registration.
 Local package installation does not install npm dependencies; the root workspace
 owns dependency installation and the lockfile. Do not run `npm ci` or maintain a
 separate `node_modules` or `package-lock.json` in this package.
@@ -91,7 +90,7 @@ directory or build step is needed.
 Load only this package for one development invocation, without saving settings:
 
 ```bash
-pi --no-extensions -e ./extensions/web
+pi --no-extensions -e ./extensions/web-kits
 ```
 
 This package was copied from the local `web-tools` extension. The old
@@ -106,13 +105,13 @@ same names.
 Run these commands from the `pi-kits` repository root after workspace installation:
 
 ```bash
-npm test --workspace pi-web
-npm run typecheck --workspace pi-web
-cd extensions/web
+npm test --workspace web-kits
+npm run typecheck --workspace web-kits
+cd extensions/web-kits
 npx biome check .
 ```
 
-Only after `npx biome check .` passes, apply formatting in `extensions/web`:
+Only after `npx biome check .` passes, apply formatting in `extensions/web-kits`:
 
 ```bash
 npx biome format --write .
@@ -140,7 +139,7 @@ A malformed configuration prevents the extension from registering instead of
 failing later when a tool is called. Reload the extension after changing the
 configuration file or environment variables.
 
-The unified file has a `web` section containing `search` and `fetch`. Copy the
+The unified file has a `web-kits` section containing `search` and `fetch`. Copy the
 root example:
 
 ```bash
@@ -149,10 +148,10 @@ cp pi-kits.example.json \
   ~/.pi/agent/pi-kits.json
 ```
 
-`pi-kits.json` is the only configuration file. A missing file or omitted `web`
+`pi-kits.json` is the only configuration file. A missing file or omitted `web-kits`
 uses defaults; malformed or unreadable files fail without fallback. The kit does
-not read `web-tools-config.json`. `web.enabled`, `web.search.enabled`, and
-`web.fetch.enabled` default to `true`. Setting `web.enabled: false` skips tools, commands, and spool cleanup;
+not read `web-tools-config.json`. `web-kits.enabled`, `web-kits.search.enabled`, and
+`web-kits.fetch.enabled` default to `true`. Setting `web-kits.enabled: false` skips tools, commands, and spool cleanup;
 individual switches skip their tool (and fetch cleanup) while retaining
 `/web-tools` diagnostics.
 

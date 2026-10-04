@@ -91,7 +91,7 @@ function statusText(
     "Web tools configuration:",
     `  config file: ${snapshot.configPath ?? getConfigPath()}`,
     `  config source: ${snapshot.source ?? "injected"}`,
-    `  web: ${config.enabled ? "enabled" : "disabled"}`,
+    `  web-kits: ${config.enabled ? "enabled" : "disabled"}`,
     `  web_search: ${searchEnabled ? "enabled" : "disabled"}`,
     `  web_fetch: ${fetchEnabled ? "enabled" : "disabled"}`,
     `  search provider: ${PROVIDER_LABELS[config.search.provider]} (${source(undefined, routing.provider, true)})`,
@@ -109,7 +109,7 @@ function statusText(
     `  GitHub clone threshold: ${config.fetch.github.maxRepoSizeMB} MiB`,
     `  GitHub clone timeout: ${config.fetch.github.cloneTimeoutSeconds} s`,
     "",
-    "Settings are under web.search and web.fetch in pi-kits.json.",
+    "Settings are under web-kits.search and web-kits.fetch in pi-kits.json.",
     "SearXNG URL and credentials are read from environment variables.",
     "GitHub uses gh api or shallow clone when the local commands are available.",
   ].join("\n");

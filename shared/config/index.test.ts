@@ -41,15 +41,28 @@ test("absent config uses defaults without creating a file", (t) => {
     maxConcurrent: 4,
     extensionAllowlist: [...SUBAGENT_DEFAULT_EXTENSIONS],
   });
-  assert.equal(config.web.search.enabled, true);
-  assert.equal(config.web.search.routing.provider, "searxng");
-  assert.equal(config.web.search.timeoutMs, 15_000);
-  assert.equal(config.web.search.maxResults, 5);
-  assert.equal(config.web.search.codex.model, "gpt-5.4");
-  assert.equal(config.web.fetch.timeoutMs, 15_000);
-  assert.equal(config.web.fetch.github.mode, "auto");
-  assert.equal(config.web.fetch.github.maxRepoSizeMB, 350);
+  assert.equal(config["web-kits"].search.enabled, true);
+  assert.equal(config["web-kits"].search.routing.provider, "searxng");
+  assert.equal(config["web-kits"].search.timeoutMs, 15_000);
+  assert.equal(config["web-kits"].search.maxResults, 5);
+  assert.equal(config["web-kits"].search.codex.model, "gpt-5.4");
+  assert.equal(config["web-kits"].fetch.timeoutMs, 15_000);
+  assert.equal(config["web-kits"].fetch.github.mode, "auto");
+  assert.equal(config["web-kits"].fetch.github.maxRepoSizeMB, 350);
   assert.equal(readPiKitsFile(dir), undefined);
+});
+
+test("web-kits is the sole web configuration key", () => {
+  const config = parsePiKitsConfig(
+    '{"web-kits":{"enabled":false,"search":{"maxResults":2}}}',
+  );
+  assert.equal(config["web-kits"].enabled, false);
+  assert.equal(config["web-kits"].search.maxResults, 2);
+  assert.ok(!("web" in config));
+  assert.throws(
+    () => parsePiKitsFile('{"web":{"enabled":false}}'),
+    /Invalid pi-kits.json/,
+  );
 });
 
 test("flat configuration independently controls extensions", () => {
@@ -144,7 +157,7 @@ test("partial config preserves explicit false and zero", () => {
         notify: { quietPeriodMs: 0 },
         commit: { rememberModel: false },
       },
-      web: { search: { enabled: false } },
+      "web-kits": { search: { enabled: false } },
     }),
   );
   assert.equal(config.terminal.enabled, true);
@@ -153,8 +166,8 @@ test("partial config preserves explicit false and zero", () => {
   assert.equal(config.stats.enabled, false);
   assert.equal(config.commit.rememberModel, false);
   assert.equal(config.notify.quietPeriodMs, 0);
-  assert.equal(config.web.search.enabled, false);
-  assert.equal(config.web.fetch.enabled, true);
+  assert.equal(config["web-kits"].search.enabled, false);
+  assert.equal(config["web-kits"].fetch.enabled, true);
 });
 
 test("subagent settings require explicit mux and preserve defaults", () => {
@@ -207,7 +220,7 @@ test("explicit subagent extension allowlists replace defaults, including empty",
     [],
     ["builtin:mcp", "/trusted/custom.ts"],
     ["npm:@narumitw/pi-chrome-devtools", "git:github.com/example/tools"],
-    [{ source: "git:github.com/aqua2k1/pi-kits", extensions: ["web-kit"] }],
+    [{ source: "git:github.com/aqua2k1/pi-kits", extensions: ["web-kits"] }],
     [{ source: "package", extensions: [] }],
   ]) {
     const config = parsePiKitsConfig(
@@ -228,8 +241,8 @@ test("explicit subagent extension allowlists replace defaults, including empty",
     ["x\n"],
     [{ source: "x" }],
     [{ source: "x", extensions: [""] }],
-    [{ source: "x", extensions: ["web-kit", "web-kit"] }],
-    [{ source: "x", extensions: ["web-kit"], unknown: true }],
+    [{ source: "x", extensions: ["web-kits", "web-kits"] }],
+    [{ source: "x", extensions: ["web-kits"], unknown: true }],
   ]) {
     assert.throws(
       () =>
@@ -245,14 +258,14 @@ test("explicit subagent extension allowlists replace defaults, including empty",
 
 test("package selection arrays are isolated from parsed file configuration", () => {
   const raw = parsePiKitsFile(
-    '{"workflow":{"subagent":{"extensionAllowlist":[{"source":"package","extensions":["web-kit"]}]}}}',
+    '{"workflow":{"subagent":{"extensionAllowlist":[{"source":"package","extensions":["web-kits"]}]}}}',
   );
   const config = resolvePiKitsConfig(raw);
   const selected = config.subagent.extensionAllowlist[0];
   assert.ok(typeof selected !== "string");
   selected.extensions.length = 0;
   assert.deepEqual(raw.workflow?.subagent?.extensionAllowlist, [
-    { source: "package", extensions: ["web-kit"] },
+    { source: "package", extensions: ["web-kits"] },
   ]);
 });
 
@@ -293,18 +306,27 @@ for (const [name, value] of [
   ["fractional concurrency", '{"workflow":{"subagent":{"maxConcurrent":1.5}}}'],
   ["string concurrency", '{"workflow":{"subagent":{"maxConcurrent":"4"}}}'],
   ["unknown subagent field", '{"workflow":{"subagent":{"agent":"custom"}}}'],
-  ["unknown provider", '{"web":{"search":{"routing":{"provider":"invalid"}}}}'],
-  ["invalid results", '{"web":{"search":{"maxResults":11}}}'],
+  [
+    "unknown provider",
+    '{"web-kits":{"search":{"routing":{"provider":"invalid"}}}}',
+  ],
+  ["invalid results", '{"web-kits":{"search":{"maxResults":11}}}'],
   [
     "alias fallback conflict",
-    '{"web":{"search":{"routing":{"provider":"codex","fallbackProvider":"codex-alpha-search"}}}}',
+    '{"web-kits":{"search":{"routing":{"provider":"codex","fallbackProvider":"codex-alpha-search"}}}}',
   ],
   [
     "default fallback conflict",
-    '{"web":{"search":{"routing":{"fallbackProvider":"searxng"}}}}',
+    '{"web-kits":{"search":{"routing":{"fallbackProvider":"searxng"}}}}',
   ],
-  ["invalid Codex model", '{"web":{"search":{"codex":{"model":"bad model"}}}}'],
-  ["embedded credential", '{"web":{"search":{"searxng":{"apiKey":"secret"}}}}'],
+  [
+    "invalid Codex model",
+    '{"web-kits":{"search":{"codex":{"model":"bad model"}}}}',
+  ],
+  [
+    "embedded credential",
+    '{"web-kits":{"search":{"searxng":{"apiKey":"secret"}}}}',
+  ],
 ] as const) {
   test(`invalid config is rejected: ${name}`, () => {
     assert.throws(() => parsePiKitsConfig(value), /Invalid pi-kits.json/);

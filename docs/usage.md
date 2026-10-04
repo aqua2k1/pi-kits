@@ -49,7 +49,7 @@ Legacy `usage` settings remain readable: top-level settings override the same
 legacy fields, while unspecified fields retain legacy values before defaults.
 Legacy `usage.enabled: false` still disables its children unless a child explicitly
 sets top-level `enabled` to override it. Legacy `workspace` and `workflow` follow
-the same rules; the internal `web` structure is unchanged.
+the same rules; the internal `web-kits` structure is unchanged.
 
 See the [configuration example](../pi-kits.example.json). No new
 authentication paths are introduced.

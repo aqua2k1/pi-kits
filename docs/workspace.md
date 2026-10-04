@@ -26,7 +26,7 @@
 }
 ```
 
-旧 `workspace` 段仍兼容读取：顶层设置覆盖同名旧字段，未指定字段保留旧值后再应用默认值。旧 `workspace.enabled: false` 仍关闭其子项，除非子项显式设置顶层 `enabled` 覆盖它。`usage`、`workflow` 旧段遵循相同规则；`web` 内部结构不变。
+旧 `workspace` 段仍兼容读取：顶层设置覆盖同名旧字段，未指定字段保留旧值后再应用默认值。旧 `workspace.enabled: false` 仍关闭其子项，除非子项显式设置顶层 `enabled` 覆盖它。`usage`、`workflow` 旧段遵循相同规则；`web-kits` 内部结构不变。
 
 完整字段见 [配置示例](../pi-kits.example.json)。修改后执行 `/reload`。
 

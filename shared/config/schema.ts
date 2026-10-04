@@ -132,7 +132,7 @@ export const PI_KITS_SCHEMA = Type.Object(
         },
       ),
     ),
-    web: section({
+    "web-kits": section({
       enabled,
       search: section({
         enabled,

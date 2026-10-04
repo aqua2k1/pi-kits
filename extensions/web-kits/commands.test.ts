@@ -234,7 +234,7 @@ test("/web-tools status: shows unified source and disabled tools; tests cannot b
   const status = notifications[0] ?? "";
   assert.match(status, /config file: \/synthetic\/agent\/pi-kits\.json/);
   assert.match(status, /config source: pi-kits/);
-  assert.match(status, /web: enabled/);
+  assert.match(status, /web-kits: enabled/);
   assert.match(status, /web_search: disabled/);
   assert.match(status, /web_fetch: disabled/);
   assert.match(status, /search fallback: disabled/);

@@ -1,5 +1,5 @@
 {
-  "name": "pi-web",
+  "name": "web-kits",
   "private": true,
   "version": "0.1.0",
   "type": "module",
@@ -7,9 +7,7 @@
     "pi-package"
   ],
   "extensionResources": {
-    "web-kits": "./index.ts",
-    "web": "./index.ts",
-    "web-kit": "./index.ts"
+    "web-kits": "./index.ts"
   },
   "pi": {
     "extensions": [

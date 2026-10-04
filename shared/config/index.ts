@@ -64,12 +64,12 @@ export function parsePiKitsFile(text: string): PiKitsFileConfig {
       `Invalid pi-kits.json: ${field} does not match the configuration schema.`,
     );
   }
-  const routing = value.web?.search?.routing;
+  const routing = value["web-kits"]?.search?.routing;
   const provider =
     normalizeProvider(routing?.provider) ?? WEB_DEFAULTS.provider;
   if (provider === normalizeProvider(routing?.fallbackProvider)) {
     throw new Error(
-      "Invalid pi-kits.json: web.search.routing providers must differ.",
+      "Invalid pi-kits.json: web-kits.search.routing providers must differ.",
     );
   }
   return value;
@@ -219,40 +219,46 @@ export function resolvePiKitsConfig(raw: PiKitsFileConfig = {}) {
       enabled: raw.notify?.enabled ?? true,
       quietPeriodMs: raw.notify?.quietPeriodMs ?? 1_000,
     },
-    web: {
-      enabled: raw.web?.enabled ?? true,
+    "web-kits": {
+      enabled: raw["web-kits"]?.enabled ?? true,
       search: {
-        enabled: raw.web?.search?.enabled ?? true,
+        enabled: raw["web-kits"]?.search?.enabled ?? true,
         routing: {
           provider:
-            normalizeProvider(raw.web?.search?.routing?.provider) ??
+            normalizeProvider(raw["web-kits"]?.search?.routing?.provider) ??
             WEB_DEFAULTS.provider,
-          fallback: raw.web?.search?.routing?.fallback ?? false,
+          fallback: raw["web-kits"]?.search?.routing?.fallback ?? false,
           fallbackProvider: normalizeProvider(
-            raw.web?.search?.routing?.fallbackProvider,
+            raw["web-kits"]?.search?.routing?.fallbackProvider,
           ),
         },
-        timeoutMs: raw.web?.search?.timeoutMs ?? WEB_DEFAULTS.searchTimeoutMs,
-        maxResults: raw.web?.search?.maxResults ?? WEB_DEFAULTS.maxResults,
+        timeoutMs:
+          raw["web-kits"]?.search?.timeoutMs ?? WEB_DEFAULTS.searchTimeoutMs,
+        maxResults:
+          raw["web-kits"]?.search?.maxResults ?? WEB_DEFAULTS.maxResults,
         codex: {
-          model: raw.web?.search?.codex?.model ?? WEB_DEFAULTS.codexModel,
+          model:
+            raw["web-kits"]?.search?.codex?.model ?? WEB_DEFAULTS.codexModel,
         },
       },
       fetch: {
-        enabled: raw.web?.fetch?.enabled ?? true,
-        timeoutMs: raw.web?.fetch?.timeoutMs ?? WEB_DEFAULTS.fetchTimeoutMs,
+        enabled: raw["web-kits"]?.fetch?.enabled ?? true,
+        timeoutMs:
+          raw["web-kits"]?.fetch?.timeoutMs ?? WEB_DEFAULTS.fetchTimeoutMs,
         github: {
           enabled:
-            raw.web?.fetch?.github?.enabled ?? WEB_DEFAULTS.githubEnabled,
-          mode: raw.web?.fetch?.github?.mode ?? WEB_DEFAULTS.githubMode,
+            raw["web-kits"]?.fetch?.github?.enabled ??
+            WEB_DEFAULTS.githubEnabled,
+          mode: raw["web-kits"]?.fetch?.github?.mode ?? WEB_DEFAULTS.githubMode,
           maxRepoSizeMB:
-            raw.web?.fetch?.github?.maxRepoSizeMB ??
+            raw["web-kits"]?.fetch?.github?.maxRepoSizeMB ??
             WEB_DEFAULTS.githubMaxRepoSizeMB,
           cloneTimeoutSeconds:
-            raw.web?.fetch?.github?.cloneTimeoutSeconds ??
+            raw["web-kits"]?.fetch?.github?.cloneTimeoutSeconds ??
             WEB_DEFAULTS.githubCloneTimeoutSeconds,
           clonePath:
-            raw.web?.fetch?.github?.clonePath ?? WEB_DEFAULTS.githubClonePath,
+            raw["web-kits"]?.fetch?.github?.clonePath ??
+            WEB_DEFAULTS.githubClonePath,
         },
       },
     },

@@ -264,7 +264,7 @@ test("unified config: web section is read without merging old files", async () =
     );
     await writeFile(
       getConfigPath(directory),
-      JSON.stringify({ web: { search: { maxResults: 2 } } }),
+      JSON.stringify({ "web-kits": { search: { maxResults: 2 } } }),
     );
     const snapshot = await readConfigSnapshot(getConfigPath(directory));
     assert.equal(snapshot.source, "pi-kits");
@@ -313,14 +313,14 @@ test("unified config: missing file uses defaults and never reads old files", asy
 
 test("unified config: explicit paths read exactly that file using the root schema", async () => {
   await withConfigDirectory(async (directory) => {
-    await writeFile(getConfigPath(directory), '{"web":{"enabled":false}}');
+    await writeFile(getConfigPath(directory), '{"web-kits":{"enabled":false}}');
     const path = join(directory, "custom-config.json");
     assert.deepEqual(await readConfigSnapshot(path), {
       rawConfig: {},
       configPath: path,
       source: "defaults",
     });
-    await writeFile(path, '{"web":{"search":{"maxResults":4}}}');
+    await writeFile(path, '{"web-kits":{"search":{"maxResults":4}}}');
     assert.deepEqual(await readConfigSnapshot(path), {
       rawConfig: { search: { maxResults: 4 } },
       configPath: path,
@@ -345,12 +345,12 @@ test("unified config: invalid new files never fall back", async () => {
     for (const text of [
       "not-json",
       "[]",
-      '{"web":null}',
-      '{"web":{"enabled":"false"}}',
-      '{"web":{"search":{"enabled":0}}}',
-      '{"web":{"fetch":{"enabled":null}}}',
-      '{"web":{"search":{"maxResults":0}}}',
-      '{"web":{"search":{"searxng":{"apiKey":"synthetic-secret"}}}}',
+      '{"web-kits":null}',
+      '{"web-kits":{"enabled":"false"}}',
+      '{"web-kits":{"search":{"enabled":0}}}',
+      '{"web-kits":{"fetch":{"enabled":null}}}',
+      '{"web-kits":{"search":{"maxResults":0}}}',
+      '{"web-kits":{"search":{"searxng":{"apiKey":"synthetic-secret"}}}}',
     ]) {
       await writeFile(getConfigPath(directory), text);
       await assert.rejects(
@@ -362,7 +362,7 @@ test("unified config: invalid new files never fall back", async () => {
     // Shared validation also rejects routing conflicts before file loading.
     await writeFile(
       getConfigPath(directory),
-      '{"web":{"search":{"routing":{"provider":"searxng","fallbackProvider":"searxng"}}}}',
+      '{"web-kits":{"search":{"routing":{"provider":"searxng","fallbackProvider":"searxng"}}}}',
     );
     await assert.rejects(readConfig(getConfigPath(directory)), invalidConfig);
   });
@@ -373,7 +373,7 @@ test("unified config: enabled switches survive reading and default independently
     await writeFile(
       getConfigPath(directory),
       JSON.stringify({
-        web: {
+        "web-kits": {
           enabled: false,
           search: { enabled: false },
           fetch: { enabled: false },

@@ -48,7 +48,7 @@
     "enabled": true,
     "quietPeriodMs": 1000
   },
-  "web": {
+  "web-kits": {
     "enabled": true,
     "search": {
       "enabled": true,

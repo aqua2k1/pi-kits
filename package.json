@@ -17,25 +17,7 @@
     "notify": "./extensions/notify/index.ts",
     "ask-user-question": "./extensions/ask-user-question/index.ts",
     "subagent": "./extensions/subagent/index.ts",
-    "web-kits": "./extensions/web/index.ts",
-    "workspace-kit": [
-      "./extensions/terminal/index.ts",
-      "./extensions/open/index.ts",
-      "./extensions/preview/index.ts",
-      "./extensions/context-preview/index.ts"
-    ],
-    "usage-kit": [
-      "./extensions/provider-usage/index.ts",
-      "./extensions/stats/index.ts"
-    ],
-    "workflow-kit": [
-      "./extensions/commit/index.ts",
-      "./extensions/notify/index.ts",
-      "./extensions/ask-user-question/index.ts",
-      "./extensions/subagent/index.ts"
-    ],
-    "web-kit": "./extensions/web/index.ts",
-    "web": "./extensions/web/index.ts"
+    "web-kits": "./extensions/web-kits/index.ts"
   },
   "pi": {
     "extensions": [
@@ -49,7 +31,7 @@
       "./extensions/notify/index.ts",
       "./extensions/ask-user-question/index.ts",
       "./extensions/subagent/index.ts",
-      "./extensions/web/index.ts"
+      "./extensions/web-kits/index.ts"
     ],
     "themes": [
       "./themes/gruvbox.json"
