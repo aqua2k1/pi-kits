@@ -1,10 +1,14 @@
 import assert from "node:assert/strict";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { connect, type Socket } from "node:net";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { setTimeout as delay } from "node:timers/promises";
-import { SessionManager } from "@earendil-works/pi-coding-agent";
+import {
+  DefaultPackageManager,
+  SessionManager,
+} from "@earendil-works/pi-coding-agent";
 import { useAgentDir } from "../../test-utils/agent-dir.ts";
 import { parseAgentDefinition } from "./agents.ts";
 import { captureParentSession } from "./clone.ts";
@@ -347,10 +351,10 @@ test("empty agent tools disable all tools and named agents always disable contex
 });
 
 test("explicit extension allowlists replace defaults, including an empty list", async (t) => {
-  for (const extensionAllowlist of [
-    [],
-    ["builtin:mcp", "/trusted/custom.ts"],
-  ]) {
+  const agentDir = useAgentDir(t);
+  const custom = join(agentDir, "custom.ts");
+  writeFileSync(custom, "export default () => {};");
+  for (const extensionAllowlist of [[], ["builtin:mcp", custom]]) {
     const mux = new FakeMux();
     const manager = new SubagentManager(mux, { extensionAllowlist });
     t.after(() => manager.close());
@@ -371,6 +375,18 @@ test("explicit extension allowlists replace defaults, including an empty list", 
 test("extension paths resolve from the agent directory, never the task cwd", async (t) => {
   const agentDir = useAgentDir(t);
   const mux = new FakeMux();
+  const home = process.env.HOME;
+  process.env.HOME = agentDir;
+  t.after(() => {
+    if (home === undefined) delete process.env.HOME;
+    else process.env.HOME = home;
+  });
+  mkdirSync(join(agentDir, "extensions"));
+  writeFileSync(
+    join(agentDir, "extensions/custom file.ts"),
+    "export default () => {};",
+  );
+  writeFileSync(join(agentDir, "trusted.ts"), "export default () => {};");
   const manager = new SubagentManager(mux, {
     extensionAllowlist: ["extensions/custom file.ts", "~/trusted.ts"],
   });
@@ -381,6 +397,41 @@ test("extension paths resolve from the agent directory, never the task cwd", asy
   assert.ok(argv.includes(join(agentDir, "extensions/custom file.ts")));
   assert.ok(argv.includes(join(homedir(), "trusted.ts")));
   assert.ok(!argv.includes("/untrusted/project/extensions/custom file.ts"));
+});
+
+test("stopping during native source resolution never starts a terminal afterwards", async (t) => {
+  useAgentDir(t);
+  let release!: () => void;
+  const waiting = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  let entered = false;
+  t.mock.method(
+    DefaultPackageManager.prototype,
+    "resolveExtensionSources",
+    async () => {
+      entered = true;
+      await waiting;
+      return {
+        extensions: [{ path: "/native/resolved.ts", enabled: true }],
+        skills: [],
+        prompts: [],
+        themes: [],
+      };
+    },
+  );
+  const mux = new FakeMux();
+  const manager = new SubagentManager(mux, {
+    extensionAllowlist: ["native-source"],
+  });
+  t.after(() => manager.close());
+  const agent = manager.spawn(task);
+  await until(() => entered);
+  await manager.stop(agent.id);
+  release();
+  await delay(20);
+  assert.equal(mux.started.length, 0);
+  assert.equal(manager.get(agent.id).status, "stopped");
 });
 
 test("oversized agent instructions fail before worker creation", () => {

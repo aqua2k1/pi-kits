@@ -64,7 +64,12 @@ export const PI_KITS_SCHEMA = Type.Object(
               minLength: 1,
               pattern: "^(?=.*\\S)[^\\x00-\\x1f\\x7f]+$",
             }),
-            { uniqueItems: true, default: [...SUBAGENT_DEFAULT_EXTENSIONS] },
+            {
+              uniqueItems: true,
+              description:
+                "Pi extension sources resolved by Pi. Relative paths use the agent directory.",
+              default: [...SUBAGENT_DEFAULT_EXTENSIONS],
+            },
           ),
         ),
       }),

@@ -156,6 +156,7 @@
                 "pattern": "^(?=.*\\S)[^\\x00-\\x1f\\x7f]+$"
               },
               "uniqueItems": true,
+              "description": "Pi extension sources resolved by Pi. Relative paths use the agent directory.",
               "default": ["builtin:codemode", "builtin:tool-search"]
             }
           },

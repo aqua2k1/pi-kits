@@ -444,12 +444,27 @@ Every worker explicitly loads this shared list alongside its bridge. The list
 replaces the defaults as a whole: `[]` loads only the bridge. It controls **which
 extension code is loaded**, while each agent\'s `tools` selects **which tools are
 enabled**; loading codemode does not automatically activate it. Agent Markdown
-cannot add extensions. Add trusted extension files/directories explicitly for
-custom tools; paths may be absolute, `~/...`, or relative to the agent directory
-(not the task/project cwd). Built-in extension names use `builtin:<name>`; the
-tool `tool_search` is provided by `builtin:tool-search`. Reload the parent after
-changing the whitelist. Extensions run with full process permissions, so this
-is a loading policy, not an OS sandbox.
+cannot add extensions. Entries are native Pi extension sources, resolved by Pi's
+package manager rather than a kit-specific prefix table. For example:
+
+```json
+"extensionAllowlist": [
+  "builtin:codemode",
+  "builtin:tool-search",
+  "npm:@narumitw/pi-chrome-devtools"
+]
+```
+
+Pi resolves installed npm/git packages and reads their declared extension
+resources. Package sources load their declared extensions, not just one tool.
+Missing packages follow Pi's native installation behavior; only list trusted
+sources. Files/directories remain supported: absolute paths, `~/...`, and paths
+relative to the agent directory (never the task/project cwd). Resolved enabled
+extension paths are explicitly passed to the child CLI; unrelated parent packages
+are not loaded. A source with no enabled extension resources fails before worker
+creation. The tool `tool_search` is provided by `builtin:tool-search`.
+Reload the parent after changing the whitelist. Extensions run with full process
+permissions, so this is a loading policy, not an OS sandbox.
 
 ## Configuration
 

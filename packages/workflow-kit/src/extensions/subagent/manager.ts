@@ -1,11 +1,10 @@
 import { randomBytes, randomUUID } from "node:crypto";
 import { createServer, type Server, type Socket } from "node:net";
-import { homedir } from "node:os";
-import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { getAgentDir, SUBAGENT_DEFAULT_EXTENSIONS } from "@pi-kits/config";
+import { SUBAGENT_DEFAULT_EXTENSIONS } from "@pi-kits/config";
 import type { AgentDefinition } from "./agents.ts";
 import { createClonedSession, type ParentSessionSnapshot } from "./clone.ts";
+import { resolveWorkerExtensions } from "./extensions.ts";
 import {
   type MuxAdapter,
   type TerminalHandle,
@@ -495,6 +494,10 @@ export class SubagentManager {
   private async start(record: AgentRecord): Promise<void> {
     let timer: ReturnType<typeof setTimeout> | undefined;
     try {
+      const extensions = await resolveWorkerExtensions(
+        this.options.extensionAllowlist ?? SUBAGENT_DEFAULT_EXTENSIONS,
+      );
+      if (record.execution.finished || this.disposed) return;
       const endpoint = await this.listen();
       if (record.execution.finished || this.disposed) return;
       if (record.snapshot.status === "stopping") {
@@ -519,20 +522,7 @@ export class SubagentManager {
         this.options.workerPath ??
           fileURLToPath(new URL("./worker.ts", import.meta.url)),
       ];
-      for (const extension of new Set(
-        (this.options.extensionAllowlist ?? SUBAGENT_DEFAULT_EXTENSIONS).map(
-          (entry) => entry.trim(),
-        ),
-      )) {
-        const path = extension.trim();
-        const expanded = path.startsWith("~/")
-          ? resolve(homedir(), path.slice(2))
-          : path;
-        argv.push(
-          "-e",
-          path.startsWith("builtin:") ? path : resolve(getAgentDir(), expanded),
-        );
-      }
+      for (const extension of extensions) argv.push("-e", extension);
       if (record.options.parentSession) {
         const sessionPath = createClonedSession(
           record.options.parentSession,

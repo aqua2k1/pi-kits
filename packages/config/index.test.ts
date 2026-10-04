@@ -119,6 +119,7 @@ test("explicit subagent extension allowlists replace defaults, including empty",
   for (const extensionAllowlist of [
     [],
     ["builtin:mcp", "/trusted/custom.ts"],
+    ["npm:@narumitw/pi-chrome-devtools", "git:github.com/example/tools"],
   ]) {
     const config = parsePiKitsConfig(
       JSON.stringify({
