@@ -252,7 +252,20 @@ disconnected cleanup errors remain visible until resolved. Results and terminals
 remain available after rows disappear. Shutdown/reload removes the widget and
 its refresh timer.
 
-`stop_subagent` cancels the task and retains its terminal when Pi cooperates;
+Task and session states are separate: `status` remains the last managed task\'s
+state/result; `sessionState` is `idle`, `running` (managed execution),
+`interactive` (native/user execution without an active managed task),
+`disconnected`, or `closed`. Native guidance during a managed run remains part
+of that managed batch. Session state is absent
+before a worker connects. Opening a view does not make a session interactive.
+Native conversations update session activity through IPC and remain visible in
+the widget until Pi settles, including retries and continuations. They do not
+overwrite the managed result/statistics, emit another completion notification,
+or acquire a managed concurrency slot. An IPC task cannot take over native work.
+Programmatic resume is not yet implemented.
+
+`stop_subagent` cancels the managed task, not independent native/user work, and
+retains its terminal when Pi cooperates;
 if cancellation does not settle within five seconds, the terminal is destroyed.
 Parent session shutdown/reload cleans up owned workers and views. Workers share
 the filesystem and credentials and are not a sandbox. They start with

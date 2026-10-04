@@ -184,6 +184,60 @@ test("manager is lazy, starts an authenticated worker and returns structured res
   unsubscribe();
 });
 
+test("finished tasks retain results while native session state continues changing", async (t) => {
+  const mux = new FakeMux();
+  const notifications: string[] = [];
+  const manager = new SubagentManager(mux, {
+    onComplete: (record) => notifications.push(record.id),
+  });
+  t.after(() => manager.close());
+  const agent = manager.spawn(task);
+  await until(() => mux.commands.get(agent.id)?.length === 1);
+  assert.equal(manager.get(agent.id).sessionState, "running");
+  mux.emit(agent.id, { type: "completed", result: "Original result" });
+  await until(() => manager.get(agent.id).status === "completed");
+  const finished = manager.get(agent.id);
+  assert.equal(finished.sessionState, "idle");
+  await manager.openView(agent.id);
+  assert.equal(manager.get(agent.id).sessionState, "idle");
+  mux.emit(agent.id, {
+    type: "session_state",
+    state: "interactive",
+    activity: "read",
+  });
+  await until(() => manager.get(agent.id).sessionState === "interactive");
+  const manual = manager.get(agent.id);
+  assert.equal(manual.status, "completed");
+  assert.equal(manual.result, finished.result);
+  assert.equal(manual.completedAt, finished.completedAt);
+  assert.equal(manual.sessionActivity, "read");
+  mux.emit(agent.id, { type: "stats", turnCount: 100 });
+  mux.emit(agent.id, { type: "completed", result: "Manual result" });
+  mux.emit(agent.id, { type: "session_state", state: "idle" });
+  await until(() => manager.get(agent.id).sessionState === "idle");
+  assert.equal(manager.get(agent.id).result, "Original result");
+  assert.equal(manager.get(agent.id).turnCount, finished.turnCount);
+  assert.equal(manager.get(agent.id).sessionActivity, undefined);
+  assert.deepEqual(notifications, [agent.id]);
+  mux.sockets.get(agent.id)?.destroy();
+  await until(() => manager.get(agent.id).sessionState === "disconnected");
+  assert.equal(manager.get(agent.id).status, "completed");
+  assert.equal(manager.get(agent.id).result, "Original result");
+  await manager.close();
+  assert.equal(manager.get(agent.id).sessionState, "closed");
+});
+
+test("malformed session states fail the authenticated connection closed", async (t) => {
+  const mux = new FakeMux();
+  const manager = new SubagentManager(mux);
+  t.after(() => manager.close());
+  const agent = manager.spawn(task);
+  await until(() => mux.commands.get(agent.id)?.length === 1);
+  mux.emit(agent.id, { type: "session_state", state: ["idle"] });
+  assert.equal((await manager.result(agent.id, true)).status, "error");
+  assert.equal(manager.get(agent.id).sessionState, "closed");
+});
+
 test("named agent configuration controls worker argv and structured system instructions", async (t) => {
   const mux = new FakeMux();
   const manager = new SubagentManager(mux);

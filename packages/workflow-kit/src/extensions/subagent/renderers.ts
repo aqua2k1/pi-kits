@@ -1,7 +1,7 @@
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { Text, truncateToWidth } from "@earendil-works/pi-tui";
 import type { AgentSnapshot } from "./manager.ts";
-import { oneLine } from "./presentation.ts";
+import { agentDisplayStatus, oneLine } from "./presentation.ts";
 
 function jsonText(value: unknown): string {
   return (JSON.stringify(value, null, 2) ?? "").replace(
@@ -53,8 +53,13 @@ export const renderSubagentResult: NonNullable<
   const failed =
     context.isError ||
     snapshot?.status === "error" ||
-    snapshot?.status === "disconnected";
-  const status = valid ? snapshot.status : failed ? "error" : "result";
+    snapshot?.status === "disconnected" ||
+    snapshot?.sessionState === "disconnected";
+  const status = valid
+    ? agentDisplayStatus(snapshot)
+    : failed
+      ? "error"
+      : "result";
   const args = context.args as Record<string, unknown> | undefined;
   const repeated = valid && args?.description === snapshot.description;
   const title =

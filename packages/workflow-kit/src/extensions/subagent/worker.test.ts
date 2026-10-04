@@ -266,6 +266,7 @@ test("resources start only at TUI session_start; ready authenticates", () => {
       token: config.token,
       sessionPath: "/sessions/worker.jsonl",
     },
+    { type: "session_state", id: config.id, state: "idle" },
   ]);
   h.emit("session_shutdown");
   h.emit("session_shutdown");
@@ -325,6 +326,7 @@ test("structured agent instructions replace/append system prompts and persist in
   assert.deepEqual(before(), { systemPrompt: "Custom instructions" });
   h.emit("agent_settled");
   assert.deepEqual(before(), { systemPrompt: "Custom instructions" });
+  h.emit("agent_settled");
   socket.command({
     type: "task",
     prompt: "work",
@@ -337,6 +339,59 @@ test("structured agent instructions replace/append system prompts and persist in
   h.emit("agent_settled");
   socket.command({ type: "task", prompt: "ordinary task" });
   assert.equal(before(), undefined);
+});
+
+test("native conversations publish interactive/idle without producing task results or stats", () => {
+  const h = harness();
+  const socket = h.start();
+  socket.command({ type: "task", prompt: "first" });
+  h.emit("agent_start");
+  h.emit("message_end", { message: assistant("Original result") });
+  h.emit("agent_settled");
+  const original = completions(socket)[0];
+  const stats = socket.frames.filter((frame) => frame.type === "stats").length;
+  h.emit("before_agent_start", { systemPrompt: "base" });
+  h.emit("agent_start");
+  h.emit("tool_execution_start", { toolName: "read" });
+  assert.deepEqual(socket.frames.at(-1), {
+    type: "session_state",
+    id: config.id,
+    state: "interactive",
+    activity: "read",
+  });
+  h.emit("tool_execution_end", { toolName: "read" });
+  h.emit("message_end", { message: assistant("Manual result") });
+  h.emit("agent_end");
+  assert.equal(socket.frames.at(-1)?.type, "session_state");
+  assert.deepEqual(completions(socket), [original]);
+  h.emit("agent_settled");
+  assert.deepEqual(socket.frames.at(-1), {
+    type: "session_state",
+    id: config.id,
+    state: "idle",
+  });
+  assert.deepEqual(completions(socket), [original]);
+  assert.equal(
+    socket.frames.filter((frame) => frame.type === "stats").length,
+    stats,
+  );
+});
+
+test("IPC tasks cannot take over native work, and task cancellation does not abort it", () => {
+  const h = harness();
+  const socket = h.start();
+  h.emit("before_agent_start", { systemPrompt: "base" });
+  socket.command({ type: "task", prompt: "Do not interrupt" });
+  assert.equal(h.messages.length, 0);
+  assert.match(
+    completions(socket)[0].error ?? "",
+    /busy with user interaction/,
+  );
+  socket.command({ type: "cancel" });
+  assert.equal(h.aborts, 0);
+  h.emit("agent_settled");
+  socket.command({ type: "task", prompt: "Now idle" });
+  assert.equal(h.messages.length, 1);
 });
 
 test("missing requested tools fail before a model turn instead of being ignored", () => {
@@ -641,8 +696,18 @@ test("real loopback TCP uses JSONL without taking over Pi stdio", async (t) => {
     connection.destroy();
   });
   connection.setEncoding("utf8");
-  const [ready] = (await once(connection, "data")) as [string];
-  assert.deepEqual(JSON.parse(ready), {
+  const ready = await new Promise<unknown>((resolve) => {
+    let buffer = "";
+    const receive = (chunk: string) => {
+      buffer += chunk;
+      const end = buffer.indexOf("\n");
+      if (end < 0) return;
+      connection.off("data", receive);
+      resolve(JSON.parse(buffer.slice(0, end)));
+    };
+    connection.on("data", receive);
+  });
+  assert.deepEqual(ready, {
     type: "ready",
     id: config.id,
     token: config.token,

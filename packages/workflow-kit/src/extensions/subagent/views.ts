@@ -21,6 +21,7 @@ import {
 import { layoutTabs, type TabLayout, tabAt } from "../../lib/ui/tabs.ts";
 import {
   type AgentSource,
+  agentDisplayStatus,
   agentStats,
   agentTitle,
   statusIcon,
@@ -218,7 +219,7 @@ export class SubagentViewsPanel {
         truncateToWidth(
           this.theme.fg(
             "muted",
-            `${agent.id.slice(0, 8)} · ${agent.status} · ${agentStats(agent)}`,
+            `${agent.id.slice(0, 8)} · ${agentDisplayStatus(agent)} · ${agent.sessionState === "interactive" ? "User interaction" : agentStats(agent)}`,
           ),
           width,
         ),
@@ -229,7 +230,7 @@ export class SubagentViewsPanel {
       phase === 0
         ? agents.map((item) => ({
             value: item.id,
-            label: `${statusIcon(item, this.theme, Date.now())} ${agentTitle(item)} · ${item.id.slice(0, 8)} · ${item.status}`,
+            label: `${statusIcon(item, this.theme, Date.now())} ${agentTitle(item)} · ${item.id.slice(0, 8)} · ${agentDisplayStatus(item)}`,
           }))
         : actions.map((action) => ({
             value: action.value,
@@ -243,7 +244,7 @@ export class SubagentViewsPanel {
       return frame.finish([
         ...frame.heading([], phase),
         ...frame.compactBody({
-          progress: agent?.status ?? "No agents",
+          progress: agent ? agentDisplayStatus(agent) : "No agents",
           title: [description],
           detail: [],
           kind: "value",

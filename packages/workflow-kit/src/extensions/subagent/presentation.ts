@@ -16,6 +16,17 @@ export function isWorking(status: AgentStatus): boolean {
   return status === "starting" || status === "running" || status === "stopping";
 }
 
+export function isBusy(agent: AgentSnapshot): boolean {
+  return isWorking(agent.status) || agent.sessionState === "interactive";
+}
+
+export function agentDisplayStatus(agent: AgentSnapshot): string {
+  return agent.sessionState === "interactive" ||
+    agent.sessionState === "disconnected"
+    ? `${agent.status} · ${agent.sessionState}`
+    : agent.status;
+}
+
 export function oneLine(text: string): string {
   // Never allow model-supplied text to inject terminal controls into widgets.
   return stripTerminalSequences(text)
@@ -49,7 +60,8 @@ export function agentStats(agent: AgentSnapshot, now = Date.now()): string {
 }
 
 export function statusIcon(agent: AgentSnapshot, theme: Theme, now: number) {
-  if (isWorking(agent.status)) {
+  if (agent.sessionState === "disconnected") return theme.fg("error", "✗");
+  if (isBusy(agent)) {
     return theme.fg("accent", frames[Math.floor(now / 200) % frames.length]);
   }
   if (agent.status === "completed") return theme.fg("success", "✓");
@@ -67,16 +79,20 @@ export function renderAgentWidget(
 ): string[] {
   if (width < 1 || !agents.length) return [];
   const queued = agents.filter((agent) => agent.status === "queued").length;
-  const active = agents.filter((agent) => isWorking(agent.status));
+  const active = agents.filter(isBusy);
   const finished = agents.filter(
-    (agent) => !isWorking(agent.status) && agent.status !== "queued",
+    (agent) => !isBusy(agent) && agent.status !== "queued",
   );
   const lines = [theme.fg("accent", theme.bold("● Subagents"))];
   // Bounded height; active agents take priority over retained finished rows.
   for (const agent of active.slice(0, 4)) {
+    const interactive = agent.sessionState === "interactive";
     lines.push(
-      `├─ ${statusIcon(agent, theme, now)} ${agentTitle(agent)} · ${agentStats(agent, now)}`,
-      theme.fg("muted", `│   ⎿ ${oneLine(agent.activity ?? agent.status)}`),
+      `├─ ${statusIcon(agent, theme, now)} ${agentTitle(agent)} · ${interactive ? "interactive" : agentStats(agent, now)}`,
+      theme.fg(
+        "muted",
+        `│   ⎿ ${oneLine(interactive ? (agent.sessionActivity ?? "User interaction") : (agent.activity ?? agent.status))}`,
+      ),
     );
   }
   if (active.length > 4) {
@@ -86,7 +102,7 @@ export function renderAgentWidget(
   for (const agent of finished.slice(-Math.max(0, 11 - lines.length))) {
     if (lines.length >= 11) break;
     lines.push(
-      `├─ ${statusIcon(agent, theme, now)} ${agentTitle(agent)} · ${agent.status} · ${agentStats(agent, now)}`,
+      `├─ ${statusIcon(agent, theme, now)} ${agentTitle(agent)} · ${agentDisplayStatus(agent)} · ${agentStats(agent, now)}`,
     );
   }
   if (lines.length > 1) {

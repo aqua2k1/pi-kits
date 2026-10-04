@@ -11,6 +11,7 @@ import {
   TerminalStartError,
   type ViewHandle,
 } from "./mux.ts";
+import type { WorkerSessionState } from "./worker.ts";
 
 export type AgentStatus =
   | "queued"
@@ -22,10 +23,14 @@ export type AgentStatus =
   | "stopped"
   | "error";
 
+export type SessionState = WorkerSessionState | "disconnected" | "closed";
+
 export interface AgentSnapshot {
   id: string;
   description: string;
   status: AgentStatus;
+  sessionState?: SessionState;
+  sessionActivity?: string;
   subagentType?: string;
   displayName?: string;
   agentSource?: AgentDefinition["source"];
@@ -440,6 +445,9 @@ export class SubagentManager {
         return;
       }
       record.snapshot.status = "running";
+      if (record.snapshot.sessionState !== "interactive") {
+        record.snapshot.sessionState = "running";
+      }
       record.snapshot.activity = "Thinking…";
       this.changed();
       this.send(record, taskCommand(record.options));
@@ -465,6 +473,8 @@ export class SubagentManager {
     try {
       await this.adapter.destroy(terminal);
       record.terminal = undefined;
+      record.snapshot.sessionState = "closed";
+      record.snapshot.sessionActivity = undefined;
       this.forgetView(record);
       return true;
     } catch {
@@ -549,6 +559,7 @@ export class SubagentManager {
             }
             record = candidate;
             record.socket = socket;
+            record.snapshot.sessionState = "idle";
             socket.setTimeout(0);
             if (typeof event.sessionPath === "string") {
               record.snapshot.sessionPath = event.sessionPath;
@@ -570,6 +581,11 @@ export class SubagentManager {
       this.sockets.delete(socket);
       if (record?.socket === socket) {
         record.socket = undefined;
+        if (record.snapshot.sessionState !== "closed") {
+          record.snapshot.sessionState = "disconnected";
+          record.snapshot.sessionActivity = undefined;
+          this.changed();
+        }
         record.rejectReady?.(new Error("Pi worker disconnected."));
         if (!record.finished && !record.terminating && !record.ready) {
           void this.terminate(
@@ -583,6 +599,22 @@ export class SubagentManager {
   }
 
   private event(record: AgentRecord, event: Record<string, unknown>): void {
+    if (event.type === "session_state") {
+      if (
+        typeof event.state !== "string" ||
+        !["idle", "running", "interactive"].includes(event.state)
+      ) {
+        throw new Error("Invalid worker session state");
+      }
+      if (record.snapshot.sessionState === "closed") return;
+      record.snapshot.sessionState = event.state as WorkerSessionState;
+      record.snapshot.sessionActivity =
+        event.state === "interactive" && typeof event.activity === "string"
+          ? event.activity.slice(0, 4096)
+          : undefined;
+      this.changed();
+      return;
+    }
     if (record.finished) return;
     if (event.type === "stats") {
       for (const key of [
@@ -621,6 +653,9 @@ export class SubagentManager {
     if (event.type === "completed") {
       if (typeof event.result !== "string") {
         throw new Error("Invalid worker result");
+      }
+      if (record.snapshot.sessionState === "running") {
+        record.snapshot.sessionState = "idle";
       }
       record.snapshot.result = event.result;
       record.snapshot.truncated = event.truncated === true;

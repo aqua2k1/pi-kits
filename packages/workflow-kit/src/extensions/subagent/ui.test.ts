@@ -277,6 +277,68 @@ test("status widget stays above editor while working and expires completed rows"
   assert.equal(source.listeners.size, 0);
 });
 
+test("expired completed tasks reappear during interaction, then return to idle without stale stats", () => {
+  const source = new Source();
+  const completed = {
+    ...agent("manual", "completed"),
+    completedAt: 1000,
+    sessionState: "idle" as const,
+  };
+  source.agents = [completed];
+  let now = 60000;
+  let renderer: Component | undefined;
+  const rendered = () => renderer?.render(160).join("\n") ?? "";
+  let starts = 0;
+  let stops = 0;
+  let tick: (() => void) | undefined;
+  const statuses: (string | undefined)[] = [];
+  const ui = {
+    setWidget(_key: string, content: unknown) {
+      renderer =
+        typeof content === "function"
+          ? content({ requestRender() {} }, theme)
+          : undefined;
+    },
+    setStatus(_key: string, status: string | undefined) {
+      statuses.push(status);
+    },
+  } as unknown as ExtensionUIContext;
+  const widget = new SubagentStatusWidget(source, {
+    now: () => now,
+    repeat(callback) {
+      starts += 1;
+      tick = callback;
+      return () => {
+        stops += 1;
+      };
+    },
+  });
+  widget.bind(ui);
+  assert.equal(renderer, undefined);
+  source.update([
+    { ...completed, sessionState: "interactive", sessionActivity: "bash" },
+  ]);
+  assert.match(rendered(), /interactive/);
+  assert.match(rendered(), /bash/);
+  assert.doesNotMatch(rendered(), /tokens|tools/);
+  assert.match(statuses.at(-1) ?? "", /0 active · 1 interactive/);
+  now += 60000;
+  tick?.();
+  assert.ok(renderer);
+  assert.equal(starts, 1);
+  source.update([completed]);
+  assert.equal(renderer, undefined);
+  assert.equal(stops, 1);
+  source.update([{ ...completed, sessionState: "disconnected" }]);
+  assert.match(rendered(), /completed · disconnected/);
+  assert.equal(
+    starts,
+    1,
+    "Disconnected completed sessions must not spin forever",
+  );
+  widget.dispose();
+});
+
 test("queued/disconnected widgets need no timer; disposing active UI stops updates", () => {
   const source = new Source();
   source.agents = [agent("queued", "queued")];

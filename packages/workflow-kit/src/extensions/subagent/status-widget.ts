@@ -2,6 +2,7 @@ import type { ExtensionUIContext } from "@earendil-works/pi-coding-agent";
 import type { TUI } from "@earendil-works/pi-tui";
 import {
   type AgentSource,
+  isBusy,
   isWorking,
   renderAgentWidget,
 } from "./presentation.ts";
@@ -55,9 +56,10 @@ export class SubagentStatusWidget {
       .list()
       .filter(
         (agent) =>
-          isWorking(agent.status) ||
+          isBusy(agent) ||
           agent.status === "queued" ||
           agent.status === "disconnected" ||
+          agent.sessionState === "disconnected" ||
           (agent.completedAt !== undefined &&
             now - agent.completedAt < FINISHED_LINGER_MS),
       );
@@ -72,11 +74,18 @@ export class SubagentStatusWidget {
     }
     const running = agents.filter((agent) => isWorking(agent.status)).length;
     const queued = agents.filter((agent) => agent.status === "queued").length;
+    const interactive = agents.filter(
+      (agent) => agent.sessionState === "interactive",
+    ).length;
     const errors = agents.filter(
-      (agent) => agent.status === "error" || agent.status === "disconnected",
+      (agent) =>
+        agent.status === "error" ||
+        agent.status === "disconnected" ||
+        agent.sessionState === "disconnected",
     ).length;
     const status = [
       `${running} active`,
+      ...(interactive ? [`${interactive} interactive`] : []),
       ...(queued ? [`${queued} queued`] : []),
       ...(errors ? [`${errors} errors`] : []),
     ].join(" · ");
@@ -103,7 +112,10 @@ export class SubagentStatusWidget {
     // Persistent animation for active tasks; finished rows expire after a
     // short grace period. Disconnected errors remain, without a spinning timer.
     const needsTimer = agents.some(
-      (agent) => isWorking(agent.status) || agent.completedAt !== undefined,
+      (agent) =>
+        isBusy(agent) ||
+        (agent.completedAt !== undefined &&
+          this.clock.now() - agent.completedAt < FINISHED_LINGER_MS),
     );
     if (needsTimer && !this.cancelTimer) {
       this.cancelTimer = this.clock.repeat(() => this.refresh());

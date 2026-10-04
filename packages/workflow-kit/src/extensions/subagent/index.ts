@@ -156,7 +156,8 @@ export function registerSubagents(
       label: "Subagent result",
       renderCall: subagentCallRenderer("Subagent result"),
       renderResult: renderSubagentResult,
-      description: "Read a subagent's status and result, optionally waiting.",
+      description:
+        "Read the managed task status/result and live sessionState. wait waits for the managed task, not independent native/user work.",
       parameters: Type.Object({
         agent_id: agentId,
         wait: Type.Optional(Type.Boolean()),
@@ -199,7 +200,8 @@ export function registerSubagents(
       label: "Stop subagent",
       renderCall: subagentCallRenderer("Stop subagent"),
       renderResult: renderSubagentResult,
-      description: "Cancel a queued or running task without closing its view.",
+      description:
+        "Cancel a queued or running managed task without closing its view. Does not cancel independent native/user work.",
       parameters: Type.Object({ agent_id: agentId }),
       async execute(_id, params) {
         return toolResult(getManager().stop(params.agent_id));

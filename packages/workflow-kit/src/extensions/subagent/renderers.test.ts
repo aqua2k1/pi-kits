@@ -64,6 +64,14 @@ test("collapsed subagent output shows only task, status and one preview line", (
   );
 });
 
+test("interactive state is visible without replacing the completed task result", () => {
+  const lines = render({ ...snapshot, sessionState: "interactive" }).render(
+    200,
+  );
+  assert.match(lines[0], /completed · interactive/);
+  assert.match(lines[1], /packageName/);
+});
+
 test("result rows do not repeat the task title already shown in the call", () => {
   const component = renderSubagentResult(
     { content: [], details: snapshot },

@@ -37,7 +37,15 @@ export type WorkerActivityName =
   | "tool_execution_end"
   | "control_rejected";
 
+export type WorkerSessionState = "idle" | "running" | "interactive";
+
 export type WorkerEvent =
+  | {
+      type: "session_state";
+      id: string;
+      state: WorkerSessionState;
+      activity?: string;
+    }
   | {
       type: "stats";
       id: string;
@@ -227,6 +235,8 @@ export function registerWorkerBridge(
 ): void {
   let socket: Socket | undefined;
   let connected = false;
+  let sessionState: WorkerSessionState = "idle";
+  let sessionActivity: string | undefined;
   let context: ExtensionContext | undefined;
   let active = false;
   let started = false;
@@ -269,6 +279,25 @@ export function registerWorkerBridge(
     }
   }
 
+  function reportSession(
+    state: WorkerSessionState,
+    activity?: string,
+    force = false,
+  ): void {
+    const text = activity
+      ? boundedText(activity, MAX_ACTIVITY_BYTES).text
+      : undefined;
+    if (!force && state === sessionState && text === sessionActivity) return;
+    sessionState = state;
+    sessionActivity = text;
+    send({
+      type: "session_state",
+      id: config.id,
+      state,
+      ...(text ? { activity: text } : {}),
+    });
+  }
+
   function reset(): void {
     generation += 1;
     preparing = false;
@@ -304,6 +333,7 @@ export function registerWorkerBridge(
 
   function complete(): void {
     if (!active || !context) return;
+    reportSession("idle");
     send({
       type: "completed",
       id: config.id,
@@ -361,11 +391,27 @@ export function registerWorkerBridge(
       pendingCommands += 1;
       return;
     }
+    if (
+      command.type === "task" &&
+      !active &&
+      (sessionState === "interactive" || !context.isIdle())
+    ) {
+      reportSession("interactive", sessionActivity ?? "Thinking…", true);
+      send({
+        type: "completed",
+        id: config.id,
+        result: "",
+        error: "Subagent is busy with user interaction; wait until idle.",
+        sessionPath: context.sessionManager.getSessionFile(),
+      });
+      return;
+    }
     const wasActive = active;
     if (!active) {
       reset();
       active = true;
       if (command.type === "task") instructions = command.instructions;
+      reportSession("running");
     }
     pendingCommands += 1;
     if (wasActive) submit(command, true);
@@ -431,6 +477,8 @@ export function registerWorkerBridge(
   pi.on("session_start", (_event, ctx) => {
     disconnect();
     reset();
+    sessionState = "idle";
+    sessionActivity = undefined;
     context = ctx;
     if (ctx.mode !== "tui") return;
     const connection = dependencies.connect(config);
@@ -447,6 +495,7 @@ export function registerWorkerBridge(
         token: config.token,
         sessionPath: ctx.sessionManager.getSessionFile(),
       });
+      reportSession(sessionState, sessionActivity, true);
     });
     connection.on("data", (chunk: Buffer) => {
       if (socket !== connection) return;
@@ -474,6 +523,7 @@ export function registerWorkerBridge(
   });
   pi.on("before_agent_start", (event, ctx) => {
     context = ctx;
+    if (!active) reportSession("interactive", "Thinking…");
     if (active && canceling) ctx.abort();
     if (instructions) {
       return {
@@ -486,7 +536,10 @@ export function registerWorkerBridge(
   });
   pi.on("agent_start", (_event, ctx) => {
     context = ctx;
-    if (!active) return;
+    if (!active) {
+      reportSession("interactive", "Thinking…");
+      return;
+    }
     if (!started) {
       started = true;
       send({ type: "started", id: config.id });
@@ -519,7 +572,7 @@ export function registerWorkerBridge(
     if (event.message.role === "assistant") {
       turnCount += 1;
       const usage = event.message.usage;
-      // Lifetime usage excludes cacheRead, which repeats the cached prefix.
+      // Managed-task usage excludes cacheRead, which repeats the cached prefix.
       totalTokens +=
         (usage?.input ?? 0) + (usage?.output ?? 0) + (usage?.cacheWrite ?? 0);
       sendStats();
@@ -539,7 +592,12 @@ export function registerWorkerBridge(
   });
   pi.on("tool_execution_start", (event, ctx) => {
     context = ctx;
-    if (!active) return;
+    if (!active) {
+      if (sessionState === "interactive") {
+        reportSession("interactive", event.toolName);
+      }
+      return;
+    }
     toolUses += 1;
     sendStats();
     send({
@@ -553,7 +611,12 @@ export function registerWorkerBridge(
   });
   pi.on("tool_execution_end", (event, ctx) => {
     context = ctx;
-    if (!active) return;
+    if (!active) {
+      if (sessionState === "interactive") {
+        reportSession("interactive", "Thinking…");
+      }
+      return;
+    }
     send({
       type: "activity",
       id: config.id,
@@ -580,6 +643,7 @@ export function registerWorkerBridge(
   // idle timeout: both can precede retries, compaction and follow-up work.
   pi.on("agent_settled", (_event, ctx) => {
     context = ctx;
+    reportSession("idle");
     complete();
   });
   pi.on("session_shutdown", () => {
