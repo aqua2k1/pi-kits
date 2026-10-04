@@ -340,4 +340,9 @@ test("widget tree is bounded, unicode-safe, themed and renders truthful counters
     /⟳3 · 2 tools · 1.2k tokens \(80% · ↻2\)/,
   );
   assert.deepEqual(renderAgentWidget([], theme, 80), []);
+  const named = { ...agent(), subagentType: "review", displayName: "Auditor" };
+  assert.match(
+    renderAgentWidget([named], theme, 200, 2_000).join("\n"),
+    /Auditor · 任务 one/,
+  );
 });

@@ -23,6 +23,11 @@ export function oneLine(text: string): string {
     .trim();
 }
 
+export function agentTitle(agent: AgentSnapshot): string {
+  const type = agent.displayName ?? agent.subagentType;
+  return oneLine(type ? `${type} · ${agent.description}` : agent.description);
+}
+
 export function duration(agent: AgentSnapshot, now = Date.now()): string {
   const start = agent.startedAt ?? agent.createdAt ?? now;
   const seconds = Math.max(0, (agent.completedAt ?? now) - start) / 1000;
@@ -70,7 +75,7 @@ export function renderAgentWidget(
   // Bounded height; active agents take priority over retained finished rows.
   for (const agent of active.slice(0, 4)) {
     lines.push(
-      `├─ ${statusIcon(agent, theme, now)} ${oneLine(agent.description)} · ${agentStats(agent, now)}`,
+      `├─ ${statusIcon(agent, theme, now)} ${agentTitle(agent)} · ${agentStats(agent, now)}`,
       theme.fg("muted", `│   ⎿ ${oneLine(agent.activity ?? agent.status)}`),
     );
   }
@@ -81,7 +86,7 @@ export function renderAgentWidget(
   for (const agent of finished.slice(-Math.max(0, 11 - lines.length))) {
     if (lines.length >= 11) break;
     lines.push(
-      `├─ ${statusIcon(agent, theme, now)} ${oneLine(agent.description)} · ${agent.status} · ${agentStats(agent, now)}`,
+      `├─ ${statusIcon(agent, theme, now)} ${agentTitle(agent)} · ${agent.status} · ${agentStats(agent, now)}`,
     );
   }
   if (lines.length > 1) {

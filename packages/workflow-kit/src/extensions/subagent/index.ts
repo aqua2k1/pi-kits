@@ -10,6 +10,7 @@ import {
   DOCKED_PANEL_CLOSED,
   DOCKED_PANEL_OPENED,
 } from "../../lib/ui/docked-panel/index.ts";
+import { loadAgentDefinitions, resolveAgentDefinition } from "./agents.ts";
 import { HerdrAdapter } from "./herdr.ts";
 import { type AgentSnapshot, SubagentManager } from "./manager.ts";
 import type { MuxAdapter } from "./mux.ts";
@@ -83,8 +84,9 @@ export function registerSubagents(
       name: "subagent",
       label: "Subagent",
       description:
-        "Run a task in an independent Pi session hosted by Herdr. Background by default. Workers share the filesystem and are not a sandbox. Use /subagent:views to open the running Pi for native terminal control.",
+        "Run a task in an independent Pi session hosted by Herdr. Background by default. Optionally select a user-defined subagent_type; use list_subagent_types to discover names. Agent configuration takes precedence over call parameters. Workers share the filesystem and are not a sandbox. Use /subagent:views for native terminal control.",
       parameters: Type.Object({
+        subagent_type: Type.Optional(Type.String({ minLength: 1 })),
         prompt: Type.String({
           minLength: 1,
           maxLength: 100_000,
@@ -97,8 +99,12 @@ export function registerSubagents(
       }),
       async execute(_id, params, signal, _onUpdate, ctx) {
         signal?.throwIfAborted();
+        const agent = params.subagent_type
+          ? resolveAgentDefinition(ctx.cwd, params.subagent_type)
+          : undefined;
         const current = getManager(ctx);
         const snapshot = current.spawn({
+          agent,
           prompt: params.prompt,
           description: params.description,
           cwd: ctx.cwd,
@@ -107,8 +113,34 @@ export function registerSubagents(
             (ctx.model ? `${ctx.model.provider}/${ctx.model.id}` : undefined),
           thinking: params.thinking ?? pi.getThinkingLevel(),
         });
-        if (params.run_in_background !== false) return toolResult(snapshot);
+        if ((agent?.runInBackground ?? params.run_in_background) !== false) {
+          return toolResult(snapshot);
+        }
         return toolResult(await current.result(snapshot.id, true, signal));
+      },
+    }),
+  );
+
+  pi.registerTool(
+    defineTool({
+      name: "list_subagent_types",
+      label: "Subagent types",
+      description:
+        "List user-defined agent Markdown configurations. Project .pi/agents definitions replace same-name global agents. No built-in types. Disabled definitions are listed but cannot be spawned.",
+      parameters: Type.Object({}),
+      outputSchema: Type.Object({ agents: Type.Array(Type.Any()) }),
+      async execute(_id, _params, _signal, _onUpdate, ctx) {
+        const agents = [...loadAgentDefinitions(ctx.cwd).values()].map(
+          ({ systemPrompt: _prompt, ...metadata }) => metadata,
+        );
+        const result = { agents };
+        return {
+          content: [
+            { type: "text" as const, text: JSON.stringify(result, null, 2) },
+          ],
+          details: result,
+          structuredContent: result,
+        };
       },
     }),
   );

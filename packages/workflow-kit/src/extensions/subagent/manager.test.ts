@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { connect, type Socket } from "node:net";
 import { test } from "node:test";
 import { setTimeout as delay } from "node:timers/promises";
+import { parseAgentDefinition } from "./agents.ts";
 import { SubagentManager } from "./manager.ts";
 import type {
   MuxAdapter,
@@ -178,6 +179,80 @@ test("manager is lazy, starts an authenticated worker and returns structured res
   assert.ok(finished.completedAt !== undefined);
   assert.ok(finished.completedAt >= finished.startedAt);
   unsubscribe();
+});
+
+test("named agent configuration controls worker argv and structured system instructions", async (t) => {
+  const mux = new FakeMux();
+  const manager = new SubagentManager(mux);
+  t.after(() => manager.close());
+  const definition = parseAgentDefinition(
+    `---\nmodel: agent-model\nthinking: high\ntools: read, grep\ndisallowed_tools: write\ndisplay_name: Reviewer\n---\nSystem instructions`,
+    "/project/.pi/agents/review.md",
+    "project",
+  );
+  const agent = manager.spawn({
+    ...task,
+    agent: definition,
+    model: "call-model",
+    thinking: "low",
+  });
+  await until(() => mux.commands.get(agent.id)?.length === 1);
+  const argv = mux.started[0].argv;
+  assert.equal(argv[argv.indexOf("--model") + 1], "agent-model");
+  assert.equal(argv[argv.indexOf("--thinking") + 1], "high");
+  assert.equal(argv[argv.indexOf("--tools") + 1], "read,grep");
+  assert.equal(argv[argv.indexOf("--exclude-tools") + 1], "write");
+  assert.ok(argv.includes("--no-context-files"));
+  assert.ok(argv.includes("--no-extensions"));
+  assert.deepEqual(mux.commands.get(agent.id), [
+    {
+      type: "task",
+      prompt: task.prompt,
+      instructions: {
+        systemPrompt: "System instructions",
+        promptMode: "replace",
+      },
+    },
+  ]);
+  assert.equal(agent.subagentType, "review");
+  assert.equal(agent.displayName, "Reviewer");
+  assert.equal(agent.agentSource, "project");
+});
+
+test("empty agent tools disable all tools and append mode retains normal context selection", async (t) => {
+  const mux = new FakeMux();
+  const manager = new SubagentManager(mux);
+  t.after(() => manager.close());
+  const agent = manager.spawn({
+    ...task,
+    agent: parseAgentDefinition(
+      "---\ntools: none\nprompt_mode: append\n---\nInstructions",
+      "/agents/empty.md",
+      "global",
+    ),
+  });
+  await until(() => mux.commands.get(agent.id)?.length === 1);
+  assert.ok(mux.started[0].argv.includes("--no-tools"));
+  assert.ok(!mux.started[0].argv.includes("--no-context-files"));
+});
+
+test("oversized agent instructions fail before worker creation", () => {
+  const mux = new FakeMux();
+  const manager = new SubagentManager(mux);
+  assert.throws(
+    () =>
+      manager.spawn({
+        ...task,
+        agent: parseAgentDefinition(
+          "x".repeat(64 * 1024),
+          "/agents/large.md",
+          "global",
+        ),
+      }),
+    /64 KiB protocol limit/,
+  );
+  assert.equal(mux.started.length, 0);
+  assert.equal(manager.list().length, 0);
 });
 
 test("background completion notifies once and remains readable", async (t) => {

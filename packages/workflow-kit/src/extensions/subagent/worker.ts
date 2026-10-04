@@ -18,8 +18,13 @@ const MAX_ACTIVITY_BYTES = 4096;
  * entire batch, including steering, retries and automatic continuations.
  * Manager must await completed before assigning an independent task.
  */
+export interface WorkerInstructions {
+  systemPrompt: string;
+  promptMode: "replace" | "append";
+}
+
 export type WorkerCommand =
-  | { type: "task"; prompt: string }
+  | { type: "task"; prompt: string; instructions?: WorkerInstructions }
   | { type: "steer"; message: string }
   | { type: "cancel" };
 
@@ -118,7 +123,27 @@ export function parseWorkerCommand(value: unknown): WorkerCommand {
     typeof command.prompt === "string" &&
     command.prompt.trim()
   ) {
-    return { type: "task", prompt: command.prompt };
+    if (command.instructions === undefined) {
+      return { type: "task", prompt: command.prompt };
+    }
+    const instructions =
+      command.instructions as Partial<WorkerInstructions> | null;
+    if (
+      !instructions ||
+      typeof instructions !== "object" ||
+      typeof instructions.systemPrompt !== "string" ||
+      !["replace", "append"].includes(instructions.promptMode ?? "")
+    ) {
+      throw new Error("Invalid worker instructions");
+    }
+    return {
+      type: "task",
+      prompt: command.prompt,
+      instructions: {
+        systemPrompt: instructions.systemPrompt,
+        promptMode: instructions.promptMode as WorkerInstructions["promptMode"],
+      },
+    };
   }
   if (
     command.type === "steer" &&
@@ -204,6 +229,7 @@ export function registerWorkerBridge(
   let generation = 0;
   let preparing = false;
   let result = "";
+  let instructions: WorkerInstructions | undefined;
   let turnCount = 0;
   let toolUses = 0;
   let totalTokens = 0;
@@ -332,6 +358,7 @@ export function registerWorkerBridge(
     if (!active) {
       reset();
       active = true;
+      if (command.type === "task") instructions = command.instructions;
     }
     pendingCommands += 1;
     if (wasActive) submit(command, true);
@@ -427,9 +454,17 @@ export function registerWorkerBridge(
       return { action: "handled" };
     }
   });
-  pi.on("before_agent_start", (_event, ctx) => {
+  pi.on("before_agent_start", (event, ctx) => {
     context = ctx;
     if (active && canceling) ctx.abort();
+    if (instructions) {
+      return {
+        systemPrompt:
+          instructions.promptMode === "replace"
+            ? instructions.systemPrompt
+            : `${event.systemPrompt}\n\n${instructions.systemPrompt}`,
+      };
+    }
   });
   pi.on("agent_start", (_event, ctx) => {
     context = ctx;

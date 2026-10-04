@@ -22,7 +22,7 @@ import { layoutTabs, type TabLayout, tabAt } from "../../lib/ui/tabs.ts";
 import {
   type AgentSource,
   agentStats,
-  oneLine,
+  agentTitle,
   statusIcon,
 } from "./presentation.ts";
 
@@ -210,7 +210,7 @@ export class SubagentViewsPanel {
     const lines = frame.heading(this.tabs, phase);
     const { agents, index, agent } = this.selected();
     const description = agent
-      ? oneLine(agent.description)
+      ? agentTitle(agent)
       : "No subagents in this session";
     lines.push(truncateToWidth(description, width));
     if (layout.rows >= 7 && agent) {
@@ -229,7 +229,7 @@ export class SubagentViewsPanel {
       phase === 0
         ? agents.map((item) => ({
             value: item.id,
-            label: `${statusIcon(item, this.theme, Date.now())} ${oneLine(item.description)} · ${item.id.slice(0, 8)} · ${item.status}`,
+            label: `${statusIcon(item, this.theme, Date.now())} ${agentTitle(item)} · ${item.id.slice(0, 8)} · ${item.status}`,
           }))
         : actions.map((action) => ({
             value: action.value,

@@ -55,5 +55,9 @@ adapter follows this policy. Closing a view does not kill the worker.
 Background tasks use Herdr's native Pi terminals plus a worker bridge, not a
 custom PTY. `worker.ts` is loaded only via explicit `-e`, never a package manifest
 entry. The first version supports general tasks with `model` and `thinking`
-parameters, not scheduled tasks, worktree management, or custom agents.
+parameters, not scheduled tasks or worktree management. Named agents are entirely
+user-defined Markdown in `~/.pi/agent/agents/` and `<cwd>/.pi/agents/`; project
+same-name definitions replace global ones. Use `list_subagent_types` to discover
+names and `subagent` with `subagent_type` to select one. No agent profiles or
+templates are embedded.
 See [workflow-kit](packages/workflow-kit/README.md#herdr-subagents-mvp) for details.

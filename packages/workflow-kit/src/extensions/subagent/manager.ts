@@ -1,6 +1,7 @@
 import { randomBytes, randomUUID } from "node:crypto";
 import { createServer, type Server, type Socket } from "node:net";
 import { fileURLToPath } from "node:url";
+import type { AgentDefinition } from "./agents.ts";
 import {
   type MuxAdapter,
   type TerminalHandle,
@@ -22,6 +23,10 @@ export interface AgentSnapshot {
   id: string;
   description: string;
   status: AgentStatus;
+  subagentType?: string;
+  displayName?: string;
+  agentSource?: AgentDefinition["source"];
+  agentPath?: string;
   result?: string;
   error?: string;
   activity?: string;
@@ -45,6 +50,7 @@ export interface SpawnOptions {
   cwd: string;
   model?: string;
   thinking?: string;
+  agent?: AgentDefinition;
 }
 
 interface AgentRecord {
@@ -127,7 +133,7 @@ export class SubagentManager {
     if (!options.prompt.trim()) {
       throw new Error("Task prompt must not be blank.");
     }
-    validateCommand({ type: "task", prompt: options.prompt });
+    validateCommand(taskCommand(options));
     let resolve: AgentRecord["resolve"] = () => undefined;
     const completion = new Promise<AgentSnapshot>((done) => {
       resolve = done;
@@ -137,6 +143,14 @@ export class SubagentManager {
         id: randomUUID(),
         description: options.description,
         status: "queued",
+        ...(options.agent
+          ? {
+              subagentType: options.agent.name,
+              displayName: options.agent.displayName,
+              agentSource: options.agent.source,
+              agentPath: options.agent.sourcePath,
+            }
+          : {}),
         createdAt: Date.now(),
         turnCount: 0,
         toolUses: 0,
@@ -369,10 +383,19 @@ export class SubagentManager {
         this.options.workerPath ??
           fileURLToPath(new URL("./worker.ts", import.meta.url)),
       ];
-      if (record.options.model) argv.push("--model", record.options.model);
-      if (record.options.thinking) {
-        argv.push("--thinking", record.options.thinking);
+      const agent = record.options.agent;
+      const model = agent?.model ?? record.options.model;
+      const thinking = agent?.thinking ?? record.options.thinking;
+      if (model) argv.push("--model", model);
+      if (thinking) argv.push("--thinking", thinking);
+      if (agent?.tools !== undefined) {
+        if (agent.tools.length) argv.push("--tools", agent.tools.join(","));
+        else argv.push("--no-tools");
       }
+      if (agent?.disallowedTools?.length) {
+        argv.push("--exclude-tools", agent.disallowedTools.join(","));
+      }
+      if (agent?.promptMode === "replace") argv.push("--no-context-files");
       record.terminal = await this.adapter.start({
         agentId: record.snapshot.id,
         cwd: record.options.cwd,
@@ -401,7 +424,7 @@ export class SubagentManager {
       record.snapshot.status = "running";
       record.snapshot.activity = "Thinking…";
       this.changed();
-      this.send(record, { type: "task", prompt: record.options.prompt });
+      this.send(record, taskCommand(record.options));
     } catch (error) {
       if (error instanceof TerminalStartError) {
         record.terminal = error.terminal;
@@ -640,6 +663,21 @@ export class SubagentManager {
       // A parent notification failure cannot invalidate a completed task.
     }
   }
+}
+
+function taskCommand(options: SpawnOptions) {
+  return {
+    type: "task" as const,
+    prompt: options.prompt,
+    ...(options.agent
+      ? {
+          instructions: {
+            systemPrompt: options.agent.systemPrompt,
+            promptMode: options.agent.promptMode,
+          },
+        }
+      : {}),
+  };
 }
 
 function validateCommand(command: object): void {

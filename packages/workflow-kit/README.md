@@ -192,8 +192,8 @@ expansion). Updates preserve other configuration fields. Legacy
 
 Subagents run general tasks in the background using Herdr's native Pi terminals
 plus a worker bridge. The extension does not build its own PTY. Task parameters
-include `model` and `thinking`; this first version does not support scheduling,
-worktree management, or custom agents.
+include `model` and `thinking`, plus an optional named `subagent_type` backed by
+user Markdown files. This first version does not support scheduling or worktrees.
 
 Configure agent-dir `pi-kits.json` and `/reload`:
 
@@ -217,7 +217,8 @@ environment, the entry registers no tools, hooks, or commands.
 
 | Tool | Purpose |
 | --- | --- |
-| `subagent` | Start a general background task. |
+| `subagent` | Start an ad-hoc task or select a user-defined agent type. |
+| `list_subagent_types` | Discover user-defined agents and their source/configuration. |
 | `get_subagent_result` | Retrieve a task's status and result. |
 | `steer_subagent` | Send guidance to a running task. |
 | `stop_subagent` | Cancel a queued or running task. |
@@ -267,6 +268,80 @@ reported as `disconnected`; use `stop_subagent` to retry.
 Only `src/extensions/subagent/index.ts` is listed in the root and workflow-kit
 Pi manifests. The background Pi loads `src/extensions/subagent/worker.ts` via an
 explicit `-e`; the worker is never auto-loaded as a package resource.
+
+### User-defined agent types
+
+There are **no embedded agent definitions or installed templates**. Create your
+own Markdown files in these directories:
+
+1. `<cwd>/.pi/agents/*.md` — project, highest priority.
+2. `$PI_CODING_AGENT_DIR/agents/*.md` — global, normally `~/.pi/agent/agents/`.
+
+The filename without `.md` is the type name, matching `gotgenes/pi-subagents`.
+Names are resolved case-insensitively. A project file **replaces the entire**
+same-name global definition, not individual fields; `enabled: false` can hide a
+global type. Duplicate names within one directory are errors. Definitions are
+read afresh when listing or spawning; editing a file affects new tasks, not
+already queued/running tasks. Invalid definitions fail explicitly rather than
+falling back to a less restricted global configuration.
+
+For example, a user-created `.pi/agents/auditor.md` could contain:
+
+```markdown
+---
+description: Review code for security issues
+display_name: Auditor
+model: anthropic/claude-sonnet-4-6
+thinking: high
+tools: read, grep, find, bash
+disallowed_tools: edit, write
+prompt_mode: replace
+---
+You are a security reviewer. Report issues with file paths and evidence.
+Do not modify files.
+```
+
+Call `list_subagent_types` to discover names, then:
+
+```json
+{
+  "subagent_type": "auditor",
+  "description": "Review authentication",
+  "prompt": "Review the authentication code for vulnerabilities."
+}
+```
+
+Pass this object to `subagent`. Omitting `subagent_type` retains the existing
+ad-hoc task behavior; it does not select an embedded or fallback named agent.
+Unknown and disabled names are rejected before creating a worker.
+
+Supported YAML frontmatter fields use the reference extension's snake_case names:
+
+| Field | Behavior when omitted |
+| --- | --- |
+| `description` | Filename; shown in the type catalogue. |
+| `display_name` | Type name; shown beside the task in widgets/views. |
+| `model` | Call parameter, then parent model. |
+| `thinking` | Call parameter, then parent thinking level. |
+| `tools` | Native Pi defaults; CSV or YAML array, `none`/empty disables all tools. |
+| `disallowed_tools` | No additional denylist; CSV or YAML array of built-in tools. |
+| `prompt_mode` | `replace`: body replaces the worker system prompt and context-file discovery is disabled. `append` appends to the worker's normal Pi prompt. |
+| `enabled` | `true`; `false` disables selection. |
+| `run_in_background` | Call parameter, then `true`. |
+
+Configured model, thinking, and background mode take precedence over call
+parameters. Thinking supports `off`, `minimal`, `low`, `medium`, `high`, `xhigh`,
+and `max`. Tool names are Pi built-ins (`read`, `bash`, `edit`, `write`, `grep`,
+`find`, `ls`, `powershell`); a denylist is applied after the allowlist. Tool
+selection is not a sandbox: `bash` can still change files.
+
+The Markdown body is sent as bounded structured IPC, not substituted into shell
+commands or interpreted as a filename. Its prompt remains active after completion
+for native terminal interaction. Workers still load only the worker bridge;
+`append` does not fork the parent conversation or inherit its extensions. Other
+reference fields (`extensions`, `skills`, `max_turns`, `memory`, `isolation`,
+`inherit_context`, etc.) are not implemented and are rejected, not silently
+ignored. Agent files and complete task IPC frames each have a 64 KiB limit.
 
 ## Configuration
 
