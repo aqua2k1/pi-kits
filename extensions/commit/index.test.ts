@@ -100,8 +100,12 @@ test("/commit refuses non-interactive execution without requesting shutdown", as
 });
 
 test("disabled workflow kit or commit feature registers no command, flag or hook", (t) => {
-  for (const workflow of [{ enabled: false }, { commit: { enabled: false } }]) {
-    const h = captureRegistrations(t, true, { workflow });
+  for (const config of [
+    { workflow: { enabled: false } },
+    { workflow: { commit: { enabled: false } } },
+    { commit: { enabled: false } },
+  ]) {
+    const h = captureRegistrations(t, true, config);
     assert.deepEqual(h.flags, []);
     assert.equal(h.events.size, 0);
     assert.equal(h.commands.size, 0);
@@ -168,19 +172,27 @@ function commandContext(
   } as unknown as ExtensionCommandContext;
 }
 
-for (const rememberModel of [true, false]) {
-  test(`configured commit model, thinking, timeout and memory (${rememberModel}) reach the flow`, async (t) => {
-    const h = captureRegistrations(t, false, {
-      workflow: {
-        commit: {
-          model: "configured/not-in-registry",
-          thinking: "high",
-          timeoutMs: 4_321,
-          rememberModel,
-        },
-        notify: { enabled: false },
+for (const [rememberModel, legacy] of [
+  [true, true],
+  [false, true],
+  [true, false],
+  [false, false],
+] as const) {
+  test(`configured commit model, thinking, timeout and memory (${rememberModel}, ${legacy ? "legacy" : "top-level"}) reach the flow`, async (t) => {
+    const settings = {
+      commit: {
+        model: "configured/not-in-registry",
+        thinking: "high",
+        timeoutMs: 4_321,
+        rememberModel,
       },
-    });
+      notify: { enabled: false },
+    };
+    const h = captureRegistrations(
+      t,
+      false,
+      legacy ? { workflow: settings } : settings,
+    );
     writeLastModel("p/remembered", h.agentDir);
     const state = fs.readFileSync(lastModelPath(h.agentDir), "utf8");
     const argvPath = path.join(h.agentDir, "argv.json");
@@ -240,11 +252,19 @@ process.stdin.on("end", () => process.stdout.write("feat: configured generation"
   });
 }
 
-for (const rememberModel of [true, false]) {
-  test(`without configured model, picker uses ${rememberModel ? "memory" : "current model"}`, async (t) => {
-    const h = captureRegistrations(t, false, {
-      workflow: { commit: { rememberModel } },
-    });
+for (const [rememberModel, legacy] of [
+  [true, true],
+  [false, true],
+  [true, false],
+  [false, false],
+] as const) {
+  test(`without configured model, picker uses ${rememberModel ? "memory" : "current model"} (${legacy ? "legacy" : "top-level"})`, async (t) => {
+    const settings = { commit: { rememberModel } };
+    const h = captureRegistrations(
+      t,
+      false,
+      legacy ? { workflow: settings } : settings,
+    );
     writeLastModel("p/remembered", h.agentDir);
     const cwd = stagedRepo(t, h.agentDir, "#!/usr/bin/env node\n");
     const ctx = commandContext(cwd, (_title, options) => {
@@ -258,51 +278,54 @@ for (const rememberModel of [true, false]) {
   });
 }
 
-test("commit configured timeout terminates generation without a completion notification", async (t) => {
-  const h = captureRegistrations(t, false, {
-    workflow: { commit: { timeoutMs: 1_000, rememberModel: false } },
+for (const config of [
+  { workflow: { commit: { timeoutMs: 1_000, rememberModel: false } } },
+  { commit: { timeoutMs: 1_000, rememberModel: false } },
+]) {
+  test(`commit configured timeout terminates generation without a completion notification ${JSON.stringify(config)}`, async (t) => {
+    const h = captureRegistrations(t, false, config);
+    const cwd = stagedRepo(
+      t,
+      h.agentDir,
+      `#!/usr/bin/env node
+  process.stdin.resume();
+  setInterval(() => undefined, 60_000);
+  `,
+    );
+    const notifications = interceptNotifications(t);
+    const messages: string[] = [];
+    const ctx = commandContext(cwd, (_title, options) => options[0], messages);
+    const command = h.commands.get("commit");
+    assert.ok(command);
+    await command.handler("", ctx);
+    assert.ok(messages.some((message) => message.includes("生成超时")));
+    assert.deepEqual(notifications, []);
   });
-  const cwd = stagedRepo(
-    t,
-    h.agentDir,
-    `#!/usr/bin/env node
-process.stdin.resume();
-setInterval(() => undefined, 60_000);
-`,
-  );
-  const notifications = interceptNotifications(t);
-  const messages: string[] = [];
-  const ctx = commandContext(cwd, (_title, options) => options[0], messages);
-  const command = h.commands.get("commit");
-  assert.ok(command);
-  await command.handler("", ctx);
-  assert.ok(messages.some((message) => message.includes("生成超时")));
-  assert.deepEqual(notifications, []);
-});
+}
 
-test("commit generation still actively notifies when workflow notifications are enabled", async (t) => {
-  const h = captureRegistrations(t, false, {
-    workflow: {
-      commit: { rememberModel: false },
-      notify: { enabled: true },
-    },
+for (const config of [
+  { workflow: { commit: { rememberModel: false }, notify: { enabled: true } } },
+  { commit: { rememberModel: false }, notify: { enabled: true } },
+]) {
+  test(`commit generation still actively notifies when workflow notifications are enabled ${JSON.stringify(config)}`, async (t) => {
+    const h = captureRegistrations(t, false, config);
+    const cwd = stagedRepo(
+      t,
+      h.agentDir,
+      `#!/usr/bin/env node
+  process.stdin.resume();
+  process.stdin.on("end", () => process.stdout.write("feat: notification"));
+  `,
+    );
+    const notifications = interceptNotifications(t);
+    let selections = 0;
+    const ctx = commandContext(cwd, (_title, options) =>
+      selections++ === 0 ? options[0] : "取消",
+    );
+    const command = h.commands.get("commit");
+    assert.ok(command);
+    await command.handler("", ctx);
+    assert.equal(notifications.length, 1);
+    assert.ok(notifications[0]?.includes("commit message done!"));
   });
-  const cwd = stagedRepo(
-    t,
-    h.agentDir,
-    `#!/usr/bin/env node
-process.stdin.resume();
-process.stdin.on("end", () => process.stdout.write("feat: notification"));
-`,
-  );
-  const notifications = interceptNotifications(t);
-  let selections = 0;
-  const ctx = commandContext(cwd, (_title, options) =>
-    selections++ === 0 ? options[0] : "取消",
-  );
-  const command = h.commands.get("commit");
-  assert.ok(command);
-  await command.handler("", ctx);
-  assert.equal(notifications.length, 1);
-  assert.ok(notifications[0]?.includes("commit message done!"));
-});
+}

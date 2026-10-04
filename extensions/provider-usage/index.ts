@@ -41,9 +41,9 @@ const sources: WidgetSource[] = [deepseekSource, chatgptSource];
 // ---------------------------------------------------------------------------
 
 export default function (pi: ExtensionAPI) {
-  const { usage } = readPiKitsConfig();
-  if (!usage.enabled || !usage.providerUsage.enabled) return;
-  const { intervalMs, timeoutMs } = usage.providerUsage;
+  const { providerUsage } = readPiKitsConfig();
+  if (!providerUsage.enabled) return;
+  const { intervalMs, timeoutMs } = providerUsage;
 
   let ui: Ui | null = null;
   let registry: Registry | null = null;

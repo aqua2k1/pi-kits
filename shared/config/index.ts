@@ -110,58 +110,114 @@ export function updatePiKitsConfig(
   }
 }
 
-export function resolvePiKitsConfig(raw: PiKitsFileConfig = {}) {
+/** Top-level fields win; legacy group switches still gate legacy features. */
+function mergeLegacyFeature<T extends { enabled?: boolean }>(
+  legacy: T | undefined,
+  groupEnabled: boolean | undefined,
+  current: T | undefined,
+): T & { enabled: boolean } {
   return {
-    workspace: {
-      enabled: raw.workspace?.enabled ?? true,
-      terminal: {
-        enabled: raw.workspace?.terminal?.enabled ?? true,
-        editor: raw.workspace?.terminal?.editor ?? "nvim",
-        gitUI: raw.workspace?.terminal?.gitUI ?? "lazygit",
-        fileManager: raw.workspace?.terminal?.fileManager ?? "yazi",
-      },
-      open: { enabled: raw.workspace?.open?.enabled ?? true },
-      preview: { enabled: raw.workspace?.preview?.enabled ?? true },
-      contextPreview: {
-        enabled: raw.workspace?.contextPreview?.enabled ?? true,
-      },
+    ...legacy,
+    ...current,
+    enabled:
+      current?.enabled ?? (groupEnabled !== false && legacy?.enabled !== false),
+  } as T & { enabled: boolean };
+}
+
+function normalizeLegacyConfig(raw: PiKitsFileConfig): PiKitsFileConfig {
+  return {
+    ...raw,
+    terminal: mergeLegacyFeature(
+      raw.workspace?.terminal,
+      raw.workspace?.enabled,
+      raw.terminal,
+    ),
+    open: mergeLegacyFeature(
+      raw.workspace?.open,
+      raw.workspace?.enabled,
+      raw.open,
+    ),
+    preview: mergeLegacyFeature(
+      raw.workspace?.preview,
+      raw.workspace?.enabled,
+      raw.preview,
+    ),
+    contextPreview: mergeLegacyFeature(
+      raw.workspace?.contextPreview,
+      raw.workspace?.enabled,
+      raw.contextPreview,
+    ),
+    providerUsage: mergeLegacyFeature(
+      raw.usage?.providerUsage,
+      raw.usage?.enabled,
+      raw.providerUsage,
+    ),
+    stats: mergeLegacyFeature(raw.usage?.stats, raw.usage?.enabled, raw.stats),
+    askUserQuestion: mergeLegacyFeature(
+      raw.workflow?.askUserQuestion,
+      raw.workflow?.enabled,
+      raw.askUserQuestion,
+    ),
+    subagent: mergeLegacyFeature(
+      raw.workflow?.subagent,
+      raw.workflow?.enabled,
+      raw.subagent,
+    ),
+    commit: mergeLegacyFeature(
+      raw.workflow?.commit,
+      raw.workflow?.enabled,
+      raw.commit,
+    ),
+    notify: mergeLegacyFeature(
+      raw.workflow?.notify,
+      raw.workflow?.enabled,
+      raw.notify,
+    ),
+  };
+}
+
+export function resolvePiKitsConfig(raw: PiKitsFileConfig = {}) {
+  raw = normalizeLegacyConfig(raw);
+  return {
+    terminal: {
+      enabled: raw.terminal?.enabled ?? true,
+      editor: raw.terminal?.editor ?? "nvim",
+      gitUI: raw.terminal?.gitUI ?? "lazygit",
+      fileManager: raw.terminal?.fileManager ?? "yazi",
     },
-    usage: {
-      enabled: raw.usage?.enabled ?? true,
-      providerUsage: {
-        enabled: raw.usage?.providerUsage?.enabled ?? true,
-        intervalMs: raw.usage?.providerUsage?.intervalMs ?? 600_000,
-        timeoutMs: raw.usage?.providerUsage?.timeoutMs ?? 15_000,
-      },
-      stats: { enabled: raw.usage?.stats?.enabled ?? true },
+    open: { enabled: raw.open?.enabled ?? true },
+    preview: { enabled: raw.preview?.enabled ?? true },
+    contextPreview: {
+      enabled: raw.contextPreview?.enabled ?? true,
     },
-    workflow: {
-      enabled: raw.workflow?.enabled ?? true,
-      askUserQuestion: {
-        enabled: raw.workflow?.askUserQuestion?.enabled ?? true,
-      },
-      subagent: {
-        enabled: raw.workflow?.subagent?.enabled ?? true,
-        mux: raw.workflow?.subagent?.mux,
-        maxConcurrent: raw.workflow?.subagent?.maxConcurrent ?? 4,
-        extensionAllowlist: structuredClone(
-          raw.workflow?.subagent?.extensionAllowlist ?? [
-            ...SUBAGENT_DEFAULT_EXTENSIONS,
-          ],
-        ),
-      },
-      commit: {
-        enabled: raw.workflow?.commit?.enabled ?? true,
-        model: raw.workflow?.commit?.model,
-        lastModel: raw.workflow?.commit?.lastModel,
-        thinking: raw.workflow?.commit?.thinking,
-        timeoutMs: raw.workflow?.commit?.timeoutMs ?? 120_000,
-        rememberModel: raw.workflow?.commit?.rememberModel ?? true,
-      },
-      notify: {
-        enabled: raw.workflow?.notify?.enabled ?? true,
-        quietPeriodMs: raw.workflow?.notify?.quietPeriodMs ?? 1_000,
-      },
+    providerUsage: {
+      enabled: raw.providerUsage?.enabled ?? true,
+      intervalMs: raw.providerUsage?.intervalMs ?? 600_000,
+      timeoutMs: raw.providerUsage?.timeoutMs ?? 15_000,
+    },
+    stats: { enabled: raw.stats?.enabled ?? true },
+    askUserQuestion: {
+      enabled: raw.askUserQuestion?.enabled ?? true,
+    },
+    subagent: {
+      enabled: raw.subagent?.enabled ?? true,
+      mux: raw.subagent?.mux,
+      maxConcurrent: raw.subagent?.maxConcurrent ?? 4,
+      extensionAllowlist: structuredClone(
+        raw.subagent?.extensionAllowlist ?? [...SUBAGENT_DEFAULT_EXTENSIONS],
+      ),
+    },
+    commit: {
+      enabled: raw.commit?.enabled ?? true,
+      model: raw.commit?.model,
+      lastModel: raw.commit?.lastModel,
+      thinking: raw.commit?.thinking,
+      timeoutMs: raw.commit?.timeoutMs ?? 120_000,
+      rememberModel: raw.commit?.rememberModel ?? true,
+    },
+    notify: {
+      enabled: raw.notify?.enabled ?? true,
+      quietPeriodMs: raw.notify?.quietPeriodMs ?? 1_000,
     },
     web: {
       enabled: raw.web?.enabled ?? true,

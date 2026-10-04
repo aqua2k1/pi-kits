@@ -66,11 +66,7 @@ export function registerCompletionNotification(
 }
 
 export default function notifyExtension(pi: ExtensionAPI): void {
-  const { workflow } = readPiKitsConfig();
-  if (!workflow.enabled || !workflow.notify.enabled) return;
-  registerCompletionNotification(
-    pi,
-    defaultDependencies,
-    workflow.notify.quietPeriodMs,
-  );
+  const { notify: config } = readPiKitsConfig();
+  if (!config.enabled) return;
+  registerCompletionNotification(pi, defaultDependencies, config.quietPeriodMs);
 }

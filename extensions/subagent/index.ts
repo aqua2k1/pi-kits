@@ -324,12 +324,8 @@ export function registerSubagents(
 export default function subagentExtension(pi: ExtensionAPI): void {
   // Workers inherit the mux environment but must not become coordinators.
   if (process.env.PI_KITS_SUBAGENT_WORKER === "1") return;
-  const { workflow } = readPiKitsConfig();
-  if (
-    !workflow.enabled ||
-    !workflow.subagent.enabled ||
-    workflow.subagent.mux !== "herdr"
-  ) {
+  const { subagent } = readPiKitsConfig();
+  if (!subagent.enabled || subagent.mux !== "herdr") {
     return;
   }
   const adapter = new HerdrAdapter();
@@ -337,7 +333,7 @@ export default function subagentExtension(pi: ExtensionAPI): void {
   registerSubagents(
     pi,
     adapter,
-    workflow.subagent.maxConcurrent,
-    workflow.subagent.extensionAllowlist,
+    subagent.maxConcurrent,
+    subagent.extensionAllowlist,
   );
 }

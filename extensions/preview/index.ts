@@ -245,8 +245,8 @@ async function openPreview(
 }
 
 export default function (pi: ExtensionAPI) {
-  const config = readPiKitsConfig().workspace;
-  if (!config.enabled || !config.preview.enabled) return;
+  const config = readPiKitsConfig();
+  if (!config.preview.enabled) return;
 
   pi.registerCommand("preview", {
     description:

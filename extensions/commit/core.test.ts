@@ -283,7 +283,7 @@ test("last model: write → read round-trip in unified configuration", (t) => {
   assert.equal(readLastModel(), "opencode-go/deepseek-v4-flash");
   const raw = JSON.parse(readFileSync(lastModelPath(), "utf8"));
   assert.deepEqual(raw, {
-    workflow: { commit: { lastModel: "opencode-go/deepseek-v4-flash" } },
+    commit: { lastModel: "opencode-go/deepseek-v4-flash" },
   });
   if (process.platform !== "win32") {
     assert.equal(statSync(lastModelPath()).mode & 0o777, 0o600);
@@ -297,7 +297,12 @@ test("last model: write → read round-trip in unified configuration", (t) => {
 test("last model: missing configuration or unset field → undefined", (t) => {
   const dir = useAgentDir(t);
   assert.equal(readLastModel(), undefined);
-  for (const raw of [{}, { workflow: {} }, { workflow: { commit: {} } }]) {
+  for (const raw of [
+    {},
+    { commit: {} },
+    { workflow: {} },
+    { workflow: { commit: {} } },
+  ]) {
     writeFileSync(getPiKitsConfigPath(dir), JSON.stringify(raw));
     assert.equal(readLastModel(), undefined);
   }
@@ -311,6 +316,9 @@ test("last model: invalid unified configuration throws without overwriting it", 
     '{"workflow":{"commit":{"lastModel":""}}}',
     '{"workflow":{"commit":{"lastModel":null}}}',
     '{"workflow":{"commit":{"lastModel":123}}}',
+    '{"commit":{"lastModel":""}}',
+    '{"commit":{"lastModel":null}}',
+    '{"commit":{"lastModel":123}}',
     '{"usage":{"enabled":"invalid"}}',
   ]) {
     writeFileSync(target, invalid);
@@ -341,12 +349,35 @@ test("last model: writes preserve other kit sections and workflow settings", (t)
   writeLastModel("p/new", dir);
   assert.deepEqual(JSON.parse(readFileSync(lastModelPath(dir), "utf8")), {
     ...raw,
-    workflow: {
-      ...raw.workflow,
-      commit: { ...raw.workflow.commit, lastModel: "p/new" },
-    },
+    commit: { lastModel: "p/new" },
   });
 });
+
+for (const raw of [
+  { workflow: { commit: { lastModel: "p/legacy", thinking: "high" } } },
+  { commit: { lastModel: "p/top-level", rememberModel: false } },
+  {
+    workflow: { commit: { lastModel: "p/legacy", thinking: "high" } },
+    commit: { lastModel: "p/top-level", timeoutMs: 4_321 },
+    terminal: { editor: "vim" },
+    stats: { enabled: false },
+    notify: { enabled: false },
+  },
+]) {
+  test(`last model: reads merged settings and writes only top-level commit ${JSON.stringify(raw)}`, (t) => {
+    const dir = useAgentDir(t, raw);
+    assert.equal(
+      readLastModel(dir),
+      raw.commit?.lastModel ?? raw.workflow?.commit.lastModel,
+    );
+    writeLastModel("p/new", dir);
+    assert.deepEqual(JSON.parse(readFileSync(lastModelPath(dir), "utf8")), {
+      ...raw,
+      commit: { ...raw.commit, lastModel: "p/new" },
+    });
+    assert.equal(readLastModel(dir), "p/new");
+  });
+}
 
 test("last model: legacy state is ignored, never migrated or modified", (t) => {
   const dir = useAgentDir(t);

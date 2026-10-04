@@ -4,6 +4,213 @@
     "$schema": {
       "type": "string"
     },
+    "terminal": {
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "default": true
+        },
+        "editor": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "\\S",
+          "default": "nvim"
+        },
+        "gitUI": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "\\S",
+          "default": "lazygit"
+        },
+        "fileManager": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "\\S",
+          "default": "yazi"
+        }
+      },
+      "additionalProperties": false
+    },
+    "open": {
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "default": true
+        }
+      },
+      "additionalProperties": false
+    },
+    "preview": {
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "default": true
+        }
+      },
+      "additionalProperties": false
+    },
+    "contextPreview": {
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "default": true
+        }
+      },
+      "additionalProperties": false
+    },
+    "providerUsage": {
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "default": true
+        },
+        "intervalMs": {
+          "type": "integer",
+          "minimum": 1000,
+          "maximum": 2147483647,
+          "default": 600000
+        },
+        "timeoutMs": {
+          "type": "integer",
+          "minimum": 100,
+          "maximum": 300000,
+          "default": 15000
+        }
+      },
+      "additionalProperties": false
+    },
+    "stats": {
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "default": true
+        }
+      },
+      "additionalProperties": false
+    },
+    "askUserQuestion": {
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "default": true
+        }
+      },
+      "additionalProperties": false
+    },
+    "subagent": {
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "default": true
+        },
+        "mux": {
+          "type": "string",
+          "const": "herdr"
+        },
+        "maxConcurrent": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 32,
+          "default": 4
+        },
+        "extensionAllowlist": {
+          "type": "array",
+          "items": {
+            "anyOf": [
+              {
+                "type": "string",
+                "minLength": 1,
+                "pattern": "^(?=.*\\S)[^\\x00-\\x1f\\x7f]+$"
+              },
+              {
+                "type": "object",
+                "required": ["source", "extensions"],
+                "properties": {
+                  "source": {
+                    "type": "string",
+                    "minLength": 1,
+                    "pattern": "^(?=.*\\S)[^\\x00-\\x1f\\x7f]+$"
+                  },
+                  "extensions": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "minLength": 1,
+                      "pattern": "^(?=.*\\S)[^\\x00-\\x1f\\x7f]+$"
+                    },
+                    "uniqueItems": true
+                  }
+                },
+                "additionalProperties": false
+              }
+            ]
+          },
+          "uniqueItems": true,
+          "description": "Pi extension sources or package selections using declared extensionResources names. Relative paths use the agent directory.",
+          "default": ["builtin:codemode", "builtin:tool-search"]
+        }
+      },
+      "additionalProperties": false
+    },
+    "commit": {
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "default": true
+        },
+        "model": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "\\S"
+        },
+        "lastModel": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "\\S"
+        },
+        "thinking": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "\\S"
+        },
+        "timeoutMs": {
+          "type": "integer",
+          "minimum": 1000,
+          "maximum": 2147483647,
+          "default": 120000
+        },
+        "rememberModel": {
+          "type": "boolean",
+          "default": true
+        }
+      },
+      "additionalProperties": false
+    },
+    "notify": {
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "default": true
+        },
+        "quietPeriodMs": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 60000,
+          "default": 1000
+        }
+      },
+      "additionalProperties": false
+    },
     "workspace": {
       "type": "object",
       "properties": {
@@ -70,7 +277,9 @@
           "additionalProperties": false
         }
       },
-      "additionalProperties": false
+      "additionalProperties": false,
+      "deprecated": true,
+      "description": "Legacy group; prefer top-level extension settings."
     },
     "usage": {
       "type": "object",
@@ -112,7 +321,9 @@
           "additionalProperties": false
         }
       },
-      "additionalProperties": false
+      "additionalProperties": false,
+      "deprecated": true,
+      "description": "Legacy group; prefer top-level extension settings."
     },
     "workflow": {
       "type": "object",
@@ -239,7 +450,9 @@
           "additionalProperties": false
         }
       },
-      "additionalProperties": false
+      "additionalProperties": false,
+      "deprecated": true,
+      "description": "Legacy group; prefer top-level extension settings."
     },
     "web": {
       "type": "object",

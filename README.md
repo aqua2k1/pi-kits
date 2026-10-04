@@ -37,7 +37,9 @@ Package metadata exposes each resource name above. Existing `workspace-kit`,
 `usage-kit`, `workflow-kit`, and `web-kit` selections remain as compatibility
 resource declarations; they no longer correspond to package directories.
 `web-kits` is the public web resource name; `web` and `web-kit` remain compatible aliases.
-Configuration sections (`workspace`, `usage`, `workflow`, `web`) are unchanged.
+Configuration uses top-level extension settings; legacy `workspace`, `usage`,
+and `workflow` sections remain readable for compatibility. The internal `web`
+structure is unchanged.
 
 Select `gruvbox` in `/settings`. Toggle resources with `pi config`.
 
@@ -56,20 +58,28 @@ validated and defaulted through `@pi-kits/config`. Edit then `/reload`.
 See the [configuration example](pi-kits.example.json) and
 [JSON schema](pi-kits.schema.json).
 
+Top-level settings are `terminal`, `open`, `preview`, `contextPreview`,
+`providerUsage`, `stats`, `askUserQuestion`, `subagent`, `commit`, `notify`, and
+`web`. Each extension's `enabled` controls it independently; there is no new
+group-level switch. The internal structure of `web` is unchanged.
+
+Legacy `workspace`, `usage`, and `workflow` sections are still read. Top-level
+settings override the same legacy fields; unspecified fields retain legacy values
+before defaults are applied. A legacy group's `enabled: false` still disables its
+children unless a child explicitly sets top-level `enabled` to override it.
+
 ### Herdr subagents (MVP)
 
-Opt in with `workflow.subagent`:
+Opt in with top-level `subagent`:
 
 ```json
 {
-  "workflow": {
-    "subagent": { "mux": "herdr", "enabled": true, "maxConcurrent": 4 }
-  }
+  "subagent": { "mux": "herdr", "enabled": true, "maxConcurrent": 4 }
 }
 ```
 
 Only `herdr` is supported. Activation requires `HERDR_ENV === '1'`,
-`workflow.enabled`, `subagent.enabled`, and explicit `mux: "herdr"`.
+`subagent.enabled`, and explicit `mux: "herdr"`.
 `enabled` defaults to `true`, but `mux` is undefined by default, so no mux
 configuration means no activation. Disabled or unconfigured subagents register
 no tools, hooks, or commands. There is no environment probing or fallback.

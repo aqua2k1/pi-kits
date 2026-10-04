@@ -21,8 +21,8 @@ import {
 // ── Extension ──────────────────────────────────────────────────────────
 
 export default function (pi: ExtensionAPI) {
-  const config = readPiKitsConfig().workspace;
-  if (!config.enabled || !config.open.enabled) return;
+  const config = readPiKitsConfig();
+  if (!config.open.enabled) return;
 
   // Shared implementation
   async function openTarget(

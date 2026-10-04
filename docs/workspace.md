@@ -15,7 +15,18 @@
 
 ## 配置
 
-使用 agent 目录下统一的 `pi-kits.json` 中的 `workspace` 段。`enabled` 可关闭整组，`terminal`、`open`、`preview`、`contextPreview` 的 `enabled` 可关闭单项注册。`terminal.editor`（默认 nvim）、`gitUI`（lazygit）、`fileManager`（yazi）设置直接执行的程序，不是 shell 命令。预览共用 `editor`，要求兼容 `-R` 参数。
+使用 agent 目录下统一的 `pi-kits.json` 中的顶层 `terminal`、`open`、`preview`、`contextPreview` 设置，各自的 `enabled` 可关闭单项注册；新配置没有组级开关。`terminal.editor`（默认 nvim）、`gitUI`（lazygit）、`fileManager`（yazi）设置直接执行的程序，不是 shell 命令。预览共用 `editor`，要求兼容 `-R` 参数。
+
+```json
+{
+  "terminal": { "enabled": true, "editor": "nvim" },
+  "open": { "enabled": true },
+  "preview": { "enabled": true },
+  "contextPreview": { "enabled": false }
+}
+```
+
+旧 `workspace` 段仍兼容读取：顶层设置覆盖同名旧字段，未指定字段保留旧值后再应用默认值。旧 `workspace.enabled: false` 仍关闭其子项，除非子项显式设置顶层 `enabled` 覆盖它。`usage`、`workflow` 旧段遵循相同规则；`web` 内部结构不变。
 
 完整字段见 [配置示例](../pi-kits.example.json)。修改后执行 `/reload`。
 

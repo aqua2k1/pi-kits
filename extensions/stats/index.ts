@@ -54,8 +54,8 @@ async function collectStats(
 }
 
 export default function (pi: ExtensionAPI) {
-  const { usage } = readPiKitsConfig();
-  if (!usage.enabled || !usage.stats.enabled) return;
+  const { stats } = readPiKitsConfig();
+  if (!stats.enabled) return;
 
   pi.registerCommand("stats", {
     description: "查看按日期和模型聚合的 token 总量与费用",

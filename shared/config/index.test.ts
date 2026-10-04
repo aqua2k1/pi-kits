@@ -27,15 +27,15 @@ test("absent config uses defaults without creating a file", (t) => {
   t.after(() => rmSync(dir, { recursive: true, force: true }));
   assert.equal(readPiKitsFile(dir), undefined);
   const config = readPiKitsConfig(dir);
-  assert.equal(config.workspace.terminal.editor, "nvim");
-  assert.equal(config.workspace.terminal.gitUI, "lazygit");
-  assert.equal(config.workspace.terminal.fileManager, "yazi");
-  assert.equal(config.usage.providerUsage.intervalMs, 600_000);
-  assert.equal(config.usage.providerUsage.timeoutMs, 15_000);
-  assert.equal(config.workflow.commit.timeoutMs, 120_000);
-  assert.equal(config.workflow.commit.rememberModel, true);
-  assert.equal(config.workflow.notify.quietPeriodMs, 1_000);
-  assert.deepEqual(config.workflow.subagent, {
+  assert.equal(config.terminal.editor, "nvim");
+  assert.equal(config.terminal.gitUI, "lazygit");
+  assert.equal(config.terminal.fileManager, "yazi");
+  assert.equal(config.providerUsage.intervalMs, 600_000);
+  assert.equal(config.providerUsage.timeoutMs, 15_000);
+  assert.equal(config.commit.timeoutMs, 120_000);
+  assert.equal(config.commit.rememberModel, true);
+  assert.equal(config.notify.quietPeriodMs, 1_000);
+  assert.deepEqual(config.subagent, {
     enabled: true,
     mux: undefined,
     maxConcurrent: 4,
@@ -52,6 +52,86 @@ test("absent config uses defaults without creating a file", (t) => {
   assert.equal(readPiKitsFile(dir), undefined);
 });
 
+test("flat configuration independently controls extensions", () => {
+  const config = parsePiKitsConfig(
+    JSON.stringify({
+      terminal: { enabled: false, editor: "vim" },
+      contextPreview: { enabled: false },
+      providerUsage: { intervalMs: 2_000 },
+      stats: { enabled: false },
+      askUserQuestion: { enabled: false },
+      subagent: { mux: "herdr", maxConcurrent: 2, extensionAllowlist: [] },
+      commit: { timeoutMs: 5_000, rememberModel: false },
+      notify: { quietPeriodMs: 0 },
+    }),
+  );
+  assert.equal(config.terminal.enabled, false);
+  assert.equal(config.terminal.editor, "vim");
+  assert.equal(config.open.enabled, true);
+  assert.equal(config.contextPreview.enabled, false);
+  assert.equal(config.providerUsage.intervalMs, 2_000);
+  assert.equal(config.stats.enabled, false);
+  assert.equal(config.askUserQuestion.enabled, false);
+  assert.equal(config.subagent.mux, "herdr");
+  assert.equal(config.subagent.maxConcurrent, 2);
+  assert.deepEqual(config.subagent.extensionAllowlist, []);
+  assert.equal(config.commit.timeoutMs, 5_000);
+  assert.equal(config.commit.rememberModel, false);
+  assert.equal(config.notify.quietPeriodMs, 0);
+  assert.ok(!("workspace" in config));
+  assert.ok(!("usage" in config));
+  assert.ok(!("workflow" in config));
+});
+
+test("flat fields override legacy fields without losing group disable semantics", () => {
+  const config = parsePiKitsConfig(
+    JSON.stringify({
+      workspace: {
+        enabled: false,
+        terminal: { editor: "vim", gitUI: "gitui", enabled: true },
+      },
+      terminal: { enabled: true, editor: "hx" },
+      usage: { enabled: false, providerUsage: { intervalMs: 3_000 } },
+      providerUsage: { timeoutMs: 500 },
+      workflow: {
+        enabled: false,
+        subagent: { mux: "herdr" },
+        commit: { model: "p/old", rememberModel: false },
+      },
+      subagent: { enabled: true },
+      commit: { lastModel: "p/new" },
+    }),
+  );
+  assert.equal(config.terminal.enabled, true);
+  assert.equal(config.terminal.editor, "hx");
+  assert.equal(config.terminal.gitUI, "gitui");
+  assert.equal(config.open.enabled, false);
+  assert.equal(config.providerUsage.enabled, false);
+  assert.equal(config.providerUsage.intervalMs, 3_000);
+  assert.equal(config.providerUsage.timeoutMs, 500);
+  assert.equal(config.stats.enabled, false);
+  assert.equal(config.subagent.enabled, true);
+  assert.equal(config.subagent.mux, "herdr");
+  assert.equal(config.commit.enabled, false);
+  assert.equal(config.commit.model, "p/old");
+  assert.equal(config.commit.lastModel, "p/new");
+  assert.equal(config.commit.rememberModel, false);
+  assert.equal(config.notify.enabled, false);
+});
+
+for (const value of [
+  '{"terminal":{"editor":" "}}',
+  '{"stats":{"enabled":"false"}}',
+  '{"providerUsage":{"intervalMs":0}}',
+  '{"subagent":{"mux":"tmux"}}',
+  '{"commit":{"timeoutMs":0}}',
+  '{"notify":{"unknown":true}}',
+]) {
+  test(`invalid flat config is rejected: ${value}`, () => {
+    assert.throws(() => parsePiKitsConfig(value), /Invalid pi-kits.json/);
+  });
+}
+
 test("partial config preserves explicit false and zero", () => {
   const config = parsePiKitsConfig(
     JSON.stringify({
@@ -67,12 +147,12 @@ test("partial config preserves explicit false and zero", () => {
       web: { search: { enabled: false } },
     }),
   );
-  assert.equal(config.workspace.enabled, true);
-  assert.equal(config.workspace.contextPreview.enabled, false);
-  assert.equal(config.workspace.terminal.editor, "vim");
-  assert.equal(config.usage.enabled, false);
-  assert.equal(config.workflow.commit.rememberModel, false);
-  assert.equal(config.workflow.notify.quietPeriodMs, 0);
+  assert.equal(config.terminal.enabled, true);
+  assert.equal(config.contextPreview.enabled, false);
+  assert.equal(config.terminal.editor, "vim");
+  assert.equal(config.stats.enabled, false);
+  assert.equal(config.commit.rememberModel, false);
+  assert.equal(config.notify.quietPeriodMs, 0);
   assert.equal(config.web.search.enabled, false);
   assert.equal(config.web.fetch.enabled, true);
 });
@@ -80,8 +160,7 @@ test("partial config preserves explicit false and zero", () => {
 test("subagent settings require explicit mux and preserve defaults", () => {
   for (const subagent of [{}, { enabled: true }]) {
     assert.deepEqual(
-      parsePiKitsConfig(JSON.stringify({ workflow: { subagent } })).workflow
-        .subagent,
+      parsePiKitsConfig(JSON.stringify({ workflow: { subagent } })).subagent,
       {
         enabled: true,
         mux: undefined,
@@ -91,8 +170,7 @@ test("subagent settings require explicit mux and preserve defaults", () => {
     );
   }
   assert.deepEqual(
-    parsePiKitsConfig('{"workflow":{"subagent":{"mux":"herdr"}}}').workflow
-      .subagent,
+    parsePiKitsConfig('{"workflow":{"subagent":{"mux":"herdr"}}}').subagent,
     {
       enabled: true,
       mux: "herdr",
@@ -108,7 +186,7 @@ test("subagent settings require explicit mux and preserve defaults", () => {
         },
       }),
     );
-    assert.deepEqual(config.workflow.subagent, {
+    assert.deepEqual(config.subagent, {
       enabled: false,
       mux: "herdr",
       maxConcurrent,
@@ -121,7 +199,7 @@ test("thinking is forwarded without maintaining Pi's level vocabulary", () => {
   const config = parsePiKitsConfig(
     '{"workflow":{"commit":{"thinking":"future-level"}}}',
   );
-  assert.equal(config.workflow.commit.thinking, "future-level");
+  assert.equal(config.commit.thinking, "future-level");
 });
 
 test("explicit subagent extension allowlists replace defaults, including empty", () => {
@@ -137,14 +215,8 @@ test("explicit subagent extension allowlists replace defaults, including empty",
         workflow: { subagent: { extensionAllowlist } },
       }),
     );
-    assert.deepEqual(
-      config.workflow.subagent.extensionAllowlist,
-      extensionAllowlist,
-    );
-    assert.notEqual(
-      config.workflow.subagent.extensionAllowlist,
-      extensionAllowlist,
-    );
+    assert.deepEqual(config.subagent.extensionAllowlist, extensionAllowlist);
+    assert.notEqual(config.subagent.extensionAllowlist, extensionAllowlist);
   }
   for (const extensionAllowlist of [
     null,
@@ -176,7 +248,7 @@ test("package selection arrays are isolated from parsed file configuration", () 
     '{"workflow":{"subagent":{"extensionAllowlist":[{"source":"package","extensions":["web-kit"]}]}}}',
   );
   const config = resolvePiKitsConfig(raw);
-  const selected = config.workflow.subagent.extensionAllowlist[0];
+  const selected = config.subagent.extensionAllowlist[0];
   assert.ok(typeof selected !== "string");
   selected.extensions.length = 0;
   assert.deepEqual(raw.workflow?.subagent?.extensionAllowlist, [
@@ -189,14 +261,14 @@ test("fresh snapshots pick up edits without retaining mutable defaults", (t) => 
   t.after(() => rmSync(dir, { recursive: true, force: true }));
   writeFileSync(getPiKitsConfigPath(dir), '{"usage":{"enabled":false}}');
   const first = readPiKitsConfig(dir);
-  first.workspace.enabled = false;
-  first.workflow.subagent.extensionAllowlist.length = 0;
+  first.terminal.enabled = false;
+  first.subagent.extensionAllowlist.length = 0;
   writeFileSync(getPiKitsConfigPath(dir), "{}");
   const second = readPiKitsConfig(dir);
-  assert.equal(second.usage.enabled, true);
-  assert.equal(second.workspace.enabled, true);
+  assert.equal(second.stats.enabled, true);
+  assert.equal(second.terminal.enabled, true);
   assert.deepEqual(
-    second.workflow.subagent.extensionAllowlist,
+    second.subagent.extensionAllowlist,
     SUBAGENT_DEFAULT_EXTENSIONS,
   );
 });
@@ -272,11 +344,8 @@ test("configuration updates preserve sections and reject invalid writes", (t) =>
     }),
     dir,
   );
-  assert.equal(readPiKitsConfig(dir).usage.enabled, false);
-  assert.equal(
-    readPiKitsConfig(dir).workflow.commit.lastModel,
-    "provider/model",
-  );
+  assert.equal(readPiKitsConfig(dir).stats.enabled, false);
+  assert.equal(readPiKitsConfig(dir).commit.lastModel, "provider/model");
   const before = readFileSync(getPiKitsConfigPath(dir), "utf8");
   assert.throws(
     () =>
@@ -308,7 +377,7 @@ test("published JSON schema and example match runtime validation", () => {
       "utf8",
     ),
   );
-  assert.deepEqual(example.workflow.subagent, {
+  assert.deepEqual(example.subagent, {
     enabled: true,
     mux: "herdr",
     maxConcurrent: 4,

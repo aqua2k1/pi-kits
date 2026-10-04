@@ -63,6 +63,21 @@ for (const [name, config, env] of [
     { HERDR_ENV: "1" },
   ],
   [
+    "disabled top-level subagent",
+    { subagent: { enabled: false, mux: "herdr" } },
+    { HERDR_ENV: "1" },
+  ],
+  [
+    "top-level missing HERDR_ENV",
+    { subagent: { mux: "herdr" } },
+    { HERDR_ENV: undefined },
+  ],
+  [
+    "top-level worker recursion guard",
+    { subagent: { mux: "herdr" } },
+    { HERDR_ENV: "1", PI_KITS_SUBAGENT_WORKER: "1" },
+  ],
+  [
     "missing HERDR_ENV",
     { workflow: { subagent: { mux: "herdr" } } },
     { HERDR_ENV: undefined, HERDR_PANE_ID: "w1:p1", TMUX: "tmux" },
@@ -92,30 +107,35 @@ for (const [name, config, env] of [
   });
 }
 
-test("configured Herdr enables tools with HERDR_ENV alone, without backend probing", (t) => {
-  useAgentDir(t, { workflow: { subagent: { mux: "herdr" } } });
-  environment(t, {
-    HERDR_ENV: "1",
-    HERDR_PANE_ID: undefined,
-    HERDR_BIN_PATH: "/missing/herdr",
-    PI_KITS_SUBAGENT_WORKER: undefined,
+for (const config of [
+  { workflow: { subagent: { mux: "herdr" } } },
+  { subagent: { mux: "herdr" } },
+]) {
+  test(`configured Herdr enables tools with HERDR_ENV alone, without backend probing ${JSON.stringify(config)}`, (t) => {
+    useAgentDir(t, config);
+    environment(t, {
+      HERDR_ENV: "1",
+      HERDR_PANE_ID: undefined,
+      HERDR_BIN_PATH: "/missing/herdr",
+      PI_KITS_SUBAGENT_WORKER: undefined,
+    });
+    t.mock.method(globalThis, "setTimeout", () => {
+      assert.fail("Loading must not start timers or workers");
+    });
+    const capture = registrations();
+    subagentExtension(capture.pi);
+    assert.deepEqual(capture.tools, [
+      "subagent",
+      "resume_subagent",
+      "list_subagent_types",
+      "get_subagent_result",
+      "steer_subagent",
+      "stop_subagent",
+    ]);
+    assert.deepEqual(capture.commands, ["subagent:views"]);
+    assert.deepEqual(capture.hooks, ["session_start", "session_shutdown"]);
   });
-  t.mock.method(globalThis, "setTimeout", () => {
-    assert.fail("Loading must not start timers or workers");
-  });
-  const capture = registrations();
-  subagentExtension(capture.pi);
-  assert.deepEqual(capture.tools, [
-    "subagent",
-    "resume_subagent",
-    "list_subagent_types",
-    "get_subagent_result",
-    "steer_subagent",
-    "stop_subagent",
-  ]);
-  assert.deepEqual(capture.commands, ["subagent:views"]);
-  assert.deepEqual(capture.hooks, ["session_start", "session_shutdown"]);
-});
+}
 
 test("agent catalogue uses project overrides and unknown/disabled names never launch workers", async (t) => {
   const agentDir = useAgentDir(t);

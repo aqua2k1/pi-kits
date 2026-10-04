@@ -59,8 +59,8 @@ async function runSuspended(
 }
 
 export default function (pi: ExtensionAPI) {
-  const config = readPiKitsConfig().workspace;
-  if (!config.enabled || !config.terminal.enabled) return;
+  const config = readPiKitsConfig();
+  if (!config.terminal.enabled) return;
 
   pi.registerCommand("vim", {
     description: "Open nvim (optionally with a file path)",

@@ -474,7 +474,7 @@ export function registerWorkerBridge(
         );
         if (missing.length) {
           throw new Error(
-            `Requested tools are unavailable: ${missing.join(", ")}. Check workflow.subagent.extensionAllowlist.`,
+            `Requested tools are unavailable: ${missing.join(", ")}. Check subagent.extensionAllowlist.`,
           );
         }
       }

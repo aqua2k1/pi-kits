@@ -27,8 +27,8 @@ import {
 } from "./events.ts";
 
 export default function askUserQuestionExtension(pi: ExtensionAPI): void {
-  const { workflow } = readPiKitsConfig();
-  if (!workflow.enabled || !workflow.askUserQuestion.enabled) return;
+  const { askUserQuestion, notify: notifyConfig } = readPiKitsConfig();
+  if (!askUserQuestion.enabled) return;
 
   pi.registerTool({
     name: "ask_user_question",
@@ -81,7 +81,7 @@ export default function askUserQuestionExtension(pi: ExtensionAPI): void {
       let end: AskUserQuestionEndEvent = { ...start, status: "error" };
       pi.events.emit(ASK_USER_QUESTION_START, start);
       try {
-        if (ctx.mode === "tui" && workflow.notify.enabled) {
+        if (ctx.mode === "tui" && notifyConfig.enabled) {
           notify("Pi", "Waiting for your answer.");
         }
         const panel: DockedPanelOpenedEvent = {

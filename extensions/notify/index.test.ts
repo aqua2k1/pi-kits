@@ -224,9 +224,13 @@ test("registerCompletionNotification: a new settled event replaces the pending t
   assert.equal(cancellations, 2);
 });
 
-for (const workflow of [{ enabled: false }, { notify: { enabled: false } }]) {
-  test(`disabled notify ${JSON.stringify(workflow)} has no hook or timer side effects`, (t) => {
-    useAgentDir(t, { workflow });
+for (const config of [
+  { workflow: { enabled: false } },
+  { workflow: { notify: { enabled: false } } },
+  { notify: { enabled: false } },
+]) {
+  test(`disabled notify ${JSON.stringify(config)} has no hook or timer side effects`, (t) => {
+    useAgentDir(t, config);
     t.mock.method(globalThis, "setTimeout", () => {
       assert.fail("Disabled notifications must not schedule timers");
     });
@@ -244,30 +248,35 @@ for (const workflow of [{ enabled: false }, { notify: { enabled: false } }]) {
   });
 }
 
-test("notify factory passes the configured quiet period to its lifecycle timer", async (t) => {
-  useAgentDir(t, { workflow: { notify: { quietPeriodMs: 75 } } });
-  const handlers = new Map<string, EventHandler>();
-  const delays: number[] = [];
-  t.mock.method(
-    globalThis,
-    "setTimeout",
-    (_callback: () => void, delay: number) => {
-      delays.push(delay);
-      return 1;
-    },
-  );
-  t.mock.method(globalThis, "clearTimeout", () => undefined);
-  notifyExtension({
-    on(name: string, handler: EventHandler) {
-      handlers.set(name, handler);
-    },
-  } as unknown as ExtensionAPI);
-  const settled = handlers.get("agent_settled");
-  assert.ok(settled);
-  await settled({ type: "agent_settled" }, context());
-  assert.deepEqual(delays, [75]);
-  await handlers.get("session_shutdown")?.(
-    { type: "session_shutdown" },
-    context(),
-  );
-});
+for (const config of [
+  { workflow: { notify: { quietPeriodMs: 75 } } },
+  { notify: { quietPeriodMs: 75 } },
+]) {
+  test(`notify factory passes the configured quiet period to its lifecycle timer ${JSON.stringify(config)}`, async (t) => {
+    useAgentDir(t, config);
+    const handlers = new Map<string, EventHandler>();
+    const delays: number[] = [];
+    t.mock.method(
+      globalThis,
+      "setTimeout",
+      (_callback: () => void, delay: number) => {
+        delays.push(delay);
+        return 1;
+      },
+    );
+    t.mock.method(globalThis, "clearTimeout", () => undefined);
+    notifyExtension({
+      on(name: string, handler: EventHandler) {
+        handlers.set(name, handler);
+      },
+    } as unknown as ExtensionAPI);
+    const settled = handlers.get("agent_settled");
+    assert.ok(settled);
+    await settled({ type: "agent_settled" }, context());
+    assert.deepEqual(delays, [75]);
+    await handlers.get("session_shutdown")?.(
+      { type: "session_shutdown" },
+      context(),
+    );
+  });
+}

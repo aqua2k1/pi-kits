@@ -33,10 +33,24 @@ personal installation, to avoid duplicate widgets, polling, and commands.
 
 Credentials continue to come from Pi's model registry. Missing credentials stop
 polling and hide the widget; failed refreshes preserve cached usage as stale.
-Settings use the `usage` section of agent-dir `pi-kits.json`. Its `enabled`
-switch disables the kit; `providerUsage.enabled` and `stats.enabled` disable
-individual entries. `providerUsage.intervalMs` and `timeoutMs` control polling
+Settings use top-level `providerUsage` and `stats` in agent-dir `pi-kits.json`.
+`providerUsage.enabled` and `stats.enabled` disable individual entries; there is
+no new group-level switch. `providerUsage.intervalMs` and `timeoutMs` control polling
 and request timing. Defaults are 600000 and 15000 ms; edit then `/reload`.
+
+```json
+{
+  "providerUsage": { "enabled": true, "intervalMs": 600000, "timeoutMs": 15000 },
+  "stats": { "enabled": true }
+}
+```
+
+Legacy `usage` settings remain readable: top-level settings override the same
+legacy fields, while unspecified fields retain legacy values before defaults.
+Legacy `usage.enabled: false` still disables its children unless a child explicitly
+sets top-level `enabled` to override it. Legacy `workspace` and `workflow` follow
+the same rules; the internal `web` structure is unchanged.
+
 See the [configuration example](../pi-kits.example.json). No new
 authentication paths are introduced.
 

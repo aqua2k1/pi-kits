@@ -6,7 +6,7 @@
  *   2. Pick the generation model — searchable fuzzy picker in TUI (pi's own
  *      ui api: ctx.ui.custom + pi-tui fuzzyFilter), plain select elsewhere.
  *      The configured model leads, then the last used model
- *      (pi-kits.json workflow.commit.lastModel), then the current model.
+ *      (pi-kits.json commit.lastModel), then the current model.
  *      Model memory is read and updated only when rememberModel is enabled.
  *   3. Generate a Conventional Commits message with a `pi -p` child process:
  *      rules are embedded in core.ts (formerly agents/commit.md, deleted),
@@ -45,9 +45,8 @@ function currentModelLabel(ctx: ExtensionCommandContext): string | undefined {
 }
 
 export default function (pi: ExtensionAPI) {
-  const { workflow } = readPiKitsConfig();
-  const config = workflow.commit;
-  if (!workflow.enabled || !config.enabled) return;
+  const { commit: config, notify: notifyConfig } = readPiKitsConfig();
+  if (!config.enabled) return;
 
   let quitAfterStartupCommit = false;
 
@@ -134,7 +133,7 @@ export default function (pi: ExtensionAPI) {
           return;
         }
         ctx.ui.setStatus("commit", undefined);
-        if (workflow.notify.enabled) notify("pi", "commit message done!");
+        if (notifyConfig.enabled) notify("pi", "commit message done!");
 
         const action = await chooseAction(ctx, message);
         if (action === undefined || action === "取消") {

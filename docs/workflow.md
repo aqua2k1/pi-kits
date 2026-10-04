@@ -91,7 +91,7 @@ has no previews or notes.
 
 Disable other extensions registering `ask_user_question` (including
 `rpiv-ask-user-question`) before loading this entry. Set
-`workflow.askUserQuestion.enabled: false` to disable it independently.
+`askUserQuestion.enabled: false` to disable it independently.
 
 ### Question lifecycle hooks
 
@@ -110,7 +110,7 @@ before interaction emit neither hook. Constants and payload types live in
 The question extension itself sends a best-effort desktop notification,
 `Pi: Waiting for your answer.`, when TUI interaction begins. It uses the shared
 notification transport, requires no notify extension to be loaded, and respects
-`workflow.notify.enabled`. RPC interactions emit hooks but do not send desktop
+`notify.enabled`. RPC interactions emit hooks but do not send desktop
 notifications. Closing the questionnaire emits the end hook without another
 desktop notification.
 
@@ -182,7 +182,7 @@ cancel, or submit it with `git commit -m`.
 a successful startup-triggered commit; cancellations and failures do not exit.
 Non-interactive modes do not execute the commit flow.
 
-Model memory is stored in `workflow.commit.lastModel` inside
+Model memory is stored in `commit.lastModel` inside
 `<agent-dir>/pi-kits.json`, honoring `PI_CODING_AGENT_DIR` (including `~`
 expansion). Updates preserve other configuration fields. Legacy
 `extensions/commit/last_model.json` is ignored and never migrated or modified.
@@ -198,9 +198,7 @@ Configure agent-dir `pi-kits.json` and `/reload`:
 
 ```json
 {
-  "workflow": {
-    "subagent": { "mux": "herdr", "enabled": true, "maxConcurrent": 4 }
-  }
+  "subagent": { "mux": "herdr", "enabled": true, "maxConcurrent": 4 }
 }
 ```
 
@@ -209,7 +207,7 @@ only `"herdr"` and has no default; `enabled` defaults to `true`.
 `maxConcurrent` limits executing tasks, not retained idle Pi terminals; it is an
 integer from 1 to 32, defaulting to 4. Completed terminals remain available for
 inspection until parent-session cleanup. Activation requires
-`workflow.enabled`, `workflow.subagent.enabled`, explicit `mux: "herdr"`, and
+`subagent.enabled`, explicit `mux: "herdr"`, and
 exactly `HERDR_ENV === '1'`. There is no environment probing, automatic mux
 selection, or fallback. If unconfigured, disabled, or outside that Herdr
 environment, the entry registers no tools, hooks, or commands.
@@ -298,7 +296,7 @@ Parent session shutdown/reload cleans up owned workers and views. Workers share
 the filesystem and credentials and are not a sandbox. They start with
 `--no-approve`, so trust-gated project resources are not loaded automatically.
 Workers also use `--no-extensions` and explicitly load the worker bridge plus
-`workflow.subagent.extensionAllowlist`. Defaults are `builtin:codemode` and
+`subagent.extensionAllowlist`. Defaults are `builtin:codemode` and
 `builtin:tool-search`; arbitrary parent/user extensions, including permission
 extensions, are not inherited. Add trusted extensions to this list explicitly.
 
@@ -429,15 +427,13 @@ have a 64 KiB limit.
 
 ### Worker extension allowlist
 
-Configure `workflow.subagent.extensionAllowlist` in agent-dir `pi-kits.json`:
+Configure `subagent.extensionAllowlist` in agent-dir `pi-kits.json`:
 
 ```json
 {
-  "workflow": {
-    "subagent": {
-      "mux": "herdr",
-      "extensionAllowlist": ["builtin:codemode", "builtin:tool-search"]
-    }
+  "subagent": {
+    "mux": "herdr",
+    "extensionAllowlist": ["builtin:codemode", "builtin:tool-search"]
   }
 }
 ```
@@ -511,9 +507,16 @@ permissions, so this is a loading policy, not an OS sandbox.
 
 ## Configuration
 
-Use the `workflow` section of agent-dir `pi-kits.json`; edit then `/reload`.
-`enabled` disables the kit, while `commit.enabled`, `notify.enabled`,
-`askUserQuestion.enabled`, and `subagent.enabled` gate individual entries.
+Use top-level `commit`, `notify`, `askUserQuestion`, and `subagent` settings in
+agent-dir `pi-kits.json`; edit then `/reload`. Each entry's `enabled` controls it
+independently; there is no new group-level switch.
+
+Legacy `workflow` settings remain readable. Top-level settings override the same
+legacy fields; unspecified fields retain legacy values before defaults are
+applied. Legacy `workflow.enabled: false` still disables its children unless a
+child explicitly sets top-level `enabled` to override it. Legacy `workspace` and
+`usage` follow the same rules; the internal `web` structure is unchanged.
+
 Subagents additionally require an explicit mux and the Herdr environment above.
 `commit.model` sets the first picker option, ahead of model memory and the current
 model; `thinking` and `timeoutMs` configure generation.

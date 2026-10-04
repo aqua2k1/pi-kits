@@ -1,54 +1,61 @@
 {
   "$schema": "https://raw.githubusercontent.com/aqua2k1/pi-kits/main/pi-kits.schema.json",
-  "workspace": {
+  "terminal": {
     "enabled": true,
-    "terminal": {
-      "enabled": true,
-      "editor": "nvim",
-      "gitUI": "lazygit",
-      "fileManager": "yazi"
-    },
-    "open": { "enabled": true },
-    "preview": { "enabled": true },
-    "contextPreview": { "enabled": true }
+    "editor": "nvim",
+    "gitUI": "lazygit",
+    "fileManager": "yazi"
   },
-  "usage": {
-    "enabled": true,
-    "providerUsage": {
-      "enabled": true,
-      "intervalMs": 600000,
-      "timeoutMs": 15000
-    },
-    "stats": { "enabled": true }
+  "open": {
+    "enabled": true
   },
-  "workflow": {
+  "preview": {
+    "enabled": true
+  },
+  "contextPreview": {
+    "enabled": true
+  },
+  "providerUsage": {
     "enabled": true,
-    "askUserQuestion": { "enabled": true },
-    "subagent": {
-      "mux": "herdr",
-      "enabled": true,
-      "maxConcurrent": 4,
-      "extensionAllowlist": [
-        "builtin:codemode",
-        "builtin:tool-search",
-        {
-          "source": "git:github.com/aqua2k1/pi-kits",
-          "extensions": []
-        }
-      ]
-    },
-    "commit": {
-      "enabled": true,
-      "timeoutMs": 120000,
-      "rememberModel": true
-    },
-    "notify": { "enabled": true, "quietPeriodMs": 1000 }
+    "intervalMs": 600000,
+    "timeoutMs": 15000
+  },
+  "stats": {
+    "enabled": true
+  },
+  "askUserQuestion": {
+    "enabled": true
+  },
+  "subagent": {
+    "mux": "herdr",
+    "enabled": true,
+    "maxConcurrent": 4,
+    "extensionAllowlist": [
+      "builtin:codemode",
+      "builtin:tool-search",
+      {
+        "source": "git:github.com/aqua2k1/pi-kits",
+        "extensions": []
+      }
+    ]
+  },
+  "commit": {
+    "enabled": true,
+    "timeoutMs": 120000,
+    "rememberModel": true
+  },
+  "notify": {
+    "enabled": true,
+    "quietPeriodMs": 1000
   },
   "web": {
     "enabled": true,
     "search": {
       "enabled": true,
-      "routing": { "provider": "searxng", "fallback": false },
+      "routing": {
+        "provider": "searxng",
+        "fallback": false
+      },
       "timeoutMs": 15000,
       "maxResults": 5
     },

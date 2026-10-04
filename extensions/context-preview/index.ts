@@ -34,8 +34,8 @@ const HELP_TEXT = [
 ].join("\n");
 
 export default function (pi: ExtensionAPI) {
-  const config = readPiKitsConfig().workspace;
-  if (!config.enabled || !config.contextPreview.enabled) return;
+  const config = readPiKitsConfig();
+  if (!config.contextPreview.enabled) return;
 
   let enabled = false;
   let lastPayload: unknown = null;

@@ -122,11 +122,12 @@ test("schemas describe the contract while model guidance focuses on purpose", (t
 });
 
 test("factory respects kit and feature switches", (t) => {
-  for (const workflow of [
-    { enabled: false },
+  for (const config of [
+    { workflow: { enabled: false } },
+    { workflow: { askUserQuestion: { enabled: false } } },
     { askUserQuestion: { enabled: false } },
   ]) {
-    const captured = capture(t, { workflow });
+    const captured = capture(t, config);
     assert.equal(captured.tool, undefined);
     assert.equal(captured.handler, undefined);
   }
@@ -272,11 +273,18 @@ test("no UI or pre-aborted calls do not emit hooks or notify", async (t) => {
   assert.deepEqual(notifications, []);
 });
 
-for (const enabled of [true, false]) {
-  test(`TUI question notification respects workflow.notify.enabled=${enabled}`, async (t) => {
-    const { tool, events } = capture(t, {
-      workflow: { notify: { enabled } },
-    });
+for (const [enabled, legacy] of [
+  [true, true],
+  [false, true],
+  [true, false],
+  [false, false],
+] as const) {
+  test(`TUI question notification respects notify.enabled=${enabled} (${legacy ? "legacy" : "top-level"})`, async (t) => {
+    const settings = { notify: { enabled } };
+    const { tool, events } = capture(
+      t,
+      legacy ? { workflow: settings } : settings,
+    );
     assert.ok(tool);
     const notifications = interceptNotifications(t);
     const ctx = {

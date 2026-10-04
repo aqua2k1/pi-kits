@@ -220,10 +220,10 @@ export function lastModelPath(agentDir: string = getAgentDir()): string {
 export function readLastModel(
   agentDir: string = getAgentDir(),
 ): string | undefined {
-  return readPiKitsConfig(agentDir).workflow.commit.lastModel;
+  return readPiKitsConfig(agentDir).commit.lastModel;
 }
 
-/** Atomically update workflow.commit.lastModel, preserving other configuration. */
+/** Atomically update commit.lastModel, preserving other configuration. */
 export function writeLastModel(
   model: string,
   agentDir: string = getAgentDir(),
@@ -231,10 +231,7 @@ export function writeLastModel(
   updatePiKitsConfig(
     (raw) => ({
       ...raw,
-      workflow: {
-        ...raw.workflow,
-        commit: { ...raw.workflow?.commit, lastModel: model },
-      },
+      commit: { ...raw.commit, lastModel: model },
     }),
     agentDir,
   );

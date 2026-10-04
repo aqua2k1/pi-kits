@@ -4,14 +4,16 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { useAgentDir } from "../../tests/helpers/agent-dir.ts";
 import statsExtension from "./index.ts";
 
-for (const usage of [
-  undefined,
-  { enabled: false },
-  { stats: { enabled: false } },
-  { stats: { enabled: true } },
-]) {
-  test(`stats factory respects configuration ${JSON.stringify(usage)}`, (t) => {
-    useAgentDir(t, usage === undefined ? undefined : { usage });
+for (const [config, enabled] of [
+  [undefined, true],
+  [{ usage: { enabled: false } }, false],
+  [{ usage: { stats: { enabled: false } } }, false],
+  [{ usage: { stats: { enabled: true } } }, true],
+  [{ stats: { enabled: false } }, false],
+  [{ stats: { enabled: true } }, true],
+] as const) {
+  test(`stats factory respects configuration ${JSON.stringify(config)}`, (t) => {
+    useAgentDir(t, config);
     const commands: string[] = [];
     statsExtension({
       registerCommand(name: string) {
@@ -24,11 +26,6 @@ for (const usage of [
         assert.fail("Stats must not register flags");
       },
     } as unknown as ExtensionAPI);
-    assert.deepEqual(
-      commands,
-      usage?.enabled === false || usage?.stats?.enabled === false
-        ? []
-        : ["stats"],
-    );
+    assert.deepEqual(commands, enabled ? ["stats"] : []);
   });
 }

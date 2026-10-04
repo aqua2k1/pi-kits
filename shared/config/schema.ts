@@ -46,59 +46,92 @@ export type WorkerExtensionSource = Static<
   typeof WORKER_EXTENSION_SOURCE_SCHEMA
 >;
 
+const workspaceFeatures = {
+  terminal: section({
+    enabled,
+    editor: executable("nvim"),
+    gitUI: executable("lazygit"),
+    fileManager: executable("yazi"),
+  }),
+  open: feature(),
+  preview: feature(),
+  contextPreview: feature(),
+};
+
+const usageFeatures = {
+  providerUsage: section({
+    enabled,
+    intervalMs: integer(1_000, 2_147_483_647, 600_000),
+    timeoutMs: integer(100, 300_000, 15_000),
+  }),
+  stats: feature(),
+};
+
+const workflowFeatures = {
+  askUserQuestion: feature(),
+  subagent: section({
+    enabled,
+    mux: Type.Optional(Type.Literal("herdr")),
+    maxConcurrent: integer(1, 32, 4),
+    extensionAllowlist: Type.Optional(
+      Type.Array(WORKER_EXTENSION_SOURCE_SCHEMA, {
+        uniqueItems: true,
+        description:
+          "Pi extension sources or package selections using declared extensionResources names. Relative paths use the agent directory.",
+        default: [...SUBAGENT_DEFAULT_EXTENSIONS],
+      }),
+    ),
+  }),
+  commit: section({
+    enabled,
+    model: Type.Optional(text()),
+    lastModel: Type.Optional(text()),
+    thinking: Type.Optional(text()),
+    timeoutMs: integer(1_000, 2_147_483_647, 120_000),
+    rememberModel: Type.Optional(Type.Boolean({ default: true })),
+  }),
+  notify: section({
+    enabled,
+    quietPeriodMs: integer(0, 60_000, 1_000),
+  }),
+};
+
 export const PI_KITS_SCHEMA = Type.Object(
   {
     $schema: Type.Optional(Type.String()),
-    workspace: section({
-      enabled,
-      terminal: section({
-        enabled,
-        editor: executable("nvim"),
-        gitUI: executable("lazygit"),
-        fileManager: executable("yazi"),
-      }),
-      open: feature(),
-      preview: feature(),
-      contextPreview: feature(),
-    }),
-    usage: section({
-      enabled,
-      providerUsage: section({
-        enabled,
-        intervalMs: integer(1_000, 2_147_483_647, 600_000),
-        timeoutMs: integer(100, 300_000, 15_000),
-      }),
-      stats: feature(),
-    }),
-    workflow: section({
-      enabled,
-      askUserQuestion: feature(),
-      subagent: section({
-        enabled,
-        mux: Type.Optional(Type.Literal("herdr")),
-        maxConcurrent: integer(1, 32, 4),
-        extensionAllowlist: Type.Optional(
-          Type.Array(WORKER_EXTENSION_SOURCE_SCHEMA, {
-            uniqueItems: true,
-            description:
-              "Pi extension sources or package selections using declared extensionResources names. Relative paths use the agent directory.",
-            default: [...SUBAGENT_DEFAULT_EXTENSIONS],
-          }),
-        ),
-      }),
-      commit: section({
-        enabled,
-        model: Type.Optional(text()),
-        lastModel: Type.Optional(text()),
-        thinking: Type.Optional(text()),
-        timeoutMs: integer(1_000, 2_147_483_647, 120_000),
-        rememberModel: Type.Optional(Type.Boolean({ default: true })),
-      }),
-      notify: section({
-        enabled,
-        quietPeriodMs: integer(0, 60_000, 1_000),
-      }),
-    }),
+    ...workspaceFeatures,
+    ...usageFeatures,
+    ...workflowFeatures,
+    workspace: Type.Optional(
+      Type.Object(
+        { enabled, ...workspaceFeatures },
+        {
+          additionalProperties: false,
+          deprecated: true,
+          description: "Legacy group; prefer top-level extension settings.",
+        },
+      ),
+    ),
+    usage: Type.Optional(
+      Type.Object(
+        { enabled, ...usageFeatures },
+        {
+          additionalProperties: false,
+          deprecated: true,
+          description: "Legacy group; prefer top-level extension settings.",
+        },
+      ),
+    ),
+    workflow: Type.Optional(
+      Type.Object(
+        { enabled, ...workflowFeatures },
+        {
+          additionalProperties: false,
+          deprecated: true,
+          description: "Legacy group; prefer top-level extension settings.",
+        },
+      ),
+    ),
     web: section({
       enabled,
       search: section({
