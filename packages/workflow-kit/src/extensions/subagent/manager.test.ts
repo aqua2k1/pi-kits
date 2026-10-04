@@ -372,6 +372,34 @@ test("explicit extension allowlists replace defaults, including an empty list", 
   }
 });
 
+test("package logical selections load only their declared resources in the worker", async (t) => {
+  const dir = useAgentDir(t);
+  const root = join(dir, "named-package");
+  mkdirSync(root);
+  const selected = join(root, "selected.ts");
+  writeFileSync(selected, "export default () => {};");
+  writeFileSync(join(root, "other.ts"), "export default () => {};");
+  writeFileSync(
+    join(root, "package.json"),
+    JSON.stringify({
+      pi: { extensions: ["./selected.ts", "./other.ts"] },
+      extensionResources: { "custom-name": "./selected.ts" },
+    }),
+  );
+  const mux = new FakeMux();
+  const manager = new SubagentManager(mux, {
+    extensionAllowlist: [
+      { source: "named-package", extensions: ["custom-name"] },
+    ],
+  });
+  t.after(() => manager.close());
+  const agent = manager.spawn(task);
+  await until(() => mux.commands.get(agent.id)?.length === 1);
+  const argv = mux.started[0].argv;
+  assert.ok(argv.includes(selected));
+  assert.ok(!argv.includes(join(root, "other.ts")));
+});
+
 test("extension paths resolve from the agent directory, never the task cwd", async (t) => {
   const agentDir = useAgentDir(t);
   const mux = new FakeMux();

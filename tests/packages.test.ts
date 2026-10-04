@@ -63,6 +63,11 @@ test("four kits explicitly declare eleven independent runtime entries", () => {
     assert.equal(manifest.name, `pi-${kit}-kit`);
     assert.ok(manifest.keywords.includes("pi-package"));
     assert.equal(manifest.private, true);
+    const declared = manifest.extensionResources[`${kit}-kit`];
+    assert.deepEqual(
+      typeof declared === "string" ? [declared] : declared,
+      manifest.pi.extensions,
+    );
     for (const entry of manifest.pi.extensions) {
       assert.ok(!entry.includes(".test.") && !entry.includes("/lib/"));
       assert.ok(
@@ -93,6 +98,14 @@ test("four kits explicitly declare eleven independent runtime entries", () => {
     readFileSync(join(root, "package.json"), "utf8"),
   );
   assert.ok(repository.keywords.includes("pi-package"));
+  const named = Object.values(repository.extensionResources).flatMap((value) =>
+    typeof value === "string" ? [value] : (value as string[]),
+  );
+  assert.deepEqual(
+    named,
+    repository.pi.extensions,
+    "Named resources must expose exactly the explicit manifest entries",
+  );
   assert.deepEqual(
     repository.pi.extensions.map((entry: string) => resolve(root, entry)),
     entries,

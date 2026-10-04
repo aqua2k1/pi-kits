@@ -1,7 +1,10 @@
 import { randomBytes, randomUUID } from "node:crypto";
 import { createServer, type Server, type Socket } from "node:net";
 import { fileURLToPath } from "node:url";
-import { SUBAGENT_DEFAULT_EXTENSIONS } from "@pi-kits/config";
+import {
+  SUBAGENT_DEFAULT_EXTENSIONS,
+  type WorkerExtensionSource,
+} from "@pi-kits/config";
 import type { AgentDefinition } from "./agents.ts";
 import { createClonedSession, type ParentSessionSnapshot } from "./clone.ts";
 import { resolveWorkerExtensions } from "./extensions.ts";
@@ -103,7 +106,7 @@ export interface ResumeOptions {
 
 export interface ManagerOptions {
   maxConcurrent?: number;
-  extensionAllowlist?: readonly string[];
+  extensionAllowlist?: readonly WorkerExtensionSource[];
   startupTimeoutMs?: number;
   cancelTimeoutMs?: number;
   workerPath?: string;

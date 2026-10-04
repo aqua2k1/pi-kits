@@ -455,8 +455,45 @@ package manager rather than a kit-specific prefix table. For example:
 ]
 ```
 
+To select only named resources from an installed package, use an object:
+
+```json
+"extensionAllowlist": [
+  "builtin:codemode",
+  "builtin:tool-search",
+  {
+    "source": "git:github.com/aqua2k1/pi-kits",
+    "extensions": ["web-kit"]
+  },
+  "npm:@narumitw/pi-chrome-devtools"
+]
+```
+
+Pi locates the package, then the kit reads its `package.json`
+`extensionResources` declaration. The repository exposes `workspace-kit`,
+`usage-kit`, `workflow-kit`, and `web-kit`; each kit package also exposes its
+own name. These names are package metadata, not special cases in subagent code.
+For example, the repository declares:
+
+```json
+"extensionResources": {
+  "web-kit": "./packages/web-kit/index.ts"
+}
+```
+
+A resource maps to a package-relative entrypoint or an array of entrypoints.
+Selected entries must already be enabled resources in the package's explicit
+Pi manifest. Unknown names, absent declarations, and undeclared/escaping paths
+fail before worker creation; there is no name-to-path guess or whole-package
+fallback. `extensions: []` loads nothing from that source and does not resolve
+or install it. The configuration example uses this empty selection deliberately;
+change it to `["web-kit"]` to opt in. Defaults still load only codemode and
+tool-search. Packages without named declarations (such as Chrome DevTools) can
+still be loaded using their plain source string.
+
 Pi resolves installed npm/git packages and reads their declared extension
-resources. Package sources load their declared extensions, not just one tool.
+resources. Plain package source strings load all their declared extensions,
+not just one tool.
 Missing packages follow Pi's native installation behavior; only list trusted
 sources. Files/directories remain supported: absolute paths, `~/...`, and paths
 relative to the agent directory (never the task/project cwd). Resolved enabled

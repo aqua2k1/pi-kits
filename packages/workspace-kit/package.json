@@ -9,6 +9,14 @@
   "keywords": [
     "pi-package"
   ],
+  "extensionResources": {
+    "workspace-kit": [
+      "./src/extensions/terminal.ts",
+      "./src/extensions/open.ts",
+      "./src/extensions/preview.ts",
+      "./src/extensions/context-preview.ts"
+    ]
+  },
   "pi": {
     "extensions": [
       "./src/extensions/terminal.ts",

@@ -28,7 +28,14 @@
       "mux": "herdr",
       "enabled": true,
       "maxConcurrent": 4,
-      "extensionAllowlist": ["builtin:codemode", "builtin:tool-search"]
+      "extensionAllowlist": [
+        "builtin:codemode",
+        "builtin:tool-search",
+        {
+          "source": "git:github.com/aqua2k1/pi-kits",
+          "extensions": []
+        }
+      ]
     },
     "commit": {
       "enabled": true,

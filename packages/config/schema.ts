@@ -27,6 +27,25 @@ const provider = () =>
     Type.Literal("codex"),
   ]);
 
+const extensionSource = () =>
+  Type.String({
+    minLength: 1,
+    pattern: "^(?=.*\\S)[^\\x00-\\x1f\\x7f]+$",
+  });
+const WORKER_EXTENSION_SOURCE_SCHEMA = Type.Union([
+  extensionSource(),
+  Type.Object(
+    {
+      source: extensionSource(),
+      extensions: Type.Array(extensionSource(), { uniqueItems: true }),
+    },
+    { additionalProperties: false },
+  ),
+]);
+export type WorkerExtensionSource = Static<
+  typeof WORKER_EXTENSION_SOURCE_SCHEMA
+>;
+
 export const PI_KITS_SCHEMA = Type.Object(
   {
     $schema: Type.Optional(Type.String()),
@@ -59,18 +78,12 @@ export const PI_KITS_SCHEMA = Type.Object(
         mux: Type.Optional(Type.Literal("herdr")),
         maxConcurrent: integer(1, 32, 4),
         extensionAllowlist: Type.Optional(
-          Type.Array(
-            Type.String({
-              minLength: 1,
-              pattern: "^(?=.*\\S)[^\\x00-\\x1f\\x7f]+$",
-            }),
-            {
-              uniqueItems: true,
-              description:
-                "Pi extension sources resolved by Pi. Relative paths use the agent directory.",
-              default: [...SUBAGENT_DEFAULT_EXTENSIONS],
-            },
-          ),
+          Type.Array(WORKER_EXTENSION_SOURCE_SCHEMA, {
+            uniqueItems: true,
+            description:
+              "Pi extension sources or package selections using declared extensionResources names. Relative paths use the agent directory.",
+            default: [...SUBAGENT_DEFAULT_EXTENSIONS],
+          }),
         ),
       }),
       commit: section({

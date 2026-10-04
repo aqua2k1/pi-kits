@@ -151,12 +151,37 @@
             "extensionAllowlist": {
               "type": "array",
               "items": {
-                "type": "string",
-                "minLength": 1,
-                "pattern": "^(?=.*\\S)[^\\x00-\\x1f\\x7f]+$"
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "minLength": 1,
+                    "pattern": "^(?=.*\\S)[^\\x00-\\x1f\\x7f]+$"
+                  },
+                  {
+                    "type": "object",
+                    "required": ["source", "extensions"],
+                    "properties": {
+                      "source": {
+                        "type": "string",
+                        "minLength": 1,
+                        "pattern": "^(?=.*\\S)[^\\x00-\\x1f\\x7f]+$"
+                      },
+                      "extensions": {
+                        "type": "array",
+                        "items": {
+                          "type": "string",
+                          "minLength": 1,
+                          "pattern": "^(?=.*\\S)[^\\x00-\\x1f\\x7f]+$"
+                        },
+                        "uniqueItems": true
+                      }
+                    },
+                    "additionalProperties": false
+                  }
+                ]
               },
               "uniqueItems": true,
-              "description": "Pi extension sources resolved by Pi. Relative paths use the agent directory.",
+              "description": "Pi extension sources or package selections using declared extensionResources names. Relative paths use the agent directory.",
               "default": ["builtin:codemode", "builtin:tool-search"]
             }
           },

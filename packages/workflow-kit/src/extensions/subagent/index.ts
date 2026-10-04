@@ -4,7 +4,11 @@ import {
   type ExtensionAPI,
   type ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
-import { readPiKitsConfig, SUBAGENT_DEFAULT_EXTENSIONS } from "@pi-kits/config";
+import {
+  readPiKitsConfig,
+  SUBAGENT_DEFAULT_EXTENSIONS,
+  type WorkerExtensionSource,
+} from "@pi-kits/config";
 import { Type } from "typebox";
 import {
   DOCKED_PANEL_CLOSED,
@@ -42,7 +46,7 @@ export function registerSubagents(
   pi: ExtensionAPI,
   adapter: MuxAdapter,
   maxConcurrent = 4,
-  extensionAllowlist: readonly string[] = SUBAGENT_DEFAULT_EXTENSIONS,
+  extensionAllowlist: readonly WorkerExtensionSource[] = SUBAGENT_DEFAULT_EXTENSIONS,
 ): void {
   let manager: SubagentManager | undefined;
   let status: SubagentStatusWidget | undefined;

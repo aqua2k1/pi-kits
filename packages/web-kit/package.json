@@ -6,6 +6,9 @@
   "keywords": [
     "pi-package"
   ],
+  "extensionResources": {
+    "web-kit": "./index.ts"
+  },
   "pi": {
     "extensions": [
       "./index.ts"

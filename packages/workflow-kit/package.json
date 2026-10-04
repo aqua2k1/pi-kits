@@ -24,6 +24,14 @@
     "@earendil-works/pi-tui": "*",
     "typebox": "*"
   },
+  "extensionResources": {
+    "workflow-kit": [
+      "./src/extensions/commit/index.ts",
+      "./src/extensions/notify/index.ts",
+      "./src/extensions/ask-user-question/index.ts",
+      "./src/extensions/subagent/index.ts"
+    ]
+  },
   "pi": {
     "extensions": [
       "./src/extensions/commit/index.ts",

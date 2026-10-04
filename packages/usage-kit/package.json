@@ -20,6 +20,12 @@
     "@earendil-works/pi-coding-agent": "*",
     "@earendil-works/pi-tui": "*"
   },
+  "extensionResources": {
+    "usage-kit": [
+      "./src/extensions/provider-usage/index.ts",
+      "./src/extensions/stats/index.ts"
+    ]
+  },
   "pi": {
     "extensions": [
       "./src/extensions/provider-usage/index.ts",

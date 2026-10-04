@@ -14,8 +14,10 @@ import {
   getPiKitsConfigPath,
   PI_KITS_SCHEMA,
   parsePiKitsConfig,
+  parsePiKitsFile,
   readPiKitsConfig,
   readPiKitsFile,
+  resolvePiKitsConfig,
   SUBAGENT_DEFAULT_EXTENSIONS,
   updatePiKitsConfig,
 } from "./index.ts";
@@ -127,6 +129,8 @@ test("explicit subagent extension allowlists replace defaults, including empty",
     [],
     ["builtin:mcp", "/trusted/custom.ts"],
     ["npm:@narumitw/pi-chrome-devtools", "git:github.com/example/tools"],
+    [{ source: "git:github.com/aqua2k1/pi-kits", extensions: ["web-kit"] }],
+    [{ source: "package", extensions: [] }],
   ]) {
     const config = parsePiKitsConfig(
       JSON.stringify({
@@ -150,6 +154,10 @@ test("explicit subagent extension allowlists replace defaults, including empty",
     [false],
     ["x", "x"],
     ["x\n"],
+    [{ source: "x" }],
+    [{ source: "x", extensions: [""] }],
+    [{ source: "x", extensions: ["web-kit", "web-kit"] }],
+    [{ source: "x", extensions: ["web-kit"], unknown: true }],
   ]) {
     assert.throws(
       () =>
@@ -161,6 +169,19 @@ test("explicit subagent extension allowlists replace defaults, including empty",
       /Invalid pi-kits.json/,
     );
   }
+});
+
+test("package selection arrays are isolated from parsed file configuration", () => {
+  const raw = parsePiKitsFile(
+    '{"workflow":{"subagent":{"extensionAllowlist":[{"source":"package","extensions":["web-kit"]}]}}}',
+  );
+  const config = resolvePiKitsConfig(raw);
+  const selected = config.workflow.subagent.extensionAllowlist[0];
+  assert.ok(typeof selected !== "string");
+  selected.extensions.length = 0;
+  assert.deepEqual(raw.workflow?.subagent?.extensionAllowlist, [
+    { source: "package", extensions: ["web-kit"] },
+  ]);
 });
 
 test("fresh snapshots pick up edits without retaining mutable defaults", (t) => {
@@ -291,6 +312,9 @@ test("published JSON schema and example match runtime validation", () => {
     enabled: true,
     mux: "herdr",
     maxConcurrent: 4,
-    extensionAllowlist: [...SUBAGENT_DEFAULT_EXTENSIONS],
+    extensionAllowlist: [
+      ...SUBAGENT_DEFAULT_EXTENSIONS,
+      { source: "git:github.com/aqua2k1/pi-kits", extensions: [] },
+    ],
   });
 });

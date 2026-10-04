@@ -6,6 +6,25 @@
   "keywords": [
     "pi-package"
   ],
+  "extensionResources": {
+    "workspace-kit": [
+      "./packages/workspace-kit/src/extensions/terminal.ts",
+      "./packages/workspace-kit/src/extensions/open.ts",
+      "./packages/workspace-kit/src/extensions/preview.ts",
+      "./packages/workspace-kit/src/extensions/context-preview.ts"
+    ],
+    "usage-kit": [
+      "./packages/usage-kit/src/extensions/provider-usage/index.ts",
+      "./packages/usage-kit/src/extensions/stats/index.ts"
+    ],
+    "workflow-kit": [
+      "./packages/workflow-kit/src/extensions/commit/index.ts",
+      "./packages/workflow-kit/src/extensions/notify/index.ts",
+      "./packages/workflow-kit/src/extensions/ask-user-question/index.ts",
+      "./packages/workflow-kit/src/extensions/subagent/index.ts"
+    ],
+    "web-kit": "./packages/web-kit/index.ts"
+  },
   "pi": {
     "extensions": [
       "./packages/workspace-kit/src/extensions/terminal.ts",

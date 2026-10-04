@@ -49,8 +49,11 @@ no tools, hooks, or commands. There is no environment probing or fallback.
 `extensionAllowlist` explicitly loads trusted extensions in every worker, defaulting
 to `["builtin:codemode", "builtin:tool-search"]`. An explicit list replaces these
 defaults; `[]` loads only the worker bridge. Entries use native Pi extension
-sources, including npm/git packages, built-ins, and files/directories. Parent
-extensions are not inherited.
+sources, including npm/git packages, built-ins, and files/directories. To select
+only web from this Git package, use
+`{ "source": "git:github.com/aqua2k1/pi-kits", "extensions": ["web-kit"] }`.
+Logical names are declared in package metadata, not tied to installation paths.
+Parent extensions are not inherited.
 
 Tools: `subagent`, `resume_subagent`, `get_subagent_result`, `steer_subagent`,
 `stop_subagent`, and `list_subagent_types`. Resume reuses an idle, retained Pi
