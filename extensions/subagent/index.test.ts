@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { type TestContext, test } from "node:test";
 import {
   type ExtensionAPI,
+  type ExtensionCommandContext,
   type ExtensionToolContext,
   SessionManager,
   type ToolDefinition,
@@ -34,20 +35,28 @@ function registrations() {
   const commands: string[] = [];
   const hooks: string[] = [];
   const definitions = new Map<string, ToolDefinition>();
+  const commandHandlers = new Map<
+    string,
+    Parameters<ExtensionAPI["registerCommand"]>[1]
+  >();
   const pi = {
     registerMessageRenderer() {},
     registerTool(tool: ToolDefinition) {
       tools.push(tool.name);
       definitions.set(tool.name, tool);
     },
-    registerCommand(name: string) {
+    registerCommand(
+      name: string,
+      definition: Parameters<ExtensionAPI["registerCommand"]>[1],
+    ) {
       commands.push(name);
+      commandHandlers.set(name, definition);
     },
     on(event: string) {
       hooks.push(event);
     },
   } as unknown as ExtensionAPI;
-  return { pi, tools, commands, hooks, definitions };
+  return { pi, tools, commands, hooks, definitions, commandHandlers };
 }
 
 for (const [name, config, env] of [
@@ -327,6 +336,105 @@ test("resume tool respects retained background preferences and aborted callers n
     /Already canceled/,
   );
   assert.equal(resumed, 4);
+});
+
+test("views command confirms deletion before execution and reports failures", async (t) => {
+  const capture = registrations();
+  registerSubagents(capture.pi, {} as MuxAdapter);
+  const command = capture.commandHandlers.get("subagent:views");
+  assert.ok(command);
+  const order: string[] = [];
+  let confirmed = false;
+  let fail = false;
+  t.mock.method(SubagentManager.prototype, "get", (id: string) => ({
+    id,
+    description: "My task",
+    status: "queued",
+  }));
+  t.mock.method(SubagentManager.prototype, "remove", async (id: string) => {
+    order.push(`remove:${id}`);
+    if (fail) throw new Error("Cleanup failed");
+  });
+  const ctx = {
+    mode: "tui",
+    ui: {
+      setWidget() {},
+      setStatus() {},
+      async confirm(title: string, message: string) {
+        order.push("confirm");
+        assert.match(title, /Delete subagent/);
+        assert.match(message, /full-id/);
+        assert.match(message, /Session files are retained/);
+        return confirmed;
+      },
+      notify(message: string) {
+        order.push(message);
+      },
+    },
+  } as unknown as ExtensionCommandContext;
+  await command.handler("full-id delete", ctx);
+  assert.deepEqual(order, ["confirm"]);
+  order.length = 0;
+  confirmed = true;
+  await command.handler("full-id delete", ctx);
+  assert.deepEqual(order, ["confirm", "remove:full-id"]);
+  order.length = 0;
+  fail = true;
+  await command.handler("full-id delete", ctx);
+  assert.deepEqual(order, ["confirm", "remove:full-id", "Cleanup failed"]);
+  order.length = 0;
+  await command.handler("full-id invalid", ctx);
+  assert.match(order[0], /View action/);
+});
+
+test("views copy command writes the full ID through Pi clipboard support", async (t) => {
+  if (process.platform !== "linux") return;
+  environment(t, {
+    DISPLAY: undefined,
+    WAYLAND_DISPLAY: undefined,
+    TERMUX_VERSION: undefined,
+  });
+  const capture = registrations();
+  registerSubagents(capture.pi, {} as MuxAdapter);
+  const command = capture.commandHandlers.get("subagent:views");
+  assert.ok(command);
+  const id = "12345678-full-subagent-id";
+  t.mock.method(SubagentManager.prototype, "get", () => ({
+    id,
+    description: "Task",
+    status: "queued",
+  }));
+  const output: string[] = [];
+  const originalWrite = process.stdout.write.bind(process.stdout);
+  const write = t.mock.method(
+    process.stdout,
+    "write",
+    (...args: Parameters<typeof process.stdout.write>) => {
+      const [chunk] = args;
+      if (typeof chunk === "string" && chunk.startsWith("\x1b]52;c;")) {
+        output.push(chunk);
+        return true;
+      }
+      return originalWrite(...args);
+    },
+  );
+  const notices: string[] = [];
+  const ctx = {
+    mode: "tui",
+    ui: {
+      setWidget() {},
+      setStatus() {},
+      notify(message: string) {
+        notices.push(message);
+      },
+    },
+  } as unknown as ExtensionCommandContext;
+  await command.handler(`${id} copy`, ctx);
+  write.mock.restore();
+  assert.ok(
+    output.includes(`\x1b]52;c;${Buffer.from(id).toString("base64")}\x07`),
+  );
+  assert.deepEqual(notices, ["Copied subagent ID."]);
 });
 
 test("registration is lazy and does not invoke mux operations", () => {

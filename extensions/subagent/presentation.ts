@@ -28,8 +28,24 @@ export function agentDisplayStatus(agent: AgentSnapshot): string {
 }
 
 export function agentTitle(agent: AgentSnapshot): string {
-  const type = agent.displayName ?? agent.subagentType;
-  return oneLine(type ? `${type} · ${agent.description}` : agent.description);
+  return oneLine(`${agentName(agent)} · ${agent.description}`);
+}
+
+export function agentName(agent: AgentSnapshot): string {
+  return oneLine(agent.displayName || agent.subagentType || "Subagent");
+}
+
+export function agentModel(agent: AgentSnapshot): string {
+  return oneLine(agent.modelName || agent.model || "—");
+}
+
+/** Shared identity/status row for widgets, tool cards and views. */
+export function agentHeader(
+  agent: AgentSnapshot,
+  theme: Theme,
+  now = Date.now(),
+): string {
+  return `${statusIcon(agent, theme, now)} ${agentName(agent)} · ${agentModel(agent)} · ${oneLine(agent.description)} · ${oneLine(agent.id.slice(0, 8)) || "—"} · ${oneLine(agentDisplayStatus(agent))}`;
 }
 
 export function duration(agent: AgentSnapshot, now = Date.now()): string {
@@ -81,10 +97,10 @@ export function renderAgentWidget(
   for (const agent of active.slice(0, 4)) {
     const interactive = agent.sessionState === "interactive";
     lines.push(
-      `├─ ${statusIcon(agent, theme, now)} ${agentTitle(agent)} · ${interactive ? "interactive" : agentStats(agent, now)}`,
+      `├─ ${agentHeader(agent, theme, now)}`,
       theme.fg(
         "muted",
-        `│   ⎿ ${oneLine(interactive ? (agent.sessionActivity ?? "User interaction") : (agent.activity ?? agent.status))}`,
+        `│   ⎿ ${oneLine(interactive ? (agent.sessionActivity ?? "User interaction") : (agent.activity ?? agent.status))}${interactive ? "" : ` · ${agentStats(agent, now)}`}`,
       ),
     );
   }
@@ -95,7 +111,7 @@ export function renderAgentWidget(
   for (const agent of finished.slice(-Math.max(0, 11 - lines.length))) {
     if (lines.length >= 11) break;
     lines.push(
-      `├─ ${statusIcon(agent, theme, now)} ${agentTitle(agent)} · ${agentDisplayStatus(agent)} · ${agentStats(agent, now)}`,
+      `├─ ${agentHeader(agent, theme, now)} · ${agentStats(agent, now)}`,
     );
   }
   if (lines.length > 1) {

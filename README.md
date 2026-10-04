@@ -95,8 +95,12 @@ Tools: `subagent`, `resume_subagent`, `get_subagent_result`, `steer_subagent`,
 `stop_subagent`, and `list_subagent_types`. Resume reuses an idle, retained Pi
 session/history and enters the same concurrency queue; it never restarts a
 closed/disconnected worker or interrupts native user interaction.
-`/subagent:views [id] [open|focus|close]` manages views attached to existing Pi
-terminals for inspection and control. The shared manager places the first view
+`/subagent:views [id] [open|focus|close|copy|delete]` manages views attached to
+existing Pi terminals for inspection and control. In the panel, `y` copies the
+full subagent ID and `d` deletes the agent after confirmation, closing its
+terminal and removing its manager record while retaining session files.
+Views and tool cards share a status icon, agent name, current model name, task
+description, eight-character ID, and status header. The shared manager places the first view
 right of the parent and subsequent views below the last surviving view; every
 adapter follows this policy. Closing a view does not kill the worker.
 Background tasks use Herdr's native Pi terminals plus a worker bridge, not a

@@ -15,6 +15,9 @@ const snapshot: AgentSnapshot = Object.freeze({
   description: "LIVE_CODEMODE_SUCCESS",
   status: "completed",
   subagentType: "long-config-name",
+  displayName: "Reviewer",
+  model: "provider/model-id",
+  modelName: "Model Name",
   agentPath: "/private/agents/config.md",
   sessionPath: "/private/session.jsonl",
   createdAt: 1791090566583,
@@ -36,10 +39,13 @@ function render(
   );
 }
 
-test("collapsed subagent output shows only task, status and one preview line", () => {
+test("collapsed subagent output shows shared identity header and one preview line", () => {
   const lines = render(snapshot).render(200);
   assert.equal(lines.length, 2);
-  assert.equal(lines[0], "LIVE_CODEMODE_SUCCESS · completed");
+  assert.equal(
+    lines[0],
+    "✓ Reviewer · Model Name · LIVE_CODEMODE_SUCCESS · 07ea6fc5 · completed",
+  );
   assert.match(lines[1], /packageName/);
   for (const hidden of [
     snapshot.id,
@@ -64,6 +70,20 @@ test("collapsed subagent output shows only task, status and one preview line", (
   );
 });
 
+test("headers fall back to type, model ID and generic agent name", () => {
+  const typed = { ...snapshot, displayName: undefined, modelName: undefined };
+  assert.match(
+    render(typed).render(200)[0],
+    /long-config-name · provider\/model-id/,
+  );
+  assert.match(
+    render({ ...typed, subagentType: undefined, model: undefined }).render(
+      200,
+    )[0],
+    /Subagent · —/,
+  );
+});
+
 test("interactive state is visible without replacing the completed task result", () => {
   const lines = render({ ...snapshot, sessionState: "interactive" }).render(
     200,
@@ -72,19 +92,22 @@ test("interactive state is visible without replacing the completed task result",
   assert.match(lines[1], /packageName/);
 });
 
-test("result rows do not repeat the task title already shown in the call", () => {
+test("result rows retain the unified identity header", () => {
   const component = renderSubagentResult(
     { content: [], details: snapshot },
     { expanded: false, isPartial: false },
     theme,
     { args: { description: snapshot.description } } as RenderContext,
   );
-  assert.equal(component.render(80)[0], "completed");
+  assert.equal(
+    component.render(200)[0],
+    "✓ Reviewer · Model Name · LIVE_CODEMODE_SUCCESS · 07ea6fc5 · completed",
+  );
 });
 
 test("errors, empty results and truncation remain truthful without JSON noise", () => {
   assert.deepEqual(render({ ...snapshot, result: "" }).render(80), [
-    "LIVE_CODEMODE_SUCCESS · completed",
+    "✓ Reviewer · Model Name · LIVE_CODEMODE_SUCCESS · 07ea6fc5 · completed",
   ]);
   const error = render({
     ...snapshot,
@@ -131,7 +154,7 @@ test("collapsed output is width bounded and terminal-safe; expansion escapes con
   assert.match(full, /\\u009b/);
 });
 
-test("tool calls hide prompts, IDs and model parameters until expanded", () => {
+test("tool calls show model and short ID but hide prompts until expanded", () => {
   const args = {
     description: "Review",
     prompt: "Private task prompt",
@@ -142,10 +165,38 @@ test("tool calls hide prompts, IDs and model parameters until expanded", () => {
   const collapsed = renderer(args, theme, {
     expanded: false,
   } as RenderContext).render(80);
-  assert.deepEqual(collapsed, ["Subagent · Review"]);
+  assert.deepEqual(collapsed, [
+    "◦ Subagent · a/model · Review · 07ea6fc5 · queued",
+  ]);
+  assert.ok(!collapsed.join("\n").includes(args.prompt));
   const expanded = renderer(args, theme, { expanded: true } as RenderContext)
     .render(100)
     .join("\n");
   assert.match(expanded, /Private task prompt/);
   assert.ok(expanded.includes(snapshot.id));
+});
+
+test("tool calls reuse resolved identity from the result or manager", () => {
+  const context = {
+    expanded: false,
+    state: {},
+    invalidate() {},
+  } as RenderContext;
+  renderSubagentResult(
+    { content: [], details: snapshot },
+    { expanded: false, isPartial: false },
+    theme,
+    context,
+  );
+  const renderer = subagentCallRenderer("Subagent");
+  const expected =
+    "✓ Reviewer · Model Name · LIVE_CODEMODE_SUCCESS · 07ea6fc5 · completed";
+  assert.equal(renderer({}, theme, context).render(200)[0], expected);
+  const lookup = subagentCallRenderer("Subagent result", () => snapshot);
+  assert.equal(
+    lookup({ agent_id: snapshot.id }, theme, {
+      expanded: false,
+    } as RenderContext).render(200)[0],
+    expected,
+  );
 });

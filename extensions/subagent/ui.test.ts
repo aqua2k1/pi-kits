@@ -114,6 +114,29 @@ test("views uses a single agent list and Enter immediately opens the selected vi
   assert.equal(source.listeners.size, 0);
 });
 
+test("copy/delete return the full selected ID even before a terminal exists", () => {
+  for (const [key, action] of [
+    ["y", "copy"],
+    ["d", "delete"],
+  ] as const) {
+    const source = new Source();
+    const id = "12345678-full-subagent-id";
+    source.agents = [{ ...agent(id, "queued"), terminalId: undefined }];
+    const h = panel(source);
+    h.component.handleInput(key);
+    h.component.handleInput(key);
+    assert.deepEqual(h.result, { agentId: id, action });
+    assert.equal(h.completions, 1);
+    h.component.dispose();
+    assert.equal(source.listeners.size, 0);
+  }
+  const h = panel(new Source());
+  h.component.handleInput("y");
+  h.component.handleInput("d");
+  assert.equal(h.completions, 0);
+  h.component.dispose();
+});
+
 test("view menu updates live and preserves selection by agent identity", () => {
   const source = new Source();
   source.agents = [agent("one"), agent("two")];
@@ -237,7 +260,7 @@ test("compact panels keep the visible selected agent clickable", () => {
     source.agents = [agent("one"), agent("two")];
     const h = panel(source, "two", rows);
     const lines = h.component.render(80);
-    const y = lines.findIndex((line) => line.includes("任务 two · two"));
+    const y = lines.findLastIndex((line) => line.includes("任务 two · two"));
     assert.ok(y >= 0, `Missing agent row at ${rows} terminal rows`);
     h.component.handleMouse({
       type: "click",
@@ -480,6 +503,6 @@ test("widget tree is bounded, unicode-safe, themed and renders truthful counters
   const named = { ...agent(), subagentType: "review", displayName: "Auditor" };
   assert.match(
     renderAgentWidget([named], theme, 200, 2_000).join("\n"),
-    /Auditor · 任务 one/,
+    /Auditor · — · 任务 one/,
   );
 });

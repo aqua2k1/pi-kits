@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { connect, type Socket } from "node:net";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -20,6 +20,71 @@ import type {
   TerminalHandle,
   ViewHandle,
 } from "./mux.ts";
+
+test("model metadata replaces requested defaults and tracks idle, stats and resumed workers", async (t) => {
+  const mux = new FakeMux();
+  const emit = mux.emit.bind(mux);
+  t.mock.method(mux, "emit", (id: string, event: Record<string, unknown>) =>
+    emit(
+      id,
+      event.type === "ready"
+        ? { ...event, model: "actual/ready", modelName: "Ready Model" }
+        : event,
+    ),
+  );
+  const manager = new SubagentManager(mux);
+  t.after(() => manager.close());
+  const agent = parseAgentDefinition(
+    "---\nmodel: agent/requested\n---\nRole",
+    "/agents/model.md",
+    "global",
+  );
+  const first = manager.spawn({ ...task, model: "parent/default", agent });
+  assert.equal(first.model, "agent/requested");
+  const fallback = manager.spawn({ ...task, model: "parent/default" });
+  assert.equal(fallback.model, "parent/default");
+  await until(() => mux.commands.get(first.id)?.length === 1);
+  assert.equal(manager.get(first.id).model, "actual/ready");
+  assert.equal(manager.get(first.id).modelName, "Ready Model");
+  mux.emit(first.id, {
+    type: "stats",
+    model: "actual/stats",
+    modelName: "Stats Model",
+  });
+  await until(() => manager.get(first.id).model === "actual/stats");
+  mux.emit(first.id, { type: "completed", result: "Done" });
+  await until(() => manager.get(first.id).status === "completed");
+  mux.emit(first.id, {
+    type: "model_select",
+    model: "actual/idle",
+    modelName: "Idle Model",
+  });
+  await until(() => manager.get(first.id).model === "actual/idle");
+  mux.emit(first.id, {
+    type: "session_state",
+    state: "idle",
+    model: "actual/native",
+    modelName: "Native Model",
+  });
+  await until(() => manager.get(first.id).model === "actual/native");
+  const resumed = manager.resume(first.id, { prompt: "Next" });
+  assert.equal(resumed.model, "actual/native");
+  assert.equal(resumed.modelName, "Native Model");
+  await until(() => mux.commands.get(first.id)?.length === 2);
+  mux.emit(first.id, { type: "model_select", round: 1, model: "stale/model" });
+  mux.emit(first.id, {
+    type: "stats",
+    model: ["bad"],
+    modelName: 42,
+    turnCount: 2,
+  });
+  await until(() => manager.get(first.id).turnCount === 2);
+  assert.equal(manager.get(first.id).model, "actual/native");
+  assert.equal(manager.get(first.id).modelName, "Native Model");
+  mux.emit(first.id, { type: "model_select", model: "actual/unnamed" });
+  await until(() => manager.get(first.id).model === "actual/unnamed");
+  assert.equal(manager.get(first.id).modelName, undefined);
+});
 
 class FakeMux implements MuxAdapter {
   readonly started: StartOptions[] = [];
@@ -164,6 +229,95 @@ test("inheritance opens one native cloned session, keeps IPC small and never rec
     prompt: "Continue",
     round: 2,
   });
+});
+
+test("deletion settles waiters, removes queued work and cleans up views without deleting session files", async (t) => {
+  useAgentDir(t);
+  const mux = new FakeMux();
+  const notifications: string[] = [];
+  const manager = new SubagentManager(mux, {
+    maxConcurrent: 1,
+    onComplete: (agent) => notifications.push(agent.id),
+  });
+  t.after(() => manager.close());
+  const parent = SessionManager.inMemory(task.cwd);
+  parent.appendMessage({ role: "user", content: "Keep me", timestamp: 1 });
+  const running = manager.spawn({
+    ...task,
+    parentSession: captureParentSession(parent),
+  });
+  await until(() => manager.get(running.id).status === "running");
+  const sessionPath =
+    mux.started[0].argv[mux.started[0].argv.indexOf("--session") + 1];
+  assert.ok(existsSync(sessionPath));
+  const view = await manager.openView(running.id);
+  const queued = manager.spawn(task);
+  const queuedWait = manager.result(queued.id, true);
+  await manager.remove(queued.id);
+  assert.equal((await queuedWait).status, "stopped");
+  assert.throws(() => manager.get(queued.id), /Unknown subagent/);
+  const runningWait = manager.result(running.id, true);
+  await manager.remove(running.id);
+  assert.equal((await runningWait).status, "stopped");
+  assert.deepEqual(manager.list(), []);
+  assert.deepEqual(mux.closedViews, [view.id]);
+  assert.ok(mux.destroyed.includes(running.id));
+  assert.ok(existsSync(sessionPath));
+  assert.equal(mux.started.length, 1);
+  assert.deepEqual(notifications, []);
+  const next = manager.spawn(task);
+  await until(() => manager.get(next.id).status === "running");
+});
+
+test("deletion during delayed startup waits for late terminal cleanup", async (t) => {
+  const mux = new FakeMux();
+  const original = mux.start.bind(mux);
+  let release = () => {};
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  let entered = false;
+  t.mock.method(mux, "start", async (options: StartOptions) => {
+    entered = true;
+    await gate;
+    return original(options);
+  });
+  const manager = new SubagentManager(mux, { maxConcurrent: 1 });
+  t.after(() => manager.close());
+  const agent = manager.spawn(task);
+  await until(() => entered);
+  const queued = manager.spawn(task);
+  // Removing a sibling must not wait for this blocked startup.
+  await manager.remove(queued.id);
+  assert.throws(() => manager.get(queued.id), /Unknown subagent/);
+  manager.stop(agent.id);
+  const waiting = manager.result(agent.id, true);
+  const removing = manager.remove(agent.id);
+  release();
+  await removing;
+  assert.equal((await waiting).status, "stopped");
+  assert.deepEqual(manager.list(), []);
+  assert.ok(mux.destroyed.includes(agent.id));
+});
+
+test("failed deletion retains terminal ownership and can be retried", async (t) => {
+  const mux = new FakeMux();
+  const manager = new SubagentManager(mux, { maxConcurrent: 1 });
+  t.after(() => manager.close());
+  const agent = manager.spawn(task);
+  await until(() => manager.get(agent.id).status === "running");
+  const destroy = mux.destroy.bind(mux);
+  t.mock.method(mux, "destroy", async () => {
+    throw new Error("Failed");
+  });
+  await assert.rejects(manager.remove(agent.id), /retry deletion/);
+  assert.equal(manager.get(agent.id).terminalId, agent.id);
+  const next = manager.spawn(task);
+  assert.equal(manager.get(next.id).status, "queued");
+  t.mock.method(mux, "destroy", destroy);
+  await manager.remove(agent.id);
+  assert.throws(() => manager.get(agent.id), /Unknown subagent/);
+  await until(() => manager.get(next.id).status === "running");
 });
 
 test("manager is lazy, starts an authenticated worker and returns structured results", async (t) => {

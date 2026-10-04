@@ -92,7 +92,7 @@ test("all ten public tools and the completion message register shared-style rend
       .map((line) => line.trim())
       .filter(Boolean)
       .join("\n"),
-    "Subagent · Task A · completed\nDone",
+    "✓ Subagent · — · Task A · private- · completed\nDone",
   );
   assert.ok(!compact.includes("private-id"));
   const full =

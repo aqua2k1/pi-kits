@@ -1,53 +1,107 @@
+import { Text, truncateToWidth } from "@earendil-works/pi-tui";
 import {
+  type CallRenderer,
   compactCall,
   compactMessage,
   compactResult,
+  jsonText,
   type RenderSummary,
+  type ResultRenderer,
   record,
 } from "../../shared/ui/renderers.ts";
 import type { AgentSnapshot } from "./manager.ts";
-import { agentDisplayStatus } from "./presentation.ts";
+import { agentHeader } from "./presentation.ts";
 
-export const subagentCallRenderer = (label: string) =>
-  compactCall(label, (args) => {
-    const description = record(args).description;
-    return typeof description === "string" ? description : "";
-  });
+export const subagentCallRenderer =
+  (
+    label: string,
+    lookup?: (id: string) => AgentSnapshot | undefined,
+  ): CallRenderer =>
+  (args, theme, context) => {
+    if (context.expanded) return new Text(`${label}\n${jsonText(args)}`, 0, 0);
+    const data = record(args);
+    const existing =
+      typeof data.agent_id === "string" ? lookup?.(data.agent_id) : undefined;
+    const state = record(context.state);
+    const snapshot: AgentSnapshot = existing ??
+      (state.subagentSnapshot as AgentSnapshot | undefined) ?? {
+        id: typeof data.agent_id === "string" ? data.agent_id : "",
+        description:
+          typeof data.description === "string" ? data.description : label,
+        subagentType:
+          typeof data.subagent_type === "string"
+            ? data.subagent_type
+            : undefined,
+        model: typeof data.model === "string" ? data.model : undefined,
+        status: context.executionStarted ? "running" : "queued",
+      };
+    return {
+      render: (width) =>
+        width > 0 ? [truncateToWidth(agentHeader(snapshot, theme), width)] : [],
+      invalidate() {},
+    };
+  };
 
 function snapshotSummary(
   details: unknown,
-  args?: unknown,
+  header: (snapshot: AgentSnapshot) => string,
 ): RenderSummary | undefined {
   const data = record(details);
-  if (typeof data.description !== "string" || typeof data.status !== "string")
+  if (
+    typeof data.description !== "string" ||
+    typeof data.status !== "string" ||
+    typeof data.id !== "string"
+  )
     return;
   const snapshot = data as unknown as AgentSnapshot;
-  const isError =
-    snapshot.status === "error" ||
-    snapshot.status === "disconnected" ||
-    snapshot.sessionState === "disconnected";
   return {
-    title:
-      record(args).description === snapshot.description
-        ? undefined
-        : snapshot.description,
-    status: agentDisplayStatus(snapshot),
+    status: header(snapshot),
     preview:
       typeof snapshot.error === "string"
         ? snapshot.error
         : typeof snapshot.result === "string"
           ? snapshot.result
           : "",
-    isError,
+    isError:
+      snapshot.status === "error" ||
+      snapshot.status === "disconnected" ||
+      snapshot.sessionState === "disconnected",
     truncated: snapshot.truncated,
   };
 }
 
-export const renderSubagentResult = compactResult(snapshotSummary);
-export const renderSubagentNotification = compactMessage(
-  "Subagent",
-  snapshotSummary,
-);
+export const renderSubagentResult: ResultRenderer = (
+  result,
+  options,
+  theme,
+  context,
+) => {
+  const details = record(result.details);
+  if (
+    typeof details.id === "string" &&
+    typeof details.description === "string"
+  ) {
+    const state = record(context.state);
+    if (state.subagentSnapshot !== result.details) {
+      state.subagentSnapshot = result.details;
+      context.state = state;
+      context.invalidate?.();
+    }
+  }
+  return compactResult((data) =>
+    snapshotSummary(data, (snapshot) => agentHeader(snapshot, theme)),
+  )(result, options, theme, context);
+};
+
+export const renderSubagentNotification: ReturnType<typeof compactMessage> = (
+  message,
+  options,
+  theme,
+) =>
+  compactMessage("", (details) =>
+    snapshotSummary(details, (snapshot) => agentHeader(snapshot, theme)),
+  )(message, options, theme);
+
 export const renderSubagentTypesCall = compactCall("Subagent types");
 export const renderSubagentTypesResult = compactResult((details) => {
   const agents = record(details).agents;

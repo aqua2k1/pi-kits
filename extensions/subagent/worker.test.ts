@@ -63,7 +63,7 @@ function harness(connect?: (config: WorkerConfig) => Socket) {
   const ctx = {
     mode: "tui",
     isIdle: () => true,
-    model: { provider: "test", id: "test-model" },
+    model: { provider: "test", id: "test-model", name: "Test Model" },
     modelRegistry: {
       hasConfiguredAuth: () => true,
     },
@@ -151,6 +151,46 @@ function assistant(text: string, stopReason = "stop", errorMessage?: string) {
 function completions(socket: FakeSocket) {
   return socket.frames.filter((frame) => frame.type === "completed");
 }
+
+test("actual model selection is reported while idle and in resumed tasks", () => {
+  const h = harness();
+  const socket = h.start();
+  assert.ok(h.ctx.model);
+  const model = {
+    ...h.ctx.model,
+    provider: "other",
+    id: "actual",
+    name: "Actual Model",
+  };
+  // The event is authoritative even if the supplied context still has the old model.
+  h.emit("model_select", {
+    model,
+    source: "cycle",
+    previousModel: h.ctx.model,
+  });
+  assert.deepEqual(socket.frames.at(-1), {
+    type: "model_select",
+    id: config.id,
+    model: "other/actual",
+    modelName: "Actual Model",
+  });
+  h.ctx.model = model;
+  socket.command({ type: "task", prompt: "work", round: 1 });
+  h.emit("agent_start");
+  h.emit("message_end", { message: assistant("answer") });
+  const stats = socket.frames.filter((frame) => frame.type === "stats").at(-1);
+  assert.equal(stats?.model, "other/actual");
+  assert.equal(stats?.modelName, "Actual Model");
+  h.emit("agent_settled");
+  h.ctx.model = { ...model, id: "next", name: "Next Model" };
+  h.emit("model_select", { model: h.ctx.model, source: "restore" });
+  socket.command({ type: "task", prompt: "resume", round: 2 });
+  const state = socket.frames
+    .filter((frame) => frame.type === "session_state")
+    .at(-1);
+  assert.equal(state?.model, "other/next");
+  assert.equal(state?.modelName, "Next Model");
+});
 
 test("explicit worker marker and validated loopback environment", () => {
   for (const marker of [undefined, "", "0", "true"]) {
@@ -265,8 +305,16 @@ test("resources start only at TUI session_start; ready authenticates", () => {
       id: config.id,
       token: config.token,
       sessionPath: "/sessions/worker.jsonl",
+      model: "test/test-model",
+      modelName: "Test Model",
     },
-    { type: "session_state", id: config.id, state: "idle" },
+    {
+      type: "session_state",
+      id: config.id,
+      state: "idle",
+      model: "test/test-model",
+      modelName: "Test Model",
+    },
   ]);
   h.emit("session_shutdown");
   h.emit("session_shutdown");
@@ -356,6 +404,8 @@ test("native conversations publish interactive/idle without producing task resul
     id: config.id,
     state: "interactive",
     activity: "read",
+    model: "test/test-model",
+    modelName: "Test Model",
   });
   h.emit("tool_execution_end", { toolName: "read" });
   h.emit("message_end", { message: assistant("Manual result") });
@@ -367,6 +417,8 @@ test("native conversations publish interactive/idle without producing task resul
     type: "session_state",
     id: config.id,
     state: "idle",
+    model: "test/test-model",
+    modelName: "Test Model",
   });
   assert.deepEqual(completions(socket), [original]);
   assert.equal(
@@ -446,6 +498,8 @@ test("resumed round events are scoped and stale cancellation cannot interrupt a 
     id: config.id,
     state: "interactive",
     activity: "Thinking…",
+    model: "test/test-model",
+    modelName: "Test Model",
   });
   socket.command({ type: "task", prompt: "old replay", round: 2 });
   socket.command({ type: "task", prompt: "legacy replay" });
@@ -550,6 +604,8 @@ test("worker reports cumulative turn/tool/token stats, excluding cacheRead", () 
     totalTokens: 17,
     contextPercent: 42,
     compactionCount: 1,
+    model: "test/test-model",
+    modelName: "Test Model",
   });
   h.emit("agent_settled");
   socket.command({ type: "task", prompt: "next task" });
@@ -798,6 +854,8 @@ test("real loopback TCP uses JSONL without taking over Pi stdio", async (t) => {
     id: config.id,
     token: config.token,
     sessionPath: "/sessions/worker.jsonl",
+    model: "test/test-model",
+    modelName: "Test Model",
   });
   const delivered = once(h.sent, "message");
   connection.write('{"type":"task","prompt":"TCP task"}\n');

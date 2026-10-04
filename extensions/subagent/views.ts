@@ -20,12 +20,11 @@ import {
 import {
   type AgentSource,
   agentDisplayStatus,
+  agentHeader,
   agentStats,
-  agentTitle,
-  statusIcon,
 } from "./presentation.ts";
 
-export type ViewAction = "open" | "focus" | "close";
+export type ViewAction = "open" | "focus" | "close" | "copy" | "delete";
 export interface ViewChoice {
   agentId: string;
   action: ViewAction;
@@ -102,6 +101,16 @@ export class SubagentViewsPanel {
       this.confirm();
       return;
     }
+    if (data === "y" || data === "d") {
+      const { agent } = this.selected();
+      if (!agent) return;
+      this.finished = true;
+      this.done({
+        agentId: agent.id,
+        action: data === "y" ? "copy" : "delete",
+      });
+      return;
+    }
     if (this.keys.matches(data, "tui.select.up")) this.move(-1);
     else if (this.keys.matches(data, "tui.select.down")) this.move(1);
     else if (this.keys.matches(data, "tui.select.pageUp")) this.move(-5);
@@ -142,11 +151,11 @@ export class SubagentViewsPanel {
     const lines = frame.heading([], 0);
     const { agents, index, agent } = this.selected();
     const description = agent
-      ? agentTitle(agent)
+      ? agentHeader(agent, this.theme)
       : "No subagents in this session";
     const items = agents.map((item) => ({
       value: item.id,
-      label: `${statusIcon(item, this.theme, Date.now())} ${agentTitle(item)} · ${item.id.slice(0, 8)} · ${agentDisplayStatus(item)}`,
+      label: agentHeader(item, this.theme),
     }));
     if (layout.rows < 7) {
       if (agent && layout.rows >= 2)
@@ -208,11 +217,14 @@ export class SubagentViewsPanel {
       lines.push(...rendered);
     }
     lines.push(
-      this.theme.fg("muted", "Click / Enter: open or focus · Esc: close panel"),
+      this.theme.fg(
+        "muted",
+        "Enter: open/focus · y: copy ID · d: delete · Esc: close",
+      ),
     );
     return frame.finish(
       lines,
-      "↑↓ select · Click / Enter open or focus · Esc close panel",
+      "↑↓ select · Enter open/focus · y copy ID · d delete · Esc close",
     );
   }
 }

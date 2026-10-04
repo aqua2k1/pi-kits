@@ -65,6 +65,7 @@ export type WorkerEvent = (
       compactionCount: number;
     }
   | { type: "ready"; id: string; token: string; sessionPath?: string }
+  | { type: "model_select"; id: string }
   | { type: "started"; id: string }
   | {
       type: "activity";
@@ -87,7 +88,7 @@ export type WorkerEvent = (
       truncated?: boolean;
       sessionPath?: string;
     }
-) & { round?: number };
+) & { round?: number; model?: string; modelName?: string };
 
 export interface WorkerConfig {
   host: "127.0.0.1";
@@ -231,6 +232,15 @@ function boundedText(
   return { text: text.slice(0, end), truncated: true };
 }
 
+function modelMetadata(model: ExtensionContext["model"]): {
+  model?: string;
+  modelName?: string;
+} {
+  return model
+    ? { model: `${model.provider}/${model.id}`, modelName: model.name }
+    : {};
+}
+
 function messageText(message: MessageEndEvent["message"]): string {
   if (!("content" in message)) return "";
   if (typeof message.content === "string") return message.content;
@@ -286,6 +296,14 @@ export function registerWorkerBridge(
     if (!connected || !socket || socket.destroyed) return;
     if (round !== undefined && event.type !== "ready") {
       event = { round, ...event };
+    }
+    if (
+      event.type === "ready" ||
+      event.type === "session_state" ||
+      event.type === "stats" ||
+      event.type === "model_select"
+    ) {
+      event = { ...modelMetadata(context?.model), ...event };
     }
     const frame = `${JSON.stringify(event)}\n`;
     if (
@@ -554,6 +572,15 @@ export function registerWorkerBridge(
     });
     connection.on("close", () => {
       if (socket === connection) disconnect();
+    });
+  });
+
+  pi.on("model_select", (event, ctx) => {
+    context = ctx;
+    send({
+      type: "model_select",
+      id: config.id,
+      ...modelMetadata(event.model),
     });
   });
 

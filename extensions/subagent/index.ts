@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import {
+  copyToClipboard,
   defineTool,
   type ExtensionAPI,
   type ExtensionContext,
@@ -92,7 +93,9 @@ export function registerSubagents(
     defineTool({
       name: "subagent",
       label: "Subagent",
-      renderCall: subagentCallRenderer("Subagent"),
+      renderCall: subagentCallRenderer("Subagent", (id) =>
+        manager?.list().find((agent) => agent.id === id),
+      ),
       renderResult: renderSubagentResult,
       description:
         "Run a task in an independent Pi session hosted by Herdr. Background by default. inherit_context clones the parent current branch into an independent child session; false starts fresh. Frontmatter is authoritative. Optionally select a user-defined subagent_type; use list_subagent_types to discover names. Agent configuration takes precedence over call parameters. Workers share the filesystem and are not a sandbox. Use /subagent:views for native terminal control.",
@@ -146,7 +149,9 @@ export function registerSubagents(
     defineTool({
       name: "resume_subagent",
       label: "Resume subagent",
-      renderCall: subagentCallRenderer("Resume subagent"),
+      renderCall: subagentCallRenderer("Resume subagent", (id) =>
+        manager?.list().find((agent) => agent.id === id),
+      ),
       renderResult: renderSubagentResult,
       description:
         "Continue a finished managed task in the same retained Pi process/session/history. Re-enters the shared concurrency queue. Requires idle sessionState; rejects native/user interaction, closed or disconnected workers. Retains original agent instructions and current worker model/thinking/tool settings, including native changes. Background by default, respecting original agent configuration.",
@@ -210,7 +215,9 @@ export function registerSubagents(
     defineTool({
       name: "get_subagent_result",
       label: "Subagent result",
-      renderCall: subagentCallRenderer("Subagent result"),
+      renderCall: subagentCallRenderer("Subagent result", (id) =>
+        manager?.list().find((agent) => agent.id === id),
+      ),
       renderResult: renderSubagentResult,
       description:
         "Read the managed task status/result and live sessionState. wait waits for the managed task, not independent native/user work.",
@@ -230,7 +237,9 @@ export function registerSubagents(
     defineTool({
       name: "steer_subagent",
       label: "Steer subagent",
-      renderCall: subagentCallRenderer("Steer subagent"),
+      renderCall: subagentCallRenderer("Steer subagent", (id) =>
+        manager?.list().find((agent) => agent.id === id),
+      ),
       renderResult: renderSubagentResult,
       description:
         "Send guidance to a running subagent after its current tools.",
@@ -254,7 +263,9 @@ export function registerSubagents(
     defineTool({
       name: "stop_subagent",
       label: "Stop subagent",
-      renderCall: subagentCallRenderer("Stop subagent"),
+      renderCall: subagentCallRenderer("Stop subagent", (id) =>
+        manager?.list().find((agent) => agent.id === id),
+      ),
       renderResult: renderSubagentResult,
       description:
         "Cancel a queued or running managed task without closing its view. Does not cancel independent native/user work.",
@@ -266,7 +277,7 @@ export function registerSubagents(
   );
 
   pi.registerCommand("subagent:views", {
-    description: "View/control a subagent: [id] [open|focus|close]",
+    description: "View/control a subagent: [id] [open|focus|close|copy|delete]",
     async handler(args, ctx) {
       if (ctx.mode !== "tui") {
         ctx.ui.notify("Subagent views require interactive Pi.", "error");
@@ -276,7 +287,9 @@ export function registerSubagents(
         const current = getManager(ctx);
         const tokens = args.trim().split(/\s+/).filter(Boolean);
         if (tokens.length > 2) {
-          throw new Error("Usage: /subagent:views [id] [open|focus|close]");
+          throw new Error(
+            "Usage: /subagent:views [id] [open|focus|close|copy|delete]",
+          );
         }
         let [id, action] = tokens;
         if (id) current.get(id);
@@ -296,11 +309,26 @@ export function registerSubagents(
           action = choice.action;
         }
         if (!id) return;
-        if (action === "close") await current.closeView(id);
+        if (action === "copy") {
+          await copyToClipboard(current.get(id).id);
+          ctx.ui.notify("Copied subagent ID.", "info");
+        } else if (action === "delete") {
+          const agent = current.get(id);
+          if (
+            !(await ctx.ui.confirm(
+              "Delete subagent?",
+              `Delete ${agent.description} (${agent.id})? This closes its terminal and removes the manager record. Session files are retained.`,
+            ))
+          )
+            return;
+          await current.remove(id);
+        } else if (action === "close") await current.closeView(id);
         else if (action === "open" || action === "focus") {
           await current.openView(id);
         } else {
-          throw new Error("View action must be open, focus, or close.");
+          throw new Error(
+            "View action must be open, focus, close, copy, or delete.",
+          );
         }
       } catch (error) {
         ctx.ui.notify(

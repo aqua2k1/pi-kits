@@ -42,6 +42,8 @@ export interface AgentSnapshot {
   sessionActivity?: string;
   subagentType?: string;
   displayName?: string;
+  model?: string;
+  modelName?: string;
   agentSource?: AgentDefinition["source"];
   agentPath?: string;
   result?: string;
@@ -83,6 +85,7 @@ interface AgentRecord {
   rejectReady?: (error: Error) => void;
   cancelTimer?: ReturnType<typeof setTimeout>;
   terminating?: Promise<void>;
+  launch?: Promise<void>;
 }
 
 interface Execution {
@@ -174,6 +177,7 @@ export class SubagentManager {
         status: "queued",
         round: 1,
         inheritedContext: Boolean(options.parentSession),
+        model: options.agent?.model ?? options.model,
         ...(options.agent
           ? {
               subagentType: options.agent.name,
@@ -368,6 +372,44 @@ export class SubagentManager {
     });
   }
 
+  /** Close native resources and forget the agent, never its session files. */
+  async remove(id: string): Promise<void> {
+    const record = this.record(id);
+    // Even a previously stopped startup may still acquire a terminal.
+    const launch = record.launch;
+    record.execution.consumed = true;
+    record.rejectReady?.(new Error("Subagent deleted during startup."));
+    clearTimeout(record.cancelTimer);
+    record.cancelTimer = undefined;
+    const socket = record.socket;
+    record.socket = undefined;
+    socket?.destroy();
+    record.snapshot.sessionState = "closed";
+    // Drop stale queue references even if this round was already stopped.
+    for (let index = this.queue.length - 1; index >= 0; index -= 1) {
+      if (this.queue[index]?.record === record) this.queue.splice(index, 1);
+    }
+    if (record.snapshot.status === "queued") {
+      this.finish(record, "stopped");
+    } else if (!record.execution.finished) {
+      record.snapshot.status = "stopping";
+      this.changed();
+    }
+    await launch?.catch(() => undefined);
+    await this.viewOperation(async () => {
+      if (record.view) {
+        await this.adapter.close_view(record.view);
+        this.forgetView(record);
+      }
+      if (!(await this.destroyTerminal(record))) {
+        throw new Error(`Could not delete subagent ${id}; retry deletion.`);
+      }
+      this.finish(record, "stopped");
+      this.records.delete(id);
+      this.changed();
+    });
+  }
+
   private forgetView(record: AgentRecord): void {
     if (record.view) this.views.delete(record.view.id);
     record.view = undefined;
@@ -457,8 +499,12 @@ export class SubagentManager {
       const launch = execution.reused
         ? this.startResumed(record, execution)
         : this.start(record);
+      record.launch = launch;
       this.launches.add(launch);
-      void launch.finally(() => this.launches.delete(launch));
+      void launch.finally(() => {
+        this.launches.delete(launch);
+        if (record.launch === launch) record.launch = undefined;
+      });
     }
   }
 
@@ -698,6 +744,7 @@ export class SubagentManager {
             record = candidate;
             record.socket = socket;
             record.snapshot.sessionState = "idle";
+            updateModelMetadata(record.snapshot, event);
             socket.setTimeout(0);
             if (typeof event.sessionPath === "string") {
               record.snapshot.sessionPath = event.sessionPath;
@@ -760,6 +807,11 @@ export class SubagentManager {
   private event(record: AgentRecord, event: Record<string, unknown>): void {
     if (event.round !== undefined && event.round !== record.execution.round)
       return;
+    if (event.type === "model_select") {
+      updateModelMetadata(record.snapshot, event);
+      this.changed();
+      return;
+    }
     if (event.type === "session_state") {
       if (
         typeof event.state !== "string" ||
@@ -768,6 +820,7 @@ export class SubagentManager {
         throw new Error("Invalid worker session state");
       }
       if (record.snapshot.sessionState === "closed") return;
+      updateModelMetadata(record.snapshot, event);
       record.snapshot.sessionState = event.state;
       if (
         event.state === "running" &&
@@ -791,6 +844,7 @@ export class SubagentManager {
       return;
     if (event.type === "started") record.execution.accepted = true;
     if (event.type === "stats") {
+      updateModelMetadata(record.snapshot, event);
       for (const key of [
         "turnCount",
         "toolUses",
@@ -896,6 +950,28 @@ export class SubagentManager {
     } catch {
       // A parent notification failure cannot invalidate a completed task.
     }
+  }
+}
+
+/** Ignore malformed optional metadata without replacing the last known model. */
+function updateModelMetadata(
+  snapshot: AgentSnapshot,
+  event: Record<string, unknown>,
+): void {
+  const validText = (value: unknown): value is string =>
+    typeof value === "string" &&
+    value.trim().length > 0 &&
+    value.length <= 4096 &&
+    !/[\p{Cc}\p{Zl}\p{Zp}]/u.test(value);
+  if (validText(event.model)) {
+    if (event.model !== snapshot.model) snapshot.modelName = undefined;
+    snapshot.model = event.model;
+  }
+  if (
+    validText(event.modelName) &&
+    (event.model === undefined || validText(event.model))
+  ) {
+    snapshot.modelName = event.modelName;
   }
 }
 

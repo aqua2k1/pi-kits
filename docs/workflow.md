@@ -234,12 +234,20 @@ opens the shared lower-half docked panel with a single live agent list, without
 tabs or a second action menu. Passing only an ID preselects that agent.
 Clicking an agent or pressing Enter immediately opens its view, or focuses the
 existing view. Up/Down and the mouse wheel select; Esc closes only the panel.
+Press `y` to copy the selected agent's full ID, or `d` to delete it after
+confirmation. These actions close the panel; deletion closes the native terminal
+and removes the manager record but retains session files. Explicit `copy` and
+`delete` command actions are also supported.
 Queued agents without a terminal cannot open a view yet. Use the explicit
 `close` command above to detach a view without stopping its worker.
-All subagent tools and `subagent-notification` completion messages use the same
-shared renderer as other extensions: a compact title, status, and one-line
-result/error preview. IDs, paths, timestamps, counters, and full prompts/results appear only
-when expanded with Ctrl+O. Rendering does not change tool data or JSON/print output.
+Subagent views, tool cards, and `subagent-notification` completion messages share
+the header: status icon, agent name, current model name, task description,
+eight-character ID, and status. Agent names fall back from `display_name` to the
+type name, then `Subagent`; unavailable models appear as `—`. Workers report
+actual model IDs/names, including native model changes. Tool results add a
+one-line result/error preview. Full IDs, paths, timestamps, counters, and full
+prompts/results appear when expanded with Ctrl+O. Rendering does not change tool
+data or JSON/print output.
 
 Views are native control attachments, not read-only viewers.
 
@@ -365,7 +373,7 @@ Supported YAML frontmatter fields use the reference extension's snake_case names
 | Field | Behavior when omitted |
 | --- | --- |
 | `description` | Filename; shown in the type catalogue. |
-| `display_name` | Type name; shown beside the task in widgets/views. |
+| `display_name` | Type name; shown beside the task in widgets, views, and tool cards. |
 | `model` | Call parameter, then parent model. |
 | `thinking` | Call parameter, then parent thinking level. |
 | `tools` | Native Pi defaults; CSV or YAML array, `none`/empty disables all tools. Built-in and whitelisted extension tool names are accepted. |
