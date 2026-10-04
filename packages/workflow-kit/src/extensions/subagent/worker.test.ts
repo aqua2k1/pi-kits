@@ -311,7 +311,7 @@ test("busy task/followUp and steer delivery, with only settled completion", () =
   );
 });
 
-test("structured agent instructions replace/append system prompts and persist in native views", () => {
+test("agent MD is always the system prompt and persists in native views", () => {
   const h = harness();
   const socket = h.start();
   const before = () => h.emit("before_agent_start", { systemPrompt: "base" });
@@ -320,7 +320,6 @@ test("structured agent instructions replace/append system prompts and persist in
     prompt: "work",
     instructions: {
       systemPrompt: "Custom instructions",
-      promptMode: "replace",
     },
   });
   assert.deepEqual(before(), { systemPrompt: "Custom instructions" });
@@ -331,11 +330,10 @@ test("structured agent instructions replace/append system prompts and persist in
     type: "task",
     prompt: "work",
     instructions: {
-      systemPrompt: "Extra instructions",
-      promptMode: "append",
+      systemPrompt: "New role",
     },
   });
-  assert.deepEqual(before(), { systemPrompt: "base\n\nExtra instructions" });
+  assert.deepEqual(before(), { systemPrompt: "New role" });
   h.emit("agent_settled");
   socket.command({ type: "task", prompt: "ordinary task" });
   assert.equal(before(), undefined);
@@ -493,7 +491,6 @@ test("missing requested tools fail before a model turn instead of being ignored"
     prompt: "work",
     instructions: {
       systemPrompt: "test",
-      promptMode: "replace",
       tools: ["web_search"],
     },
   });
@@ -507,7 +504,6 @@ test("missing requested tools fail before a model turn instead of being ignored"
     prompt: "work",
     instructions: {
       systemPrompt: "test",
-      promptMode: "replace",
       tools: ["read", "codemode"],
     },
   });
@@ -520,10 +516,9 @@ test("worker rejects malformed prompt instructions rather than ignoring restrict
     false,
     [],
     {},
-    { systemPrompt: 42, promptMode: "replace" },
-    { systemPrompt: "x", promptMode: "typo" },
-    { systemPrompt: "x", promptMode: "replace", tools: "codemode" },
-    { systemPrompt: "x", promptMode: "replace", tools: [false] },
+    { systemPrompt: 42 },
+    { systemPrompt: "x", tools: "codemode" },
+    { systemPrompt: "x", tools: [false] },
   ]) {
     assert.throws(
       () => parseWorkerCommand({ type: "task", prompt: "work", instructions }),

@@ -68,7 +68,7 @@ test("project agents replace same-name global files as a whole, case-insensitive
 
 test("project replacements skip invalid or oversized global contents", (t) => {
   const f = fixture(t);
-  f.file("global", "review.md", "---\nextensions: true\n---\nGlobal prompt");
+  f.file("global", "review.md", "---\ntools: 123\n---\nGlobal prompt");
   f.file("global", "large.md", "x".repeat(64 * 1024 + 1));
   f.file("project", "review.md", "---\ntools: none\n---\nProject prompt");
   f.file("project", "large.md", "Project prompt");
@@ -76,7 +76,7 @@ test("project replacements skip invalid or oversized global contents", (t) => {
   assert.equal(agents.get("review")?.source, "project");
   assert.deepEqual(agents.get("review")?.tools, []);
   assert.equal(agents.get("large")?.systemPrompt, "Project prompt");
-  f.file("project", "review.md", "---\nextensions: true\n---\nInvalid project");
+  f.file("project", "review.md", "---\ntools: 123\n---\nInvalid project");
   assert.throws(() => loadAgentDefinitions(f.cwd, f.agentDir), /Invalid agent/);
 });
 
@@ -94,7 +94,7 @@ test("disabled project configuration shadows an enabled global type", (t) => {
   );
 });
 
-test("Markdown frontmatter supports model, thinking, tool lists, prompt mode and UI names", () => {
+test("Markdown frontmatter supports model, thinking, tool lists, context inheritance and UI names", () => {
   const agent = parseAgentDefinition(
     `---
 description: Security reviewer
@@ -103,7 +103,7 @@ model: provider/model
 thinking: max
 tools: [read, bash, read]
 disallowed_tools: edit, write
-prompt_mode: append
+inherit_context: true
 run_in_background: false
 ---
 \nReview carefully.\n`,
@@ -116,9 +116,59 @@ run_in_background: false
   assert.equal(agent.thinking, "max");
   assert.deepEqual(agent.tools, ["read", "bash"]);
   assert.deepEqual(agent.disallowedTools, ["edit", "write"]);
-  assert.equal(agent.promptMode, "append");
+  assert.equal(agent.inheritContext, true);
   assert.equal(agent.systemPrompt, "Review carefully.");
   assert.equal(agent.runInBackground, false);
+});
+
+test("inherit_context is optional, strictly boolean and independent of the fixed MD system prompt", () => {
+  assert.equal(
+    parseAgentDefinition("Role", "/agents/plain.md", "global").inheritContext,
+    undefined,
+  );
+  for (const value of [true, false]) {
+    const agent = parseAgentDefinition(
+      `---\ninherit_context: ${value}\n---\nRole`,
+      "/agents/test.md",
+      "project",
+    );
+    assert.equal(agent.inheritContext, value);
+  }
+  for (const value of ["null", "yes", "1", "inherit"]) {
+    assert.throws(
+      () =>
+        parseAgentDefinition(
+          `---\ninherit_context: ${value}\n---\nRole`,
+          "/agents/test.md",
+          "project",
+        ),
+      /boolean/,
+    );
+  }
+});
+
+test("unknown and removed fields are ignored without activating unsupported capabilities", () => {
+  const baseline = parseAgentDefinition("Role", "/agents/test.md", "project");
+  for (const fields of [
+    "prompt_mode: replace",
+    "prompt_mode: append",
+    "prompt_mode: typo",
+    "extensions: [untrusted.ts]",
+    "skills: true",
+    "max_turns: 30",
+    "memory: project",
+    "isolation: worktree",
+    "future_field: { nested: [1, 2] }",
+  ]) {
+    assert.deepEqual(
+      parseAgentDefinition(
+        `---\n${fields}\n---\nRole`,
+        "/agents/test.md",
+        "project",
+      ),
+      baseline,
+    );
+  }
 });
 
 test("tool names can select native CLI and whitelisted extension tools", () => {
@@ -150,7 +200,7 @@ test("explicit empty/none tools never fall back to unrestricted tools", () => {
   );
 });
 
-test("invalid and unsupported settings fail closed, never silently widen permissions", () => {
+test("invalid values for supported fields and malformed YAML still fail closed", () => {
   for (const fields of [
     "tools: invalid tool",
     "tools: null",
@@ -160,11 +210,6 @@ test("invalid and unsupported settings fail closed, never silently widen permiss
     "model: false",
     "enabled: yes",
     "run_in_background: nope",
-    "prompt_mode: typo",
-    "max_turns: 30",
-    "extensions: true",
-    "memory: project",
-    "isolation: worktree",
   ]) {
     assert.throws(
       () =>

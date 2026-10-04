@@ -4,8 +4,10 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { setTimeout as delay } from "node:timers/promises";
+import { SessionManager } from "@earendil-works/pi-coding-agent";
 import { useAgentDir } from "../../test-utils/agent-dir.ts";
 import { parseAgentDefinition } from "./agents.ts";
+import { captureParentSession } from "./clone.ts";
 import { SubagentManager } from "./manager.ts";
 import type {
   MuxAdapter,
@@ -117,6 +119,48 @@ const task = {
   description: "Inspect auth",
   cwd: "/tmp/project",
 };
+
+test("inheritance opens one native cloned session, keeps IPC small and never reclones on resume", async (t) => {
+  useAgentDir(t);
+  const parent = SessionManager.inMemory(task.cwd);
+  parent.appendMessage({
+    role: "user",
+    content: "secret".repeat(20000),
+    timestamp: 1,
+  });
+  const mux = new FakeMux();
+  const manager = new SubagentManager(mux);
+  t.after(() => manager.close());
+  const agent = manager.spawn({
+    ...task,
+    parentSession: captureParentSession(parent),
+  });
+  await until(() => mux.commands.get(agent.id)?.length === 1);
+  const argv = mux.started[0].argv;
+  assert.ok(argv.includes("--session"));
+  assert.ok(!argv.includes("--session-id"));
+  const file = argv[argv.indexOf("--session") + 1];
+  const cloned = SessionManager.open(file);
+  assert.equal(cloned.getSessionId(), `subagent-${agent.id}`);
+  assert.deepEqual(
+    cloned.buildSessionProjection().messages,
+    parent.buildSessionProjection().messages,
+  );
+  assert.equal(manager.get(agent.id).inheritedContext, true);
+  assert.deepEqual(mux.commands.get(agent.id), [
+    { type: "task", prompt: task.prompt },
+  ]);
+  mux.emit(agent.id, { type: "completed", result: "Done" });
+  await until(() => manager.get(agent.id).status === "completed");
+  manager.resume(agent.id, { prompt: "Continue" });
+  await until(() => mux.commands.get(agent.id)?.length === 2);
+  assert.equal(mux.started.length, 1);
+  assert.deepEqual(mux.commands.get(agent.id)?.[1], {
+    type: "task",
+    prompt: "Continue",
+    round: 2,
+  });
+});
 
 test("manager is lazy, starts an authenticated worker and returns structured results", async (t) => {
   const mux = new FakeMux();
@@ -276,7 +320,6 @@ test("named agent configuration controls worker argv and structured system instr
       prompt: task.prompt,
       instructions: {
         systemPrompt: "System instructions",
-        promptMode: "replace",
         tools: ["read", "grep"],
       },
     },
@@ -286,21 +329,21 @@ test("named agent configuration controls worker argv and structured system instr
   assert.equal(agent.agentSource, "project");
 });
 
-test("empty agent tools disable all tools and append mode retains normal context selection", async (t) => {
+test("empty agent tools disable all tools and named agents always disable context file discovery", async (t) => {
   const mux = new FakeMux();
   const manager = new SubagentManager(mux);
   t.after(() => manager.close());
   const agent = manager.spawn({
     ...task,
     agent: parseAgentDefinition(
-      "---\ntools: none\nprompt_mode: append\n---\nInstructions",
+      "---\ntools: none\n---\nInstructions",
       "/agents/empty.md",
       "global",
     ),
   });
   await until(() => mux.commands.get(agent.id)?.length === 1);
   assert.ok(mux.started[0].argv.includes("--no-tools"));
-  assert.ok(!mux.started[0].argv.includes("--no-context-files"));
+  assert.ok(mux.started[0].argv.includes("--no-context-files"));
 });
 
 test("explicit extension allowlists replace defaults, including an empty list", async (t) => {

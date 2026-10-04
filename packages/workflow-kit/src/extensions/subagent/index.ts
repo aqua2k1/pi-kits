@@ -11,6 +11,7 @@ import {
   DOCKED_PANEL_OPENED,
 } from "../../lib/ui/docked-panel/index.ts";
 import { loadAgentDefinitions, resolveAgentDefinition } from "./agents.ts";
+import { captureParentSession } from "./clone.ts";
 import { HerdrAdapter } from "./herdr.ts";
 import { type AgentSnapshot, SubagentManager } from "./manager.ts";
 import type { MuxAdapter } from "./mux.ts";
@@ -89,9 +90,10 @@ export function registerSubagents(
       renderCall: subagentCallRenderer("Subagent"),
       renderResult: renderSubagentResult,
       description:
-        "Run a task in an independent Pi session hosted by Herdr. Background by default. Optionally select a user-defined subagent_type; use list_subagent_types to discover names. Agent configuration takes precedence over call parameters. Workers share the filesystem and are not a sandbox. Use /subagent:views for native terminal control.",
+        "Run a task in an independent Pi session hosted by Herdr. Background by default. inherit_context clones the parent current branch into an independent child session; false starts fresh. Frontmatter is authoritative. Optionally select a user-defined subagent_type; use list_subagent_types to discover names. Agent configuration takes precedence over call parameters. Workers share the filesystem and are not a sandbox. Use /subagent:views for native terminal control.",
       parameters: Type.Object({
         subagent_type: Type.Optional(Type.String({ minLength: 1 })),
+        inherit_context: Type.Optional(Type.Boolean({ default: false })),
         prompt: Type.String({
           minLength: 1,
           maxLength: 100_000,
@@ -109,6 +111,10 @@ export function registerSubagents(
           : undefined;
         const current = getManager(ctx);
         const snapshot = current.spawn({
+          parentSession:
+            (agent?.inheritContext ?? params.inherit_context ?? false)
+              ? captureParentSession(ctx.sessionManager)
+              : undefined,
           agent,
           prompt: params.prompt,
           description: params.description,

@@ -2,14 +2,19 @@ import assert from "node:assert/strict";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { type TestContext, test } from "node:test";
-import type {
-  ExtensionAPI,
-  ExtensionToolContext,
-  ToolDefinition,
+import {
+  type ExtensionAPI,
+  type ExtensionToolContext,
+  SessionManager,
+  type ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
 import { useAgentDir } from "../../test-utils/agent-dir.ts";
 import subagentExtension, { registerSubagents } from "./index.ts";
-import { type ResumeOptions, SubagentManager } from "./manager.ts";
+import {
+  type ResumeOptions,
+  type SpawnOptions,
+  SubagentManager,
+} from "./manager.ts";
 import type { MuxAdapter } from "./mux.ts";
 
 function environment(t: TestContext, env: Record<string, string | undefined>) {
@@ -157,6 +162,67 @@ test("agent catalogue uses project overrides and unknown/disabled names never la
       ),
       /disabled|Unknown subagent type/,
     );
+  }
+});
+
+test("inherit_context frontmatter is authoritative and false never reads parent history", async (t) => {
+  const agentDir = useAgentDir(t);
+  const cwd = join(agentDir, "project");
+  const agents = join(cwd, ".pi", "agents");
+  mkdirSync(agents, { recursive: true });
+  writeFileSync(
+    join(agents, "inherit.md"),
+    "---\ninherit_context: true\n---\nRole",
+  );
+  writeFileSync(
+    join(agents, "fresh.md"),
+    "---\ninherit_context: false\n---\nRole",
+  );
+  writeFileSync(join(agents, "default.md"), "Role");
+  const session = SessionManager.inMemory(cwd);
+  session.appendMessage({
+    role: "user",
+    content: "Parent secret",
+    timestamp: 1,
+  });
+  const branch = session.getBranch();
+  let reads = 0;
+  t.mock.method(session, "getBranch", () => {
+    reads += 1;
+    return branch;
+  });
+  let latest: SpawnOptions | undefined;
+  t.mock.method(SubagentManager.prototype, "spawn", (options: SpawnOptions) => {
+    latest = options;
+    return { id: "child", description: options.description, status: "queued" };
+  });
+  const capture = registrations();
+  capture.pi.getThinkingLevel = () => "low";
+  registerSubagents(capture.pi, {} as MuxAdapter);
+  const spawn = capture.definitions.get("subagent");
+  assert.ok(spawn);
+  const ctx = {
+    mode: "print",
+    cwd,
+    sessionManager: session,
+  } as unknown as ExtensionToolContext;
+  for (const [subagent_type, inherit_context, expected] of [
+    ["inherit", false, true],
+    ["fresh", true, false],
+    ["default", true, true],
+    [undefined, true, true],
+    [undefined, undefined, false],
+  ] as const) {
+    const before = reads;
+    await spawn.execute(
+      "call",
+      { subagent_type, inherit_context, prompt: "Task", description: "Test" },
+      undefined,
+      undefined,
+      ctx,
+    );
+    assert.equal(Boolean(latest?.parentSession), expected);
+    assert.equal(reads - before, expected ? 1 : 0);
   }
 });
 

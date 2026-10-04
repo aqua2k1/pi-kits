@@ -14,17 +14,6 @@ export const THINKING_LEVELS = [
 ] as const;
 export type ThinkingLevel = (typeof THINKING_LEVELS)[number];
 const TOOL_NAME = /^[a-zA-Z_][a-zA-Z0-9_.:-]*$/;
-const FIELDS = new Set([
-  "description",
-  "display_name",
-  "model",
-  "thinking",
-  "tools",
-  "disallowed_tools",
-  "prompt_mode",
-  "enabled",
-  "run_in_background",
-]);
 const MAX_FILE_BYTES = 64 * 1024;
 
 export interface AgentDefinition {
@@ -36,7 +25,7 @@ export interface AgentDefinition {
   tools?: string[];
   disallowedTools?: string[];
   systemPrompt: string;
-  promptMode: "replace" | "append";
+  inheritContext?: boolean;
   enabled: boolean;
   runInBackground?: boolean;
   source: "global" | "project";
@@ -71,9 +60,6 @@ export function parseAgentDefinition(
   const { frontmatter: fields, body } = parsed;
   if (!fields || typeof fields !== "object" || Array.isArray(fields)) {
     fail("YAML frontmatter must be an object");
-  }
-  for (const field of Object.keys(fields)) {
-    if (!FIELDS.has(field)) fail(`unsupported field ${field}`);
   }
   const string = (field: string): string | undefined => {
     const value = fields[field];
@@ -116,10 +102,6 @@ export function parseAgentDefinition(
   if (thinking && !THINKING_LEVELS.includes(thinking as ThinkingLevel)) {
     fail("invalid thinking level");
   }
-  const promptMode = string("prompt_mode") ?? "replace";
-  if (promptMode !== "replace" && promptMode !== "append") {
-    fail("prompt_mode must be replace or append");
-  }
   return {
     name,
     description: string("description") ?? name,
@@ -129,7 +111,7 @@ export function parseAgentDefinition(
     tools: tools("tools"),
     disallowedTools: tools("disallowed_tools"),
     systemPrompt: body.trim(),
-    promptMode,
+    inheritContext: boolean("inherit_context"),
     enabled: boolean("enabled") ?? true,
     runInBackground: boolean("run_in_background"),
     source,

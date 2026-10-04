@@ -64,6 +64,9 @@ entry. The first version supports general tasks with `model` and `thinking`
 parameters, not scheduled tasks or worktree management. Named agents are entirely
 user-defined Markdown in `~/.pi/agent/agents/` and `<cwd>/.pi/agents/`; project
 same-name definitions replace global ones. Use `list_subagent_types` to discover
-names and `subagent` with `subagent_type` to select one. No agent profiles or
+names and `subagent` with `subagent_type` to select one. Agent MD bodies are fixed
+system prompts. `inherit_context: true` clones the parent current branch into a
+separate child session; default false starts fresh. Resume keeps the child history.
+Parent extensions are never implicitly loaded by cloning. No agent profiles or
 templates are embedded.
 See [workflow-kit](packages/workflow-kit/README.md#herdr-subagents-mvp) for details.

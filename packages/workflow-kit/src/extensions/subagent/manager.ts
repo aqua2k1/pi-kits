@@ -5,6 +5,7 @@ import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { getAgentDir, SUBAGENT_DEFAULT_EXTENSIONS } from "@pi-kits/config";
 import type { AgentDefinition } from "./agents.ts";
+import { createClonedSession, type ParentSessionSnapshot } from "./clone.ts";
 import {
   type MuxAdapter,
   type TerminalHandle,
@@ -30,6 +31,7 @@ export interface AgentSnapshot {
   description: string;
   status: AgentStatus;
   round?: number;
+  inheritedContext?: boolean;
   sessionState?: SessionState;
   sessionActivity?: string;
   subagentType?: string;
@@ -60,6 +62,7 @@ export interface SpawnOptions {
   model?: string;
   thinking?: string;
   agent?: AgentDefinition;
+  parentSession?: ParentSessionSnapshot;
 }
 
 interface AgentRecord {
@@ -164,6 +167,7 @@ export class SubagentManager {
         description: options.description,
         status: "queued",
         round: 1,
+        inheritedContext: Boolean(options.parentSession),
         ...(options.agent
           ? {
               subagentType: options.agent.name,
@@ -511,8 +515,6 @@ export class SubagentManager {
         this.options.executable ?? "pi",
         "--no-extensions",
         "--no-approve",
-        "--session-id",
-        `subagent-${record.snapshot.id}`,
         "-e",
         this.options.workerPath ??
           fileURLToPath(new URL("./worker.ts", import.meta.url)),
@@ -531,6 +533,19 @@ export class SubagentManager {
           path.startsWith("builtin:") ? path : resolve(getAgentDir(), expanded),
         );
       }
+      if (record.options.parentSession) {
+        const sessionPath = createClonedSession(
+          record.options.parentSession,
+          record.options.cwd,
+          `subagent-${record.snapshot.id}`,
+        );
+        record.snapshot.sessionPath = sessionPath;
+        // Clone only once. Resume opens no new process and keeps child history.
+        record.options.parentSession = undefined;
+        argv.push("--session", sessionPath);
+      } else {
+        argv.push("--session-id", `subagent-${record.snapshot.id}`);
+      }
       const agent = record.options.agent;
       const model = agent?.model ?? record.options.model;
       const thinking = agent?.thinking ?? record.options.thinking;
@@ -543,7 +558,7 @@ export class SubagentManager {
       if (agent?.disallowedTools?.length) {
         argv.push("--exclude-tools", agent.disallowedTools.join(","));
       }
-      if (agent?.promptMode === "replace") argv.push("--no-context-files");
+      if (agent) argv.push("--no-context-files");
       record.terminal = await this.adapter.start({
         agentId: record.snapshot.id,
         cwd: record.options.cwd,
@@ -914,7 +929,6 @@ function taskCommand(options: SpawnOptions) {
       ? {
           instructions: {
             systemPrompt: options.agent.systemPrompt,
-            promptMode: options.agent.promptMode,
             ...(options.agent.tools !== undefined
               ? {
                   tools: options.agent.tools.filter(

@@ -20,7 +20,6 @@ const MAX_ACTIVITY_BYTES = 4096;
  */
 export interface WorkerInstructions {
   systemPrompt: string;
-  promptMode: "replace" | "append";
   tools?: string[];
 }
 
@@ -152,7 +151,6 @@ export function parseWorkerCommand(value: unknown): WorkerCommand {
       !instructions ||
       typeof instructions !== "object" ||
       typeof instructions.systemPrompt !== "string" ||
-      !["replace", "append"].includes(instructions.promptMode ?? "") ||
       (instructions.tools !== undefined &&
         (!Array.isArray(instructions.tools) ||
           instructions.tools.some((name) => typeof name !== "string" || !name)))
@@ -165,7 +163,6 @@ export function parseWorkerCommand(value: unknown): WorkerCommand {
       ...round,
       instructions: {
         systemPrompt: instructions.systemPrompt,
-        promptMode: instructions.promptMode as WorkerInstructions["promptMode"],
         ...(instructions.tools !== undefined
           ? { tools: instructions.tools }
           : {}),
@@ -559,16 +556,13 @@ export function registerWorkerBridge(
       return { action: "handled" };
     }
   });
-  pi.on("before_agent_start", (event, ctx) => {
+  pi.on("before_agent_start", (_event, ctx) => {
     context = ctx;
     if (!active) reportSession("interactive", "Thinking…");
     if (active && canceling) ctx.abort();
     if (instructions) {
       return {
-        systemPrompt:
-          instructions.promptMode === "replace"
-            ? instructions.systemPrompt
-            : `${event.systemPrompt}\n\n${instructions.systemPrompt}`,
+        systemPrompt: instructions.systemPrompt,
       };
     }
   });

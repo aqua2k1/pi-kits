@@ -340,7 +340,7 @@ model: anthropic/claude-sonnet-4-6
 thinking: high
 tools: read, grep, find, bash
 disallowed_tools: edit, write
-prompt_mode: replace
+inherit_context: false
 ---
 You are a security reviewer. Report issues with file paths and evidence.
 Do not modify files.
@@ -370,12 +370,12 @@ Supported YAML frontmatter fields use the reference extension's snake_case names
 | `thinking` | Call parameter, then parent thinking level. |
 | `tools` | Native Pi defaults; CSV or YAML array, `none`/empty disables all tools. Built-in and whitelisted extension tool names are accepted. |
 | `disallowed_tools` | No additional denylist; CSV or YAML array of built-in tools. |
-| `prompt_mode` | `replace`: body replaces the worker system prompt and context-file discovery is disabled. `append` appends to the worker's normal Pi prompt. |
+| `inherit_context` | Call parameter, then `false`; `true` clones the parent current branch into an independent Pi session. |
 | `enabled` | `true`; `false` disables selection. |
 | `run_in_background` | Call parameter, then `true`. |
 
-Configured model, thinking, and background mode take precedence over call
-parameters. Thinking supports `off`, `minimal`, `low`, `medium`, `high`, `xhigh`,
+Configured model, thinking, background mode, and `inherit_context` take
+precedence over call parameters, including explicit `false`. Thinking supports `off`, `minimal`, `low`, `medium`, `high`, `xhigh`,
 and `max`. Tool names include Pi built-ins (`read`, `bash`, `edit`, `write`,
 `grep`, `find`, `ls`, `powershell`), `codemode`, `tool_search`, and tools registered
 by explicitly whitelisted extensions. A denylist is applied after the allowlist;
@@ -383,13 +383,47 @@ missing requested tools fail before a model turn instead of being silently
 ignored. Codemode cannot use tools outside the CLI allowlist/denylist. Tool
 selection is not a sandbox: `bash` can still change files.
 
-The Markdown body is sent as bounded structured IPC, not substituted into shell
-commands or interpreted as a filename. Its prompt remains active after completion
-for native terminal interaction. Workers load the bridge and the shared extension
-allowlist; `append` does not fork the parent conversation or inherit its extensions. Other
-reference fields (`extensions`, `skills`, `max_turns`, `memory`, `isolation`,
-`inherit_context`, etc.) are not implemented and are rejected, not silently
-ignored. Agent files and complete task IPC frames each have a 64 KiB limit.
+The Markdown body is always the named agent's full system prompt, and context-file
+discovery is disabled for named workers. It is sent as bounded structured IPC,
+not substituted into shell commands or interpreted as a filename. The role
+remains active after completion for native terminal interaction and resume.
+
+`prompt_mode` is no longer read. Like all unknown frontmatter fields, it is
+ignored regardless of value. The MD body is always the full agent system prompt;
+if an old configuration relied on append behavior, put the required instructions
+into the body explicitly.
+
+### Parent context cloning
+
+Set `inherit_context: true` in frontmatter or pass `inherit_context: true` to
+`subagent`. Frontmatter takes precedence; `false` starts a fresh child session.
+The parent current branch is frozen at invocation, before queueing. An independent
+SessionManager uses Pi's native branch-cloning logic, then the child CLI opens
+the private cloned JSONL with `--session`. The parent session, branch and file
+are never switched or modified. No SDK AgentSession or text transcript injection
+is used. Empty parent history falls back to a fresh session.
+
+Clones retain native messages, images, completed tool calls/results, compaction
+checkpoints, branch labels, and context edits. Unresolved calls (including the
+currently executing spawn call) are omitted from the clone's model context via
+context edits; raw cloned history is preserved, without inventing tool results.
+Cloning uses the current branch, not the last leaf in a moving source file.
+Resume continues the child history and never clones the parent again.
+
+History cloning does not register parent extensions or grant their tools.
+Workers still load only the bridge plus the shared explicit extension allowlist;
+named MD instructions remain authoritative for the next model request. Clones
+are independent, mode-0600 Pi session files in the session directory and remain
+as normal history after completion/shutdown, including failed startup attempts.
+They may contain sensitive parent conversation data and add model context cost;
+enable inheritance only when needed. History is local-file data, not task IPC,
+so it is not subject to the 64 KiB command limit.
+
+Only supported frontmatter fields are read. Unknown fields, including reference
+fields such as `extensions`, `skills`, `max_turns`, `memory`, and `isolation`, are
+ignored and cannot activate those capabilities. Values of supported fields and
+YAML syntax are still validated. Agent files and complete task IPC frames each
+have a 64 KiB limit.
 
 ### Worker extension allowlist
 
