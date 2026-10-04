@@ -1,191 +1,26 @@
-# Workflow extensions
+# Subagent usage
 
-Four independent extensions with explicit individual and root Pi manifests:
+See the [package overview](../README.md) for architecture and minimal configuration.
 
-- `extensions/commit/index.ts`: `/commit` and `--commit`.
-- `extensions/notify/index.ts`: idle TUI completion notifications.
-- `extensions/ask-user-question/index.ts`: `ask_user_question` tabbed terminal
-  questionnaire and native RPC dialogs.
-- `extensions/subagent/index.ts`: opt-in Herdr background tasks and terminal
-  views. `extensions/subagent/worker.ts` is a worker bridge loaded only via
-  explicit `-e`, not a manifest entry.
+- [Herdr subagents (MVP)](#herdr-subagents-mvp)
+- [User-defined agent types](#user-defined-agent-types)
+- [Parent context cloning](#parent-context-cloning)
+- [Worker extension allowlist](#worker-extension-allowlist)
 
 ## Load
 
+From the repository root, load the independent entry in Pi:
+
 ```sh
-pi -e ./extensions/commit -e ./extensions/notify
+pi -e ./extensions/subagent
 # Or persist a local extension installation:
-pi install ./extensions/commit
+pi install ./extensions/subagent
 ```
 
-Disable duplicate installations of these extensions before loading them together,
-to avoid duplicate command/flag registrations and completion notifications.
-
-## User questions (MVP)
-
-`ask_user_question` asks single-choice or multi-select questions in a fixed lower-half terminal
-panel. Editor-style rules use Pi's active theme; the upper half stays visible.
-The non-overlay panel temporarily replaces Pi's editor. Pi lays out the transcript
-above the dock and keeps ownership of the surrounding footer, notifications and
-widgets; small terminals may shrink or clip these regions. Closing restores the
-editor, its draft, and focus.
-Every row is filled to the panel width so underlying content cannot show through.
-Short questionnaires leave blank space; input and footer stay at the bottom.
-Long option lists scroll.
-Use Left/Right or Tab/Shift+Tab to switch questions and revisit answers. Each
-question keeps its selected option and custom-answer draft. Confirm answers with
-Enter, then review from the Submit tab. It has separate Submit and Cancel
-buttons: Up/Down chooses a button, Enter activates it, and fullscreen mouse clicks
-activate buttons directly. PgUp/PgDn browses the reviewed answers independently
-of button focus. All questions must be answered before Submit succeeds; Cancel
-is always available. Esc cancels; earlier answers remain in `details` but are not a
-completed submission. Cancellation returns only `User cancelled` in the tool text;
-the structured `details` still carries `cancelled: true` and any earlier answers.
-
-In Pi's fullscreen terminal mode, tabs can also be clicked with the mouse. Regular
-terminal mode leaves mouse input to the terminal, so use keyboard navigation there.
-Enable fullscreen using Pi's `tuiMode: "fullscreen"` setting if needed; this is a Pi
-setting, not a `pi-kits.json` option. RPC uses native select/input dialogs sequentially
-and does not support tabs or review. Shift+Up/Down scroll long question details;
-The panel owns keyboard input while open. While typing a
-custom answer, use Ctrl+B/F or Home/End to move the cursor.
-
-There are no upper limits on question counts, option counts, or text lengths; each
-call needs at least one question and each question at least one option. A custom
-answer row is appended automatically. Blank custom answers cannot be confirmed.
-
-Set `multiSelect: true` on a question to show checkboxes. Space toggles the focused
-option, while Enter confirms all checked options and advances. At least one option
-must be checked. Checks survive switching tabs and can be revised. A custom answer
-replaces the checkbox answer rather than combining with it; Space types normally
-inside the custom-answer editor. Single-select remains the default.
-
-RPC multi-select uses a native input dialog: enter option numbers such as `1,3`
-or a custom answer. Invalid numeric selections and blank input are retried.
-Use `text: 123` to submit a numeric custom answer rather than option numbers.
-
-```json
-{
-  "questions": [
-    {
-      "question": "Which cache should we use?",
-      "options": [
-        { "label": "Memory (Recommended)", "description": "No infrastructure" },
-        { "label": "Redis", "description": "Shared across instances" }
-      ]
-    }
-  ]
-}
-```
-
-The tool declares documented input and output JSON schemas. Structured results
-are returned in `structuredContent` as well as `details`; successful tool text
-still includes the answers, and cancellation text remains `User cancelled`.
-
-Results include `answers` and `cancelled`; each answer includes `questionIndex`,
-`question`, `kind` (`option`, `custom`, or `multi`), and `answer`. Option answers
-also include `optionIndex`. Multi-select answers include `selected` labels and
-zero-based `optionIndices`, so duplicate labels are unambiguous. Non-interactive
-runs hide the tool. Execution is sequential and respects abort signals. This MVP
-has no previews or notes.
-
-Disable other extensions registering `ask_user_question` (including
-`rpiv-ask-user-question`) before loading this entry. Set
-`askUserQuestion.enabled: false` to disable it independently.
-
-### Question lifecycle hooks
-
-The question extension emits hooks through `pi.events`:
-
-- `workflow:ask-user-question:start`: immediately before dialog interaction.
-- `workflow:ask-user-question:end`: after answering, cancelling, aborting, or
-  a dialog error.
-
-Both payloads include `toolCallId`, `mode`, and `questionCount`. The end hook
-also includes `status` (`answered`, `cancelled`, `aborted`, or `error`);
-answered/cancelled events include `result`. Calls without UI or already aborted
-before interaction emit neither hook. Constants and payload types live in
-`extensions/ask-user-question/events.ts`.
-
-The question extension itself sends a best-effort desktop notification,
-`Pi: Waiting for your answer.`, when TUI interaction begins. It uses the shared
-notification transport, requires no notify extension to be loaded, and respects
-`notify.enabled`. RPC interactions emit hooks but do not send desktop
-notifications. Closing the questionnaire emits the end hook without another
-desktop notification.
-
-TUI-only panel notifications are separate from tool start/end:
-
-- `workflow:ui:opened`: the shared session created the component inside
-  `ui.custom`'s factory, before returning it to Pi. Pi has no post-mount callback:
-  this is an opening notification, **not proof of mounting or first paint**.
-- `workflow:ui:closed`: once the host promise settles and the abort listener and
-  component resources are cleaned up. Its `status` is `completed`, `cancelled`,
-  `aborted`, or `error` (`completed` corresponds to tool status `answered`).
-
-Both include `panelId: "ask-user-question"` and `instanceId` (the tool call ID).
-The order for an opened TUI interaction is tool start, panel opened, panel closed,
-then tool end. No panel events are emitted for RPC, a host failure before factory
-creation, or an abort observed before opening. An opened interaction gets one
-closed notification even on errors. Constants/types are exported from
-`@pi-kits/shared/ui/docked-panel`. Entry-point callbacks emit through `pi.events`;
-the shared layer does not subscribe to Pi events. Opened-callback failures still
-attempt closed after cleanup. The original interaction/factory/cancellation error
-wins over disposal and closed-callback errors; disposal errors reject only when
-there is no original failure, and closed-callback errors only when neither has
-failed. If abort cancellation throws, the session retains that error and calls
-Pi's factory completion callback to settle/restore the host before rejecting,
-not a competing rejection that could leave the panel mounted. Closed status is
-`aborted` whenever the signal is aborted, including cancellation/disposal failures;
-the rejection still preserves the original error identity.
-
-## Shared terminal UI
-
-Reusable UI lives in `shared/ui/`, independently of the tool schema and
-extension registration:
-
-- `@pi-kits/shared/ui/tabs`: `layoutTabs(labels, active, width)` and `tabAt`
-  provide a bounded tab viewport and component-local mouse hit testing.
-- `@pi-kits/shared/ui/panel`: `fillPanel` and `panelRule` provide opaque
-  padded frames, pinned footer rows, and width-safe rules.
-- `@pi-kits/shared/ui/docked-panel`: the fixed half-screen editor-dock design:
-  `layout.ts` owns height, compact thresholds, title/detail/list budgeting and
-  scrolling windows; `frame.ts` owns the themed titled top boundary, separate
-  navigation row, uninterrupted bottom boundary, standalone muted shortcut row,
-  compact content priorities, padding, and pinned control hit rectangles.
-  `session.ts` owns non-overlay `ui.custom`, abort completion, listener removal,
-  and exactly-once component disposal across host and fallback cleanup.
-  `events.ts` defines optional opened/closed callbacks and adapter event payloads.
-
-These modules do not register tools, commands, or lifecycle handlers. This is a
-small fixed design for the questionnaire's needs, not a configurable UI framework.
-Tabs disappear below seven panel rows, shortcuts below nine. Six-row review keeps
-its title, answer and two controls; tiny panels underline their last row instead
-of sacrificing the title or active input to a bottom rule.
-
-Questionnaire data, state transitions, keys, question/option text, tab labels,
-review/confirmation, and custom `Input` focus/IME handling remain in
-`extensions/ask-user-question/ui/`. `tui.ts` adapts those to the shared session;
-`index.ts` wires callbacks to `pi.events`. `core.ts` owns schemas, answer types,
-answer construction and native non-TUI dialogs. UI depends on the business core
-and shared design primitives, not the other way around. Shared files are library
-exports only, never Pi extension manifest entries.
-
-## Commit workflow
-
-`/commit` lists and confirms staged files, chooses a model (a fuzzy picker in
-TUI, plain selection in RPC), and generates a Conventional Commits message using
-a tool-less `pi -p` child process. Review the generated message, regenerate it,
-cancel, or submit it with `git commit -m`.
-
-`pi --commit` dispatches `/commit` only during startup. Pi shuts down only after
-a successful startup-triggered commit; cancellations and failures do not exit.
-Non-interactive modes do not execute the commit flow.
-
-Model memory is stored in `commit.lastModel` inside
-`<agent-dir>/pi-kits.json`, honoring `PI_CODING_AGENT_DIR` (including `~`
-expansion). Updates preserve other configuration fields. Legacy
-`extensions/commit/last_model.json` is ignored and never migrated or modified.
+Disable duplicate installations before loading. Loading alone does not activate
+subagents: configure the mux and run inside Herdr as described below.
+Herdr's CLI defaults to `herdr`; `HERDR_BIN_PATH` can override its executable path.
+Opening views also requires the parent pane's `HERDR_PANE_ID` supplied by Herdr.
 
 ## Herdr subagents (MVP)
 
@@ -194,7 +29,8 @@ plus a worker bridge. The extension does not build its own PTY. Task parameters
 include `model` and `thinking`, plus an optional named `subagent_type` backed by
 user Markdown files. This first version does not support scheduling or worktrees.
 
-Configure agent-dir `pi-kits.json` and `/reload`:
+Configure `<agent-dir>/pi-kits.json` (normally `~/.pi/agent/pi-kits.json`,
+honoring `PI_CODING_AGENT_DIR`, including `~` expansion) and `/reload`:
 
 ```json
 {
@@ -261,7 +97,7 @@ disconnected cleanup errors remain visible until resolved. Results and terminals
 remain available after rows disappear. Shutdown/reload removes the widget and
 its refresh timer.
 
-Task and session states are separate: `status` remains the last managed task\'s
+Task and session states are separate: `status` remains the last managed task's
 state/result; `sessionState` is `idle`, `running` (managed execution),
 `interactive` (native/user execution without an active managed task),
 `disconnected`, or `closed`. Native guidance during a managed run remains part
@@ -317,11 +153,12 @@ slot. Failed cleanup is reported as `disconnected`; use `stop_subagent` to
 retry. Unacknowledged resumed rounds instead retain the worker and slot as
 described above; finished sessions retain their last task result.
 
-Only `extensions/subagent/index.ts` is listed in the root and subagent
-Pi manifests. The background Pi loads `extensions/subagent/worker.ts` via an
-explicit `-e`; the worker is never auto-loaded as a package resource.
+Only [index.ts](../index.ts) is listed in the [root](../../../package.json)
+and [subagent](../package.json) Pi manifests. The background Pi loads
+[worker.ts](../worker.ts) via an explicit `-e`; the worker is never auto-loaded
+as a package resource.
 
-### User-defined agent types
+## User-defined agent types
 
 There are **no embedded agent definitions or installed templates**. Create your
 own Markdown files in these directories:
@@ -377,7 +214,7 @@ Supported YAML frontmatter fields use the reference extension's snake_case names
 | `model` | Call parameter, then parent model. |
 | `thinking` | Call parameter, then parent thinking level. |
 | `tools` | Native Pi defaults; CSV or YAML array, `none`/empty disables all tools. Built-in and whitelisted extension tool names are accepted. |
-| `disallowed_tools` | No additional denylist; CSV or YAML array of built-in tools. |
+| `disallowed_tools` | No additional denylist; CSV or YAML array of tool names, applied after `tools`. |
 | `inherit_context` | Call parameter, then `false`; `true` clones the parent current branch into an independent Pi session. |
 | `enabled` | `true`; `false` disables selection. |
 | `run_in_background` | Call parameter, then `true`. |
@@ -401,7 +238,7 @@ ignored regardless of value. The MD body is always the full agent system prompt;
 if an old configuration relied on append behavior, put the required instructions
 into the body explicitly.
 
-### Parent context cloning
+## Parent context cloning
 
 Set `inherit_context: true` in frontmatter or pass `inherit_context: true` to
 `subagent`. Frontmatter takes precedence; `false` starts a fresh child session.
@@ -433,7 +270,7 @@ ignored and cannot activate those capabilities. Values of supported fields and
 YAML syntax are still validated. Agent files and complete task IPC frames each
 have a 64 KiB limit.
 
-### Worker extension allowlist
+## Worker extension allowlist
 
 Configure `subagent.extensionAllowlist` in agent-dir `pi-kits.json`:
 
@@ -448,7 +285,7 @@ Configure `subagent.extensionAllowlist` in agent-dir `pi-kits.json`:
 
 Every worker explicitly loads this shared list alongside its bridge. The list
 replaces the defaults as a whole: `[]` loads only the bridge. It controls **which
-extension code is loaded**, while each agent\'s `tools` selects **which tools are
+extension code is loaded**, while each agent's `tools` selects **which tools are
 enabled**; loading codemode does not automatically activate it. Agent Markdown
 cannot add extensions. Entries are native Pi extension sources, resolved by Pi's
 package manager rather than a kit-specific prefix table. For example:
@@ -493,9 +330,10 @@ Selected entries must already be enabled resources in the package's explicit
 Pi manifest. Unknown names, absent declarations, and undeclared/escaping paths
 fail before worker creation; there is no name-to-path guess or whole-package
 fallback. `extensions: []` loads nothing from that source and does not resolve
-or install it. The configuration example uses this empty selection deliberately;
-change it to `["web-kits"]` to opt in. Defaults still load only codemode and
-tool-search. Packages without named declarations (such as Chrome DevTools) can
+or install it. The [repository configuration example](../../../pi-kits.example.json)
+uses this empty selection deliberately; change it to `["web-kits"]` to opt in.
+Defaults still load only codemode and tool-search. Packages without named
+declarations (such as Chrome DevTools) can
 still be loaded using their plain source string.
 
 Pi resolves installed npm/git packages and reads their declared extension
@@ -510,93 +348,16 @@ creation. The tool `tool_search` is provided by `builtin:tool-search`.
 Reload the parent after changing the whitelist. Extensions run with full process
 permissions, so this is a loading policy, not an OS sandbox.
 
-## Configuration
+## Configuration compatibility and source references
 
-Use top-level `commit`, `notify`, `askUserQuestion`, and `subagent` settings in
-agent-dir `pi-kits.json`; edit then `/reload`. Each entry's `enabled` controls it
-independently; there is no new group-level switch.
+Top-level `subagent` settings override the same legacy `workflow.subagent`
+fields; unspecified fields retain legacy values before defaults are applied.
+Legacy `workflow.enabled: false` disables subagents unless top-level
+`subagent.enabled` explicitly overrides it. Prefer the independent top-level settings.
+Configuration is validated by [the shared schema](../../../shared/config/schema.ts)
+and resolved by [the shared config reader](../../../shared/config/index.ts).
 
-Legacy `workflow` settings remain readable. Top-level settings override the same
-legacy fields; unspecified fields retain legacy values before defaults are
-applied. Legacy `workflow.enabled: false` still disables its children unless a
-child explicitly sets top-level `enabled` to override it. Legacy `workspace` and
-`usage` follow the same rules; the internal `web-kits` structure is unchanged.
-
-Subagents additionally require an explicit mux and the Herdr environment above.
-`commit.model` sets the first picker option, ahead of model memory and the current
-model; `thinking` and `timeoutMs` configure generation.
-`rememberModel: false` disables reading/writing `commit.lastModel`; the factory
-still reads configuration to apply feature switches and generation settings.
-`notify.quietPeriodMs` controls the idle delay (default 1000 ms); disabling notify
-also suppresses commit's completion notification. The pure API remains independent
-of configuration. See the [configuration example](../pi-kits.example.json).
-
-## Pure notification API
-
-Import the library, not the notification extension entry:
-
-```ts
-import { notify } from "@pi-kits/shared/notifications";
-// Or from the repository: import { notify } from "./shared/notifications/index.ts";
-
-notify("Build", "The build finished.");
-```
-
-`notify(title, msg)` has no Pi runtime dependency. Importing it does not register
-commands, flags or lifecycle handlers, schedule timers, or launch processes.
-Calling it returns `true` when the platform command was accepted for execution;
-delivery is best-effort, so missing dependencies or OS failures never affect Pi.
-
-Architecture:
-
-- `shared/notifications/index.ts`: shared `notify` API.
-- `shared/notifications/core.ts`: platform detection and shell-free launching.
-- `shared/notifications/scripts/`: platform adapters, resolved relative to the
-  library through `import.meta.url`, independent of the working directory.
-- `extensions/notify/index.ts`: Pi lifecycle wiring only.
-
-The completion adapter uses the same API to send `Pi: Task completed.` only in
-TUI after `agent_settled` has remained idle for the configured quiet period
-(one second by default). Pending notifications
-are cancelled on input, `before_agent_start`, `agent_start`, or session shutdown.
-The idle state is checked again before delivery; notifier errors are contained.
-
-### Platform adapters
-
-| Environment | Adapter | Dependency | Behavior |
-| --- | --- | --- | --- |
-| Windows / WSL | `windows-toast.ps1` | Windows PowerShell | Expires after one minute. |
-| Linux | `linux-notify.sh` | `notify-send` / libnotify | Expires after 60 seconds and replaces the previous notification. |
-| macOS | `macos-notify.sh` | `terminal-notifier` | Removes the grouped notification after 60 seconds. |
-
-Unix adapters receive title/message as positional arguments; the PowerShell
-adapter receives `-Title` and `-Message`. WSL uses the Windows adapter through
-interop. The Windows script selects a registered terminal AppUserModelID;
-native Linux and macOS do not depend on a terminal emulator. All adapters use
-stable replacement identifiers.
-
-```sh
-brew install terminal-notifier  # macOS
-sudo apt install libnotify-bin # Linux
-```
-
-After changing package code, run `/reload` in Pi.
-
-## Tests and quality checks
-
-The root workspace supplies `tsx`, Pi host peer packages, and Biome:
-
-```sh
-npm test --workspace pi-commit --workspace pi-notify --workspace pi-ask-user-question --workspace pi-subagent --workspace @pi-kits/shared
-# From this package directory:
-npm test
-npx biome check .
-# Only after the read-only check passes:
-npx biome format --write .
-```
-
-The original commit core and notify transport/lifecycle tests are retained.
-Additional tests cover commit registration/startup guards, executable adapter
-paths, explicit manifest entries, and an isolated API import which rejects Pi
-host packages and extension modules and traps notification timers/processes.
-The tests never deliver real desktop notifications or commit the workspace.
+Implementation references: [tools and lifecycle](../index.ts),
+[task/session management](../manager.ts), [worker bridge](../worker.ts),
+[agent definitions](../agents.ts), [context cloning](../clone.ts), and
+[extension source resolution](../extensions.ts).

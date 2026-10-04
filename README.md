@@ -1,117 +1,43 @@
 # pi-kits
 
-Workspace tools, usage reports, commit workflows, web tools, and a Gruvbox theme for [Pi](https://pi.dev).
+为 [Pi](https://pi.dev) 提供工作区工具、交互问答、提交工作流、用量统计、Web 工具和 Gruvbox 主题。
 
-## Install
+## 安装
 
 ```sh
 pi install https://github.com/aqua2k1/pi-kits.git
 ```
 
-Requires Pi and Node.js >= 22.19.
+需要 Pi 和 Node.js ≥ 22.19。通过 `pi config` 选择扩展，在 `/settings` 中选择 `gruvbox` 主题。
 
-## Independent extensions
+## 扩展
 
-Each extension lives directly under `extensions/<name>/` with its own explicit
-Pi manifest. There are no kit groups or redundant `src/extensions` intermediate directories.
+| 扩展 | 功能 |
+| --- | --- |
+| [terminal](extensions/terminal/README.md) | 打开编辑器、Git 界面和文件管理器 |
+| [open](extensions/open/README.md) | 用默认应用打开文件、URL 和目录 |
+| [preview](extensions/preview/README.md) | 只读预览会话回复 |
+| [context-preview](extensions/context-preview/README.md) | 查看模型请求 payload |
+| [provider-usage](extensions/provider-usage/README.md) | 显示服务商余额与额度 |
+| [stats](extensions/stats/README.md) | 生成 Token 和费用统计报告 |
+| [commit](extensions/commit/README.md) | 生成并确认 Conventional Commits 提交 |
+| [notify](extensions/notify/README.md) | 任务完成桌面通知 |
+| [ask-user-question](extensions/ask-user-question/README.md) | 单选、多选和自定义回答 |
+| [web-kits](extensions/web-kits/README.md) | Web 搜索、网页与 GitHub 内容获取 |
 
-| Resource | Features | Documentation |
-| --- | --- | --- |
-| `terminal` | nvim, lazygit, yazi | [Workspace](docs/workspace.md) |
-| `open` | Open files, URLs, directories | [Workspace](docs/workspace.md) |
-| `preview` | Reply preview | [Workspace](docs/workspace.md) |
-| `context-preview` | Request payload preview | [Workspace](docs/workspace.md) |
-| `provider-usage` | Provider usage widget | [Usage](docs/usage.md) |
-| `stats` | Token/cost HTML reports | [Usage](docs/usage.md) |
-| `commit` | Conventional Commits | [Workflow](docs/workflow.md) |
-| `notify` | Desktop completion notifications | [Workflow](docs/workflow.md) |
-| `ask-user-question` | Native user questions | [Workflow](docs/workflow.md) |
-| `subagent` | Opt-in Herdr subagents | [Workflow](docs/workflow.md#herdr-subagents-mvp) |
-| `web-kits` | Web search and web/GitHub fetching | [Web](extensions/web-kits/README.md) |
+## 配置
 
-Shared runtime helpers live in `shared/`, configuration in `shared/config/`,
-test helpers in `tests/helpers/`, and themes in `themes/`.
-From a checkout, load one extension with `pi -e ./extensions/stats`.
+配置文件为 agent 目录下的 `pi-kits.json`，默认位于 `~/.pi/agent/`，可由 `PI_CODING_AGENT_DIR` 调整。修改后执行 `/reload`。
 
-Package metadata exposes only the independent resource names above.
-`web-kits` is the web extension's directory, package, and resource name.
-Configuration uses top-level extension settings; legacy `workspace`, `usage`,
-and `workflow` sections remain readable for compatibility. The internal `web-kits`
-structure is unchanged.
+各扩展可通过 `enabled` 独立关闭。完整字段见[配置示例](pi-kits.example.json)和 [JSON Schema](pi-kits.schema.json)；架构与使用细节见各包 README。
 
-Select `gruvbox` in `/settings`. Toggle resources with `pi config`.
+## 开发
 
-## Transcript rendering
-
-All ten tools and subagent completion notifications share `shared/ui/renderers.ts`.
-Collapsed rows show a name, status, and bounded preview; expand with Ctrl+O for
-full content and structured details. Streaming, cancellation, errors, and
-truncation remain explicit. Rendering does not change model-facing content or
-machine output. Shared helpers register no tools or lifecycle handlers.
-
-## Configuration
-
-Settings live in agent-dir `pi-kits.json` (honoring `PI_CODING_AGENT_DIR`),
-validated and defaulted through `@pi-kits/config`. Edit then `/reload`.
-See the [configuration example](pi-kits.example.json) and
-[JSON schema](pi-kits.schema.json).
-
-Top-level settings are `terminal`, `open`, `preview`, `contextPreview`,
-`providerUsage`, `stats`, `askUserQuestion`, `subagent`, `commit`, `notify`, and
-`web-kits`. Each extension's `enabled` controls it independently; there is no new
-group-level switch. The internal structure of `web-kits` is unchanged.
-
-Legacy `workspace`, `usage`, and `workflow` sections are still read. Top-level
-settings override the same legacy fields; unspecified fields retain legacy values
-before defaults are applied. A legacy group's `enabled: false` still disables its
-children unless a child explicitly sets top-level `enabled` to override it.
-
-### Herdr subagents (MVP)
-
-Opt in with top-level `subagent`:
-
-```json
-{
-  "subagent": { "mux": "herdr", "enabled": true, "maxConcurrent": 4 }
-}
+```sh
+npm install
+npm test
+npm run typecheck
+npx biome check .
 ```
 
-Only `herdr` is supported. Activation requires `HERDR_ENV === '1'`,
-`subagent.enabled`, and explicit `mux: "herdr"`.
-`enabled` defaults to `true`, but `mux` is undefined by default, so no mux
-configuration means no activation. Disabled or unconfigured subagents register
-no tools, hooks, or commands. There is no environment probing or fallback.
-`maxConcurrent` is an integer from 1 to 32 (default 4).
-`extensionAllowlist` explicitly loads trusted extensions in every worker, defaulting
-to `["builtin:codemode", "builtin:tool-search"]`. An explicit list replaces these
-defaults; `[]` loads only the worker bridge. Entries use native Pi extension
-sources, including npm/git packages, built-ins, and files/directories. To select
-only web from this Git package, use
-`{ "source": "git:github.com/aqua2k1/pi-kits", "extensions": ["web-kits"] }`.
-Logical names are declared in package metadata, not tied to installation paths.
-Parent extensions are not inherited.
-
-Tools: `subagent`, `resume_subagent`, `get_subagent_result`, `steer_subagent`,
-`stop_subagent`, and `list_subagent_types`. Resume reuses an idle, retained Pi
-session/history and enters the same concurrency queue; it never restarts a
-closed/disconnected worker or interrupts native user interaction.
-`/subagent:views [id] [open|focus|close|copy|delete]` manages views attached to
-existing Pi terminals for inspection and control. In the panel, `y` copies the
-full subagent ID and `d` deletes the agent after confirmation, closing its
-terminal and removing its manager record while retaining session files.
-Views and tool cards share a status icon, agent name, current model name, task
-description, eight-character ID, and status header. The shared manager places the first view
-right of the parent and subsequent views below the last surviving view; every
-adapter follows this policy. Closing a view does not kill the worker.
-Background tasks use Herdr's native Pi terminals plus a worker bridge, not a
-custom PTY. `worker.ts` is loaded only via explicit `-e`, never a package manifest
-entry. The first version supports general tasks with `model` and `thinking`
-parameters, not scheduled tasks or worktree management. Named agents are entirely
-user-defined Markdown in `~/.pi/agent/agents/` and `<cwd>/.pi/agents/`; project
-same-name definitions replace global ones. Use `list_subagent_types` to discover
-names and `subagent` with `subagent_type` to select one. Agent MD bodies are fixed
-system prompts. `inherit_context: true` clones the parent current branch into a
-separate child session; default false starts fresh. Resume keeps the child history.
-Parent extensions are never implicitly loaded by cloning. No agent profiles or
-templates are embedded.
-See [workflow documentation](docs/workflow.md#herdr-subagents-mvp) for details.
+检查全部通过后再运行 `npx biome format --write .`。
