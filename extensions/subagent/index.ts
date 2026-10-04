@@ -19,7 +19,13 @@ import { captureParentSession } from "./clone.ts";
 import { HerdrAdapter } from "./herdr.ts";
 import { type AgentSnapshot, SubagentManager } from "./manager.ts";
 import type { MuxAdapter } from "./mux.ts";
-import { renderSubagentResult, subagentCallRenderer } from "./renderers.ts";
+import {
+  renderSubagentNotification,
+  renderSubagentResult,
+  renderSubagentTypesCall,
+  renderSubagentTypesResult,
+  subagentCallRenderer,
+} from "./renderers.ts";
 import { SubagentStatusWidget } from "./status-widget.ts";
 import { showSubagentViews } from "./views.ts";
 
@@ -48,6 +54,10 @@ export function registerSubagents(
   maxConcurrent = 4,
   extensionAllowlist: readonly WorkerExtensionSource[] = SUBAGENT_DEFAULT_EXTENSIONS,
 ): void {
+  pi.registerMessageRenderer(
+    "subagent-notification",
+    renderSubagentNotification,
+  );
   let manager: SubagentManager | undefined;
   let status: SubagentStatusWidget | undefined;
   let context: ExtensionContext | undefined;
@@ -174,6 +184,8 @@ export function registerSubagents(
     defineTool({
       name: "list_subagent_types",
       label: "Subagent types",
+      renderCall: renderSubagentTypesCall,
+      renderResult: renderSubagentTypesResult,
       description:
         "List user-defined agent Markdown configurations. Project .pi/agents definitions replace same-name global agents. No built-in types. Disabled definitions are listed but cannot be spawned.",
       parameters: Type.Object({}),

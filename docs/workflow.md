@@ -238,8 +238,9 @@ Clicking an agent or pressing Enter immediately opens its view, or focuses the
 existing view. Up/Down and the mouse wheel select; Esc closes only the panel.
 Queued agents without a terminal cannot open a view yet. Use the explicit
 `close` command above to detach a view without stopping its worker.
-Subagent task/control tool rows default to a compact task title, status, and
-one-line result/error preview. IDs, paths, timestamps, counters, and full prompts/results appear only
+All subagent tools and `subagent-notification` completion messages use the same
+shared renderer as other extensions: a compact title, status, and one-line
+result/error preview. IDs, paths, timestamps, counters, and full prompts/results appear only
 when expanded with Ctrl+O. Rendering does not change tool data or JSON/print output.
 
 Views are native control attachments, not read-only viewers.

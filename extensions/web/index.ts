@@ -19,6 +19,12 @@ import { createFetchRuntime } from "./fetch/router.ts";
 import { cleanupExpiredSpools } from "./fetch/spool.ts";
 import type { FetchRuntime } from "./fetch/types.ts";
 import { buildSearchOutput } from "./format.ts";
+import {
+  renderFetchCall,
+  renderFetchResult,
+  renderSearchCall,
+  renderSearchResult,
+} from "./renderers.ts";
 import { FetchOutputSchema, SearchOutputSchema } from "./schema.ts";
 import {
   MAX_DOMAIN_COUNT,
@@ -113,6 +119,8 @@ export function registerWebSearchTool(
   pi.registerTool({
     name: "web_search",
     label: "Web Search",
+    renderCall: renderSearchCall,
+    renderResult: renderSearchResult,
     description:
       "Search the web for current information. Returns normalized titles, URLs, and snippets.",
     promptSnippet: "Search the web for up-to-date information",
@@ -159,6 +167,8 @@ export function registerWebFetchTool(
   pi.registerTool({
     name: "web_fetch",
     label: "Web Fetch",
+    renderCall: renderFetchCall,
+    renderResult: renderFetchResult,
     description:
       "Fetch a specific HTTP or HTTPS URL. Text results are saved to a local temporary file; large results return a preview and fullOutputPath. GitHub repository URLs may be shallow-cloned or read through gh api.",
     promptSnippet: "Fetch and read content from a specific URL",

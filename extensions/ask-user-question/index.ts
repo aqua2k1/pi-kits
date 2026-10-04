@@ -8,6 +8,11 @@ import {
   type DockedPanelOpenedEvent,
 } from "../../shared/ui/docked-panel/events.ts";
 import {
+  compactCall,
+  compactResult,
+  record,
+} from "../../shared/ui/renderers.ts";
+import {
   AskUserParameters,
   type AskUserResult,
   AskUserResultSchema,
@@ -28,6 +33,24 @@ export default function askUserQuestionExtension(pi: ExtensionAPI): void {
   pi.registerTool({
     name: "ask_user_question",
     label: "Ask User Question",
+    renderCall: compactCall("Ask User Question", (args) => {
+      const questions = record(args).questions;
+      if (!Array.isArray(questions)) return "";
+      return `${questions.length} questions · ${record(questions[0]).question ?? ""}`;
+    }),
+    renderResult: compactResult((details) => {
+      const data = record(details);
+      if (!Array.isArray(data.answers) || typeof data.cancelled !== "boolean")
+        return;
+      return {
+        status: data.cancelled
+          ? "cancelled"
+          : `answered · ${data.answers.length} answers`,
+        preview: data.answers
+          .map((answer) => record(answer).answer ?? "")
+          .join(" · "),
+      };
+    }),
     description:
       "Ask the user structured questions to clarify requirements or choose an approach. Supports single-choice, multi-select, and custom answers.",
     promptSnippet: "Ask the user to clarify requirements or choose an approach",

@@ -1,9 +1,9 @@
 import type { Theme } from "@earendil-works/pi-coding-agent";
-import {
-  stripTerminalSequences,
-  truncateToWidth,
-} from "@earendil-works/pi-tui";
+import { truncateToWidth } from "@earendil-works/pi-tui";
+import { oneLine } from "../../shared/ui/renderers.ts";
 import type { AgentSnapshot, AgentStatus } from "./manager.ts";
+
+export { oneLine } from "../../shared/ui/renderers.ts";
 
 export interface AgentSource {
   list(): AgentSnapshot[];
@@ -25,13 +25,6 @@ export function agentDisplayStatus(agent: AgentSnapshot): string {
     agent.sessionState === "disconnected"
     ? `${agent.status} · ${agent.sessionState}`
     : agent.status;
-}
-
-export function oneLine(text: string): string {
-  // Never allow model-supplied text to inject terminal controls into widgets.
-  return stripTerminalSequences(text)
-    .replace(/[\p{Cc}\p{Zl}\p{Zp}]/gu, " ")
-    .trim();
 }
 
 export function agentTitle(agent: AgentSnapshot): string {

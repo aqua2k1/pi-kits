@@ -41,6 +41,14 @@ Configuration sections (`workspace`, `usage`, `workflow`, `web`) are unchanged.
 
 Select `gruvbox` in `/settings`. Toggle resources with `pi config`.
 
+## Transcript rendering
+
+All ten tools and subagent completion notifications share `shared/ui/renderers.ts`.
+Collapsed rows show a name, status, and bounded preview; expand with Ctrl+O for
+full content and structured details. Streaming, cancellation, errors, and
+truncation remain explicit. Rendering does not change model-facing content or
+machine output. Shared helpers register no tools or lifecycle handlers.
+
 ## Configuration
 
 Settings live in agent-dir `pi-kits.json` (honoring `PI_CODING_AGENT_DIR`),

@@ -12,6 +12,11 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { readPiKitsConfig } from "@pi-kits/config";
 import { Type } from "typebox";
 import { doOpen, isUrl, resolveTarget } from "../../shared/desktop-open.ts";
+import {
+  compactCall,
+  compactResult,
+  record,
+} from "../../shared/ui/renderers.ts";
 
 // ── Extension ──────────────────────────────────────────────────────────
 
@@ -50,6 +55,19 @@ export default function (pi: ExtensionAPI) {
   pi.registerTool({
     name: "open",
     label: "Open",
+    renderCall: compactCall("Open", (args) => {
+      const target = record(args).target;
+      return typeof target === "string" ? target : "";
+    }),
+    renderResult: compactResult((details) => {
+      const data = record(details);
+      if (typeof data.ok !== "boolean") return;
+      return {
+        status: data.ok ? "opened" : "error",
+        isError: !data.ok,
+        preview: typeof data.message === "string" ? data.message : "",
+      };
+    }),
     description:
       "Open a file, URL, or directory with the system's default application. Use this to open HTML files in a browser, PDFs in a reader, directories in a file manager, etc.",
     parameters: Type.Object({
@@ -61,7 +79,7 @@ export default function (pi: ExtensionAPI) {
       const result = await openTarget(params.target, ctx.cwd);
       return {
         content: [{ type: "text", text: result.message }],
-        details: {},
+        details: result,
       };
     },
   });

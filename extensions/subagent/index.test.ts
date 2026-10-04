@@ -35,6 +35,7 @@ function registrations() {
   const hooks: string[] = [];
   const definitions = new Map<string, ToolDefinition>();
   const pi = {
+    registerMessageRenderer() {},
     registerTool(tool: ToolDefinition) {
       tools.push(tool.name);
       definitions.set(tool.name, tool);

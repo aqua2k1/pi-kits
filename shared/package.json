@@ -6,6 +6,7 @@
   "exports": {
     "./desktop-open": "./desktop-open.ts",
     "./notifications": "./notifications/index.ts",
+    "./ui/renderers": "./ui/renderers.ts",
     "./ui/tabs": "./ui/tabs.ts",
     "./ui/panel": "./ui/panel.ts",
     "./ui/docked-panel": "./ui/docked-panel/index.ts"

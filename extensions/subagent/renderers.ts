@@ -1,83 +1,64 @@
-import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
-import { Text, truncateToWidth } from "@earendil-works/pi-tui";
+import {
+  compactCall,
+  compactMessage,
+  compactResult,
+  type RenderSummary,
+  record,
+} from "../../shared/ui/renderers.ts";
 import type { AgentSnapshot } from "./manager.ts";
-import { agentDisplayStatus, oneLine } from "./presentation.ts";
+import { agentDisplayStatus } from "./presentation.ts";
 
-function jsonText(value: unknown): string {
-  return (JSON.stringify(value, null, 2) ?? "").replace(
-    /[\u007f-\u009f\u2028\u2029]/gu,
-    (char) => `\\u${char.charCodeAt(0).toString(16).padStart(4, "0")}`,
-  );
-}
+export const subagentCallRenderer = (label: string) =>
+  compactCall(label, (args) => {
+    const description = record(args).description;
+    return typeof description === "string" ? description : "";
+  });
 
-/** Only the TUI presentation changes; tool content/details remain intact. */
-export function subagentCallRenderer(
-  label: string,
-): NonNullable<ToolDefinition["renderCall"]> {
-  return (args, theme, context) => {
-    if (context.expanded) {
-      return new Text(`${label}\n${jsonText(args)}`, 0, 0);
-    }
-    const values = args as Record<string, unknown>;
-    const description =
-      values && typeof values.description === "string"
-        ? oneLine(values.description)
-        : "";
-    const title = theme.fg("toolTitle", theme.bold(label));
-    const line = description ? `${title} · ${description}` : title;
-    return {
-      render: (width) => (width > 0 ? [truncateToWidth(line, width)] : []),
-      invalidate() {},
-    };
-  };
-}
-
-export const renderSubagentResult: NonNullable<
-  ToolDefinition["renderResult"]
-> = (result, options, theme, context) => {
-  if (options.expanded) {
-    // Serialized JSON escapes controls in snapshot values and retains all metadata.
-    const text = result.details
-      ? jsonText(result.details)
-      : result.content
-          .filter((item) => item.type === "text")
-          .map((item) => item.text.split("\n").map(oneLine).join("\n"))
-          .join("\n");
-    return new Text(text, 0, 0);
-  }
-  const snapshot = result.details as AgentSnapshot | undefined;
-  const valid =
-    snapshot &&
-    typeof snapshot.description === "string" &&
-    typeof snapshot.status === "string";
-  const failed =
-    context.isError ||
-    snapshot?.status === "error" ||
-    snapshot?.status === "disconnected" ||
-    snapshot?.sessionState === "disconnected";
-  const status = valid
-    ? agentDisplayStatus(snapshot)
-    : failed
-      ? "error"
-      : "result";
-  const args = context.args as Record<string, unknown> | undefined;
-  const repeated = valid && args?.description === snapshot.description;
-  const title =
-    valid && !repeated
-      ? `${oneLine(snapshot.description)} · ${oneLine(status)}`
-      : oneLine(status);
-  const preview = valid
-    ? snapshot.error || snapshot.result || ""
-    : result.content
-        .filter((item) => item.type === "text")
-        .map((item) => item.text)
-        .join(" ");
-  const lines = [theme.fg(failed ? "error" : "muted", title)];
-  if (preview.trim()) lines.push(oneLine(preview));
-  if (snapshot?.truncated) lines.push(theme.fg("dim", "[Result truncated]"));
+function snapshotSummary(
+  details: unknown,
+  args?: unknown,
+): RenderSummary | undefined {
+  const data = record(details);
+  if (typeof data.description !== "string" || typeof data.status !== "string")
+    return;
+  const snapshot = data as unknown as AgentSnapshot;
+  const isError =
+    snapshot.status === "error" ||
+    snapshot.status === "disconnected" ||
+    snapshot.sessionState === "disconnected";
   return {
-    render: (width) =>
-      width > 0 ? lines.map((line) => truncateToWidth(line, width)) : [],
-    invalidate() {},
+    title:
+      record(args).description === snapshot.description
+        ? undefined
+        : snapshot.description,
+    status: agentDisplayStatus(snapshot),
+    preview:
+      typeof snapshot.error === "string"
+        ? snapshot.error
+        : typeof snapshot.result === "string"
+          ? snapshot.result
+          : "",
+    isError,
+    truncated: snapshot.truncated,
   };
-};
+}
+
+export const renderSubagentResult = compactResult(snapshotSummary);
+export const renderSubagentNotification = compactMessage(
+  "Subagent",
+  snapshotSummary,
+);
+export const renderSubagentTypesCall = compactCall("Subagent types");
+export const renderSubagentTypesResult = compactResult((details) => {
+  const agents = record(details).agents;
+  if (!Array.isArray(agents)) return;
+  return {
+    status: `${agents.length} types`,
+    preview: agents
+      .map((agent) => {
+        const entry = record(agent);
+        return `${entry.displayName ?? entry.name ?? "Agent"}${entry.enabled === false ? " (disabled)" : ""}`;
+      })
+      .join(" · "),
+  };
+});
