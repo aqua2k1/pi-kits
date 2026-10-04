@@ -1,0 +1,42 @@
+{
+  "name": "pi-web",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "keywords": [
+    "pi-package"
+  ],
+  "extensionResources": {
+    "web": "./index.ts",
+    "web-kit": "./index.ts"
+  },
+  "pi": {
+    "extensions": [
+      "./index.ts"
+    ]
+  },
+  "scripts": {
+    "test": "node --import tsx --test '*.test.ts' 'core/*.test.ts' 'shared/*.test.ts' 'fetch/*.test.ts' 'providers/*/*.test.ts'",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "dependencies": {
+    "@pi-kits/config": "0.1.0"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-ai": "*",
+    "@earendil-works/pi-coding-agent": "*",
+    "typebox": "*"
+  },
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "files": [
+    "*.ts",
+    "core",
+    "fetch",
+    "providers",
+    "shared",
+    "docs",
+    "README.md"
+  ]
+}

@@ -10,14 +10,33 @@ pi install https://github.com/aqua2k1/pi-kits.git
 
 Requires Pi and Node.js >= 22.19.
 
-## Kits
+## Independent extensions
 
-| Kit | Features |
-| --- | --- |
-| [workspace-kit](packages/workspace-kit/README.md) | nvim, lazygit, yazi, open files/URLs, reply and request previews |
-| [usage-kit](packages/usage-kit/README.md) | Provider usage and token/cost reports |
-| [workflow-kit](packages/workflow-kit/README.md) | Conventional Commits, desktop notifications, user questions, and opt-in Herdr subagents |
-| [web-kit](packages/web-kit/README.md) | Web search and web/GitHub fetching |
+Each extension lives directly under `extensions/<name>/` with its own explicit
+Pi manifest. There are no kit groups or redundant `src/extensions` intermediate directories.
+
+| Resource | Features | Documentation |
+| --- | --- | --- |
+| `terminal` | nvim, lazygit, yazi | [Workspace](docs/workspace.md) |
+| `open` | Open files, URLs, directories | [Workspace](docs/workspace.md) |
+| `preview` | Reply preview | [Workspace](docs/workspace.md) |
+| `context-preview` | Request payload preview | [Workspace](docs/workspace.md) |
+| `provider-usage` | Provider usage widget | [Usage](docs/usage.md) |
+| `stats` | Token/cost HTML reports | [Usage](docs/usage.md) |
+| `commit` | Conventional Commits | [Workflow](docs/workflow.md) |
+| `notify` | Desktop completion notifications | [Workflow](docs/workflow.md) |
+| `ask-user-question` | Native user questions | [Workflow](docs/workflow.md) |
+| `subagent` | Opt-in Herdr subagents | [Workflow](docs/workflow.md#herdr-subagents-mvp) |
+| `web` | Web search and web/GitHub fetching | [Web](extensions/web/README.md) |
+
+Shared runtime helpers live in `shared/`, configuration in `shared/config/`,
+test helpers in `tests/helpers/`, and themes in `themes/`.
+From a checkout, load one extension with `pi -e ./extensions/stats`.
+
+Package metadata exposes each resource name above. Existing `workspace-kit`,
+`usage-kit`, `workflow-kit`, and `web-kit` selections remain as compatibility
+resource declarations; they no longer correspond to package directories.
+Configuration sections (`workspace`, `usage`, `workflow`, `web`) are unchanged.
 
 Select `gruvbox` in `/settings`. Toggle resources with `pi config`.
 
@@ -74,4 +93,4 @@ system prompts. `inherit_context: true` clones the parent current branch into a
 separate child session; default false starts fresh. Resume keeps the child history.
 Parent extensions are never implicitly loaded by cloning. No agent profiles or
 templates are embedded.
-See [workflow-kit](packages/workflow-kit/README.md#herdr-subagents-mvp) for details.
+See [workflow documentation](docs/workflow.md#herdr-subagents-mvp) for details.

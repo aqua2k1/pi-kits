@@ -14,7 +14,19 @@ import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
-const kits = ["workspace", "usage", "workflow", "web"];
+const extensions = [
+  "terminal",
+  "open",
+  "preview",
+  "context-preview",
+  "provider-usage",
+  "stats",
+  "commit",
+  "notify",
+  "ask-user-question",
+  "subagent",
+  "web",
+];
 
 function smoke(paths: readonly string[], agentDir: string): string {
   const child = spawnSync(
@@ -53,17 +65,18 @@ function smoke(paths: readonly string[], agentDir: string): string {
   return child.stdout;
 }
 
-test("four kits explicitly declare eleven independent runtime entries", () => {
+test("eleven flat extensions explicitly declare their independent runtime entries", () => {
   const entries: string[] = [];
-  for (const kit of kits) {
-    const dir = join(root, "packages", `${kit}-kit`);
+  for (const name of extensions) {
+    const dir = join(root, "extensions", name);
     const manifest = JSON.parse(
       readFileSync(join(dir, "package.json"), "utf8"),
     );
-    assert.equal(manifest.name, `pi-${kit}-kit`);
+    assert.equal(manifest.name, `pi-${name}`);
+    assert.deepEqual(manifest.pi.extensions, ["./index.ts"]);
     assert.ok(manifest.keywords.includes("pi-package"));
     assert.equal(manifest.private, true);
-    const declared = manifest.extensionResources[`${kit}-kit`];
+    const declared = manifest.extensionResources[name];
     assert.deepEqual(
       typeof declared === "string" ? [declared] : declared,
       manifest.pi.extensions,
@@ -102,14 +115,35 @@ test("four kits explicitly declare eleven independent runtime entries", () => {
     typeof value === "string" ? [value] : (value as string[]),
   );
   assert.deepEqual(
-    named,
+    [...new Set(named)],
     repository.pi.extensions,
     "Named resources must expose exactly the explicit manifest entries",
   );
   assert.deepEqual(
     repository.pi.extensions.map((entry: string) => resolve(root, entry)),
     entries,
-    "Git repository manifest must expose exactly the kit entries",
+    "Git repository manifest must expose exactly the independent extension entries",
+  );
+});
+
+test("flat resource declarations select independent entries and preserve web-kit compatibility", async () => {
+  const { resolveWorkerExtensions } = await import(
+    "../extensions/subagent/extensions.ts"
+  );
+  assert.deepEqual(
+    await resolveWorkerExtensions([
+      { source: root, extensions: ["stats", "web-kit", "web"] },
+    ]),
+    [
+      join(root, "extensions/stats/index.ts"),
+      join(root, "extensions/web/index.ts"),
+    ],
+  );
+  assert.deepEqual(
+    await resolveWorkerExtensions([
+      { source: join(root, "extensions/stats"), extensions: ["stats"] },
+    ]),
+    [join(root, "extensions/stats/index.ts")],
   );
 });
 
@@ -117,11 +151,11 @@ test("repository declares an independent valid Gruvbox theme", async () => {
   const repository = JSON.parse(
     readFileSync(join(root, "package.json"), "utf8"),
   );
-  const dir = join(root, "packages/themes");
+  const dir = join(root, "themes");
   const manifest = JSON.parse(readFileSync(join(dir, "package.json"), "utf8"));
   assert.ok(manifest.keywords.includes("pi-package"));
   assert.deepEqual(manifest.pi.themes, ["./gruvbox.json"]);
-  assert.deepEqual(repository.pi.themes, ["./packages/themes/gruvbox.json"]);
+  assert.deepEqual(repository.pi.themes, ["./themes/gruvbox.json"]);
   assert.deepEqual(
     repository.pi.themes.map((entry: string) => resolve(root, entry)),
     manifest.pi.themes.map((entry: string) => resolve(dir, entry)),
@@ -144,10 +178,10 @@ test("repository declares an independent valid Gruvbox theme", async () => {
 
 for (const [name, paths] of [
   [
-    "individual kits",
+    "individual extension packages",
     [
-      ...kits.map((kit) => join(root, "packages", `${kit}-kit`)),
-      join(root, "packages/themes"),
+      ...extensions.map((name) => join(root, "extensions", name)),
+      join(root, "themes"),
     ],
   ],
   ["Git repository root", [root]],
@@ -178,7 +212,13 @@ test("Git package loads with production-only workspace dependencies", (t) => {
   const dir = mkdtempSync(join(tmpdir(), "pi-kits-production-"));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
   const checkout = join(dir, "checkout");
-  for (const entry of ["package.json", "package-lock.json", "packages"]) {
+  for (const entry of [
+    "package.json",
+    "package-lock.json",
+    "extensions",
+    "shared",
+    "themes",
+  ]) {
     cpSync(join(root, entry), join(checkout, entry), {
       recursive: true,
       filter: (path) => basename(path) !== "node_modules",

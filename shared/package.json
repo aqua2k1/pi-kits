@@ -1,0 +1,25 @@
+{
+  "name": "@pi-kits/shared",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "exports": {
+    "./desktop-open": "./desktop-open.ts",
+    "./notifications": "./notifications/index.ts",
+    "./ui/tabs": "./ui/tabs.ts",
+    "./ui/panel": "./ui/panel.ts",
+    "./ui/docked-panel": "./ui/docked-panel/index.ts"
+  },
+  "scripts": {
+    "test": "node --import tsx --test *.test.ts notifications/*.test.ts ui/*.test.ts"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-ai": "*",
+    "@earendil-works/pi-coding-agent": "*",
+    "@earendil-works/pi-tui": "*",
+    "typebox": "*"
+  },
+  "engines": {
+    "node": ">=22.19.0"
+  }
+}

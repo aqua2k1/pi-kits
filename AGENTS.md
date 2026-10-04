@@ -2,8 +2,10 @@
 
 ## Project
 
-Four Pi kits live under `packages/`: workspace, usage, workflow, and web.
-Keep extension entry points explicit in both root and kit Pi manifests.
+Independent Pi extensions live side by side under `extensions/<name>/`.
+Shared helpers and configuration live under `shared/`; themes under `themes/`.
+Keep extension entry points explicit in both root and individual extension Pi manifests.
+Declare logical resource names in package metadata, never in resolver special cases.
 Shared helpers must not register commands, tools, or lifecycle handlers.
 Settings live in agent-dir `pi-kits.json`; use `@pi-kits/config` for validation
 and defaults. Keep the exported JSON schema and example in sync.
