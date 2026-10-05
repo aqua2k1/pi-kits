@@ -14,6 +14,7 @@ import type {
   RuntimeSession,
 } from "../runtime.ts";
 import { RuntimeTaskRejectedError } from "../runtime-errors.ts";
+import { spawnCodexGuardian } from "./codex-guardian.ts";
 import {
   CODEX_REQUEST_TIMEOUT_MS,
   type CodexRpc,
@@ -107,6 +108,7 @@ type NativeEvent = {
 export interface CodexDependencies {
   probe(executable: string, cwd: string, timeoutMs: number): Promise<string>;
   address(): Promise<string>;
+  removeDirectory(path: string): Promise<void>;
   spawn(executable: string, argv: string[], cwd: string): ChildProcess;
   connect(
     url: string,
@@ -119,6 +121,9 @@ export interface CodexDependencies {
   ): Promise<CodexRpc>;
 }
 const defaults: CodexDependencies = {
+  async removeDirectory(path) {
+    await rm(path, { recursive: true, force: true });
+  },
   probe(executable, cwd, timeoutMs) {
     return new Promise((resolve, reject) => {
       const child = spawn(executable, ["--version"], {
@@ -169,12 +174,7 @@ const defaults: CodexDependencies = {
       });
     });
   },
-  spawn: (executable, argv, cwd) =>
-    spawn(executable, argv, {
-      cwd,
-      stdio: ["ignore", "ignore", "pipe"],
-      env: { ...process.env, PI_KITS_SUBAGENT_WORKER: "1" },
-    }),
+  spawn: spawnCodexGuardian,
   connect: (
     url,
     token,
@@ -476,8 +476,8 @@ class CodexSession implements RuntimeSession {
       error: error.message,
       round: this.managed?.round,
     });
-    // Loss of control is not authority to kill native or unacknowledged work.
-    // Keep owned resources until the manager explicitly calls close().
+    // The manager owns disconnect cleanup for every session state. Retain
+    // handles until close() succeeds so failures remain retryable.
   }
   private requireConnected(): CodexRpc {
     if (!this.connected || !this.rpc)
@@ -990,8 +990,10 @@ class CodexSession implements RuntimeSession {
       }
     }
     const dir = this.dir;
-    this.dir = undefined;
-    if (dir) await rm(dir, { recursive: true, force: true });
+    if (dir) {
+      await this.deps.removeDirectory(dir);
+      this.dir = undefined;
+    }
     this.token = "";
     if (terminalError) throw terminalError;
   }

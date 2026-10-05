@@ -100,6 +100,8 @@ export interface WorkerConfig {
 
 export interface WorkerDependencies {
   connect(config: WorkerConfig): Socket;
+  /** Wake Pi's signal-based shutdown even when its TUI is idle. */
+  terminate?(): void;
 }
 
 /** Parent coordination entry points should use this same exact marker check. */
@@ -256,8 +258,8 @@ function messageText(message: MessageEndEvent["message"]): string {
 }
 
 /** Testable factory; no resources are created until session_start in TUI mode.
- * Sockets are never used as Pi's stdin/stdout and disconnect never aborts Pi.
- * There is no reconnect/replay: the manager should treat disconnect as detached.
+ * Sockets are never used as Pi's stdin/stdout. Loss of the parent control
+ * connection aborts work and shuts down the worker; there is no detach/reconnect.
  */
 export function registerWorkerBridge(
   pi: ExtensionAPI,
@@ -268,6 +270,7 @@ export function registerWorkerBridge(
 ): void {
   let socket: Socket | undefined;
   let connected = false;
+  let shuttingDown = false;
   let sessionState: WorkerSessionState = "idle";
   let sessionActivity: string | undefined;
   let context: ExtensionContext | undefined;
@@ -296,6 +299,27 @@ export function registerWorkerBridge(
     previous?.destroy();
   }
 
+  function loseParent(): void {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    const ctx = context;
+    disconnect();
+    reset();
+    context = undefined;
+    try {
+      ctx?.abort();
+    } finally {
+      try {
+        ctx?.shutdown();
+      } finally {
+        // ctx.shutdown only sets a flag in Pi's TUI; an idle worker may never
+        // submit another input. SIGTERM invokes Pi's graceful shutdown now.
+        if (dependencies.terminate) dependencies.terminate();
+        else process.kill(process.pid, "SIGTERM");
+      }
+    }
+  }
+
   function send(event: WorkerEvent): void {
     if (!connected || !socket || socket.destroyed) return;
     if (round !== undefined && event.type !== "ready") {
@@ -314,13 +338,13 @@ export function registerWorkerBridge(
       socket.writableLength + Buffer.byteLength(frame) >
       MAX_WRITE_BUFFER_BYTES
     ) {
-      disconnect();
+      loseParent();
       return;
     }
     try {
       socket.write(frame);
     } catch {
-      disconnect();
+      loseParent();
     }
   }
 
@@ -403,7 +427,7 @@ export function registerWorkerBridge(
   }
 
   function receive(command: WorkerCommand): void {
-    if (!connected || !context) return;
+    if (shuttingDown || !connected || !context) return;
     // Control and task frames from a previous round must not touch a new batch.
     if (command.type !== "task" && command.round !== round) return;
     if (command.type === "task") {
@@ -539,6 +563,7 @@ export function registerWorkerBridge(
   }
 
   pi.on("session_start", (_event, ctx) => {
+    if (shuttingDown) return;
     disconnect();
     reset();
     sessionState = "idle";
@@ -567,14 +592,14 @@ export function registerWorkerBridge(
       try {
         read(chunk);
       } catch {
-        disconnect();
+        loseParent();
       }
     });
     connection.on("error", () => {
-      if (socket === connection) disconnect();
+      if (socket === connection) loseParent();
     });
     connection.on("close", () => {
-      if (socket === connection) disconnect();
+      if (socket === connection) loseParent();
     });
   });
 

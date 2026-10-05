@@ -430,7 +430,8 @@ test("finished tasks retain results while native session state continues changin
   assert.equal(manager.get(agent.id).sessionActivity, undefined);
   assert.deepEqual(notifications, [agent.id]);
   mux.sockets.get(agent.id)?.destroy();
-  await until(() => manager.get(agent.id).sessionState === "disconnected");
+  await until(() => manager.get(agent.id).sessionState === "closed");
+  assert.deepEqual(mux.destroyed, [agent.id]);
   assert.equal(manager.get(agent.id).status, "completed");
   assert.equal(manager.get(agent.id).result, "Original result");
   await manager.close();
@@ -1031,7 +1032,7 @@ test("resume rejects active, interactive, disconnected, closed and invalid tasks
   assert.throws(() => manager.resume(first.id, { prompt: "Again" }), /idle/);
   assert.equal(manager.get(first.id).result, "Keep me");
   mux.sockets.get(first.id)?.destroy();
-  await until(() => manager.get(first.id).sessionState === "disconnected");
+  await until(() => manager.get(first.id).sessionState === "closed");
   assert.throws(
     () => manager.resume(first.id, { prompt: "Again" }),
     /connected/,
@@ -1187,7 +1188,7 @@ test("cancel before resume inspection finishes never sends a task or kills the r
   assert.deepEqual(mux.destroyed, []);
 });
 
-test("unacknowledged resume cancellation never kills native work and retains the concurrency claim", async (t) => {
+test("unacknowledged resume cancellation closes an unresponsive parent-owned worker", async (t) => {
   const mux = new FakeMux();
   const manager = new SubagentManager(mux, {
     maxConcurrent: 1,
@@ -1201,11 +1202,10 @@ test("unacknowledged resume cancellation never kills native work and retains the
   manager.resume(first.id, { prompt: "Resume awaiting acceptance" });
   await until(() => mux.commands.get(first.id)?.length === 2);
   manager.stop(first.id);
-  await until(() => manager.get(first.id).status === "disconnected");
+  await until(() => manager.get(first.id).status === "stopped");
+  assert.equal(manager.get(first.id).sessionState, "closed");
+  assert.deepEqual(mux.destroyed, [first.id]);
   const queued = manager.spawn(task);
-  assert.equal(manager.get(queued.id).status, "queued");
-  assert.deepEqual(mux.destroyed, []);
-  mux.emit(first.id, { type: "completed", result: "", canceled: true });
   await until(() => mux.commands.get(queued.id)?.length === 1);
 });
 
@@ -1234,7 +1234,7 @@ test("accepted resume cancellation may clean up an unresponsive owned worker", a
   );
 });
 
-test("connection loss before resume acknowledgement preserves the worker and concurrency claim", async (t) => {
+test("connection loss before resume acknowledgement closes the worker and releases its slot", async (t) => {
   const mux = new FakeMux();
   const manager = new SubagentManager(mux, { maxConcurrent: 1 });
   t.after(() => manager.close());
@@ -1245,12 +1245,11 @@ test("connection loss before resume acknowledgement preserves the worker and con
   manager.resume(first.id, { prompt: "Unconfirmed continuation" });
   await until(() => mux.commands.get(first.id)?.length === 2);
   mux.sockets.get(first.id)?.destroy();
-  await until(() => manager.get(first.id).status === "disconnected");
-  assert.deepEqual(mux.destroyed, []);
+  await until(() => manager.get(first.id).status === "error");
+  assert.equal(manager.get(first.id).sessionState, "closed");
+  assert.deepEqual(mux.destroyed, [first.id]);
   const next = manager.spawn(task);
-  assert.equal(manager.get(next.id).status, "queued");
-  assert.equal(manager.stop(first.id).status, "disconnected");
-  assert.deepEqual(mux.destroyed, []);
+  await until(() => mux.commands.get(next.id)?.length === 1);
 });
 
 test("a stale cancellation timer cannot change a later resumed round", async (t) => {
@@ -1321,7 +1320,7 @@ test("resume cannot race an already-started terminal cleanup after cooperative c
   await until(() => manager.get(first.id).sessionState === "closed");
 });
 
-test("Pi disconnect is one-shot: an unconfirmed resume cannot reauthenticate or release native ownership", async (t) => {
+test("Pi disconnect is one-shot: an unconfirmed resume closes and cannot reauthenticate", async (t) => {
   const mux = new FakeMux();
   const manager = new SubagentManager(mux, { maxConcurrent: 1 });
   t.after(() => manager.close());
@@ -1332,7 +1331,7 @@ test("Pi disconnect is one-shot: an unconfirmed resume cannot reauthenticate or 
   manager.resume(first.id, { prompt: "Unconfirmed resume" });
   await until(() => mux.commands.get(first.id)?.length === 2);
   mux.sockets.get(first.id)?.destroy();
-  await until(() => manager.get(first.id).status === "disconnected");
+  await until(() => manager.get(first.id).sessionState === "closed");
   const start = mux.started[0];
   const [host, port] = start.env.PI_KITS_SUBAGENT_ENDPOINT.split(":");
   const replacement = connect({ host, port: Number(port) });
@@ -1348,11 +1347,11 @@ test("Pi disconnect is one-shot: an unconfirmed resume cannot reauthenticate or 
     );
   });
   await until(() => replacement.destroyed);
-  assert.equal(manager.get(first.id).status, "disconnected");
-  assert.equal(manager.get(first.id).sessionState, "disconnected");
-  assert.deepEqual(mux.destroyed, []);
+  assert.equal(manager.get(first.id).status, "error");
+  assert.equal(manager.get(first.id).sessionState, "closed");
+  assert.deepEqual(mux.destroyed, [first.id]);
   const queued = manager.spawn(task);
-  assert.equal(queued.status, "queued");
+  await until(() => mux.commands.get(queued.id)?.length === 1);
 });
 
 test("startup cancellation does not wait for another agent's blocked view operation", async (t) => {

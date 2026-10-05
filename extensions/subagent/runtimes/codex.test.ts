@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import type { ChildProcess } from "node:child_process";
 import { EventEmitter } from "node:events";
-import { access, readFile, stat } from "node:fs/promises";
+import { access, readFile, rm, stat } from "node:fs/promises";
 import { PassThrough } from "node:stream";
 import test from "node:test";
 import type { AgentDefinition } from "../agents.ts";
@@ -153,6 +153,9 @@ function fixture(
     },
   };
   const dependencies: CodexDependencies = {
+    async removeDirectory(path) {
+      await rm(path, { recursive: true, force: true });
+    },
     async probe() {
       return "codex-cli 0.160.0";
     },
@@ -353,6 +356,39 @@ test("start owns private token file, probes protocol, maps developer instruction
   await f.session.close();
   assert.equal(f.children[0].killed, true);
   await assert.rejects(access(tokenFile));
+});
+
+test("close retains the token directory when deletion fails and retries it", async (t) => {
+  let canRemove = false;
+  const removed: string[] = [];
+  const f = fixture(
+    {},
+    {
+      async removeDirectory(path) {
+        removed.push(path);
+        if (!canRemove) throw new Error("Directory cleanup unavailable");
+        await rm(path, { recursive: true, force: true });
+      },
+    },
+  );
+  t.after(async () => {
+    canRemove = true;
+    await f.session.close();
+  });
+  await f.session.start();
+  const tokenFile = must(f.argv.at(-1));
+  const closing = f.session.close();
+  assert.equal(f.session.close(), closing);
+  await assert.rejects(closing, /Directory cleanup unavailable/);
+  await access(tokenFile);
+  assert.equal(f.children[0].killed, true);
+  assert.equal(f.closes, 1);
+  canRemove = true;
+  await f.session.close();
+  assert.equal(removed.length, 2);
+  assert.equal(removed[0], removed[1]);
+  await assert.rejects(access(tokenFile));
+  assert.equal(f.closes, 1);
 });
 
 test("sessions have distinct backend children and authentication tokens", async (t) => {

@@ -134,15 +134,24 @@ file. Foreground waits are bound to their round even if another round starts.
 Resumed rounds enter the same FIFO concurrency queue as new tasks. If native
 work starts while queued, dispatch fails rather than taking over the user.
 The worker also atomically checks idle at receipt to cover IPC races. Canceling
-a queued/preflight resume never aborts native work. If cancellation or connection
-loss occurs before the worker confirms ownership of a dispatched round, its
-terminal is retained and the concurrency claim is held rather than killing
-potential native work; parent shutdown/reload can clean up retained workers.
+a queued/preflight resume never aborts native work. All workers, including native/user sessions, remain owned by the parent agent.
+Control-connection loss closes the runtime and its views even when a resumed
+round has not acknowledged receipt. Unresponsive managed cancellation also
+closes the runtime after its timeout. The concurrency claim is released only
+after cleanup succeeds; failed cleanup retains ownership for retry.
 
 `stop_subagent` cancels the managed task, not independent native/user work, and
 retains its terminal when Pi cooperates;
 if cancellation does not settle within five seconds, the terminal is destroyed.
-Parent session shutdown/reload cleans up owned workers and views. Workers share
+Parent session shutdown/reload cleans up owned workers and views. Shutdown
+coalesces concurrent cleanup calls and retries failures up to three times with
+short backoff. Successfully closed runtimes are not closed again; failed runtime,
+view, and temporary-directory ownership is retained for retry. The manager is
+released only after cleanup succeeds. Exhausted retries report the affected agent
+IDs and resource kinds through Pi's extension error handling. This is best-effort
+cleanup; ownership is not persisted across processes or extension-runtime
+replacement. Pi workers self-terminate when the parent control connection is
+lost, including while idle or in native interaction. Workers share
 the filesystem and credentials and are not a sandbox. They start with
 `--no-approve`, so trust-gated project resources are not loaded automatically.
 Workers also use `--no-extensions` and explicitly load the worker bridge plus
@@ -153,11 +162,13 @@ extensions, are not inherited. Add trusted extensions to this list explicitly.
 The worker bridge uses authenticated loopback TCP JSONL, not terminal screen
 parsing. Command frames and returned results are bounded to 64 KiB; truncated
 results identify the session file. State is session-scoped: cross-process task
-recovery and automatic reconnect are not implemented. IPC loss during an
-acknowledged active round triggers worker cleanup before releasing its queue
-slot. Failed cleanup is reported as `disconnected`; use `stop_subagent` to
-retry. Unacknowledged resumed rounds instead retain the worker and slot as
-described above; finished sessions retain their last task result.
+recovery and automatic reconnect are not implemented. IPC loss triggers cleanup
+for active, idle, and native sessions; there is no independent detach mode.
+Pi workers abort work, invalidate queued/preflight submissions, and invoke
+signal-based graceful shutdown when their control channel closes or fails.
+Failed manager cleanup is reported as `disconnected`; use `stop_subagent` to
+retry, including after a task has finished. Finished sessions retain their last
+task result even when their runtime is closed.
 
 Only [index.ts](../index.ts) is listed in the [root](../../../package.json)
 and [subagent](../package.json) Pi manifests. The background Pi loads
@@ -217,9 +228,17 @@ native TUI before submitting a new managed round**. Closing/detaching the Herdr
 view does not exit the native TUI and does not release this submission guard.
 This guard does not restrict opening a pane for an already-running task.
 
-Parent shutdown/reload or deletion closes both the owned app-server and any
-owned native terminal. Session history remains in Codex's normal session store;
-there is no automatic restart, reconnect, or cross-process task recovery.
+Parent shutdown/reload, deletion, or control-connection loss closes both the
+owned app-server and any owned native terminal. The app-server runs under a
+small Node guardian with a dedicated POSIX process group and a parent IPC
+channel. If the parent process disappears, the guardian sends SIGTERM and then
+SIGKILL to its own group, including ordinary backend tool children; opening a
+native TUI does not transfer backend ownership. This requires POSIX; Windows
+launches are rejected rather than silently weakening the ownership guarantee.
+Processes that deliberately leave the group, a forcibly killed guardian, and
+Herdr workspace/native-attachment or token-directory remnants after abrupt
+parent death are outside this fallback's guarantee. Session history remains in Codex's normal session
+store; there is no automatic restart, reconnect, or cross-process task recovery.
 
 ## User-defined agent types
 

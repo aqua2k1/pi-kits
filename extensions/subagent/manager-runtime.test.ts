@@ -141,6 +141,71 @@ function harness(id: RuntimeId = "codex") {
   };
 }
 
+test("shutdown retries failed runtimes without closing successful sessions again", async (t) => {
+  const h = harness();
+  const manager = new SubagentManager(h.mux, { runtimes: [h.runtime] });
+  t.after(async () => {
+    for (const session of h.sessions) session.failClose = false;
+    await manager.close();
+  });
+  const first = manager.spawn({ ...task, runtime: "codex" });
+  const second = manager.spawn({ ...task, runtime: "codex" });
+  await until(() => h.sessions.length === 2);
+  await until(() =>
+    h.sessions.every((session) => session.commands.length === 1),
+  );
+  h.sessions[0].failClose = true;
+  const closing = manager.close();
+  assert.equal(manager.close(), closing);
+  await assert.rejects(closing, new RegExp(`${first.id}: runtime`));
+  assert.equal(manager.get(second.id).sessionState, "closed");
+  assert.equal(manager.get(second.id).status, "stopped");
+  assert.throws(() => manager.spawn(task), /closed/);
+  const successfulCalls = h.sessions[1].closeCalls;
+  h.sessions[0].failClose = false;
+  const retry = manager.close();
+  assert.notEqual(retry, closing);
+  await retry;
+  assert.equal(manager.get(first.id).sessionState, "closed");
+  assert.equal(h.sessions[1].closeCalls, successfulCalls);
+  assert.equal(manager.close(), retry);
+});
+
+test("shutdown retains failed view and runtime ownership for retry", async (t) => {
+  const h = harness();
+  const manager = new SubagentManager(h.mux, { runtimes: [h.runtime] });
+  let canCloseView = false;
+  let attempts = 0;
+  h.mux.close_view = async (view) => {
+    attempts++;
+    if (!canCloseView) throw new Error("View cleanup unavailable");
+    h.closedViews.push(view.id);
+  };
+  t.after(async () => {
+    canCloseView = true;
+    for (const session of h.sessions) session.failClose = false;
+    await manager.close();
+  });
+  const agent = manager.spawn({ ...task, runtime: "codex" });
+  await until(() => h.sessions[0]?.commands.length === 1);
+  h.sessions[0].complete();
+  const view = await manager.openView(agent.id);
+  h.sessions[0].failClose = true;
+  await assert.rejects(
+    manager.close(),
+    new RegExp(`${agent.id}: view and runtime`),
+  );
+  assert.equal(manager.get(agent.id).viewId, view.id);
+  const runtimeCalls = h.sessions[0].closeCalls;
+  canCloseView = true;
+  h.sessions[0].failClose = false;
+  await manager.close();
+  assert.equal(manager.get(agent.id).viewId, undefined);
+  assert.equal(manager.get(agent.id).sessionState, "closed");
+  assert.ok(h.sessions[0].closeCalls > runtimeCalls);
+  assert.equal(attempts, 2);
+});
+
 test("registered runtime names work without parser or manager enum changes", async (t) => {
   const h = harness("test-runtime");
   const manager = new SubagentManager(h.mux, {
@@ -443,7 +508,7 @@ test("late async task/cancel failures cannot terminate a subsequent round", asyn
   assert.equal(session.closeCalls, 0);
 });
 
-test("uncertain async resumed delivery/cancel retains native ownership and concurrency", async (t) => {
+test("uncertain async resumed delivery/cancel closes the parent-owned runtime", async (t) => {
   const h = harness();
   const delivery = deferred();
   h.configure((session) => {
@@ -467,14 +532,44 @@ test("uncertain async resumed delivery/cancel retains native ownership and concu
   await until(() => h.sessions[0].commands.length === 2);
   assert.equal(manager.stop(first.id).status, "stopping");
   delivery.reject(new Error("Transport outcome unknown"));
-  await until(() => manager.get(first.id).status === "disconnected");
-  assert.match(manager.get(first.id).error ?? "", /slot retained/);
-  assert.equal(h.sessions[0].closeCalls, 0);
+  await until(() => manager.get(first.id).status === "stopped");
+  assert.equal(manager.get(first.id).sessionState, "closed");
+  assert.ok(h.sessions[0].closeCalls > 0);
   const queued = manager.spawn({ ...task, runtime: "codex" });
-  assert.equal(queued.status, "queued");
-  assert.equal(manager.stop(first.id).status, "disconnected");
-  h.sessions[0].complete(2);
-  await until(() => h.sessions.length === 2);
+  await until(() => manager.get(queued.id).status === "running");
+});
+
+test("finished native session cleanup failures retain ownership and stop retries without changing results", async (t) => {
+  const h = harness();
+  const manager = new SubagentManager(h.mux, { runtimes: [h.runtime] });
+  t.after(async () => {
+    h.sessions[0].failClose = false;
+    await manager.close();
+  });
+  const agent = manager.spawn({ ...task, runtime: "codex" });
+  await until(() => h.sessions[0]?.commands.length === 1);
+  h.sessions[0].complete();
+  const finished = manager.get(agent.id);
+  h.sessions[0].emit({ type: "session_state", state: "interactive" });
+  const view = await manager.openView(agent.id);
+  h.sessions[0].failClose = true;
+  h.sessions[0].connected = false;
+  h.sessions[0].emit({ type: "disconnected", error: "Control lost" });
+  await until(() => h.sessions[0].closeCalls > 0 && !h.sessions[0].connected);
+  await until(
+    () =>
+      manager.get(agent.id).sessionActivity?.includes("cleanup failed") ===
+      true,
+  );
+  assert.equal(manager.get(agent.id).status, finished.status);
+  assert.equal(manager.get(agent.id).result, finished.result);
+  assert.equal(manager.get(agent.id).sessionState, "disconnected");
+  assert.deepEqual(h.closedViews, [view.id]);
+  h.sessions[0].failClose = false;
+  manager.stop(agent.id);
+  await until(() => manager.get(agent.id).sessionState === "closed");
+  assert.equal(manager.get(agent.id).status, finished.status);
+  assert.equal(manager.get(agent.id).result, finished.result);
 });
 
 test("normalized disconnect reports runtime errors; steering can be awaited without unhandled rejection", async (t) => {

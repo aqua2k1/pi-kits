@@ -58,6 +58,8 @@ function harness(connect?: (config: WorkerConfig) => Socket) {
   const sockets: FakeSocket[] = [];
   const messages: Array<{ text: string; deliverAs?: string }> = [];
   let aborts = 0;
+  let shutdowns = 0;
+  let terminations = 0;
   let connects = 0;
   let editor = "local unfinished draft";
   const ctx = {
@@ -82,7 +84,7 @@ function harness(connect?: (config: WorkerConfig) => Socket) {
       editor = "canceled native follow-up";
     },
     shutdown() {
-      assert.fail("Worker bridge must not shut down Pi");
+      shutdowns += 1;
     },
   } as unknown as ExtensionContext;
   const pi = {
@@ -97,6 +99,9 @@ function harness(connect?: (config: WorkerConfig) => Socket) {
     },
   } as unknown as ExtensionAPI;
   registerWorkerBridge(pi, config, {
+    terminate() {
+      terminations += 1;
+    },
     connect(value) {
       connects += 1;
       if (connect) return connect(value);
@@ -116,6 +121,12 @@ function harness(connect?: (config: WorkerConfig) => Socket) {
     },
     get connects() {
       return connects;
+    },
+    get shutdowns() {
+      return shutdowns;
+    },
+    get terminations() {
+      return terminations;
     },
     get editor() {
       return editor;
@@ -788,7 +799,7 @@ test("synchronous Pi submission failures produce completed errors", () => {
   assert.match(completions(socket)[0]?.error ?? "", /submission failed/);
 });
 
-test("disconnect, malformed input and backpressure detach without aborting Pi", () => {
+test("disconnect, malformed input and backpressure abort and terminate the worker once", () => {
   for (const failure of ["close", "error", "oversize", "invalid", "slow"]) {
     const h = harness();
     const socket = h.start();
@@ -810,9 +821,63 @@ test("disconnect, malformed input and backpressure detach without aborting Pi", 
     h.emit("message_end", { message: assistant("still works") });
     h.emit("agent_settled");
     assert.equal(socket.frames.length, count);
-    assert.equal(h.aborts, 0);
+    assert.equal(h.aborts, 1);
+    assert.equal(h.shutdowns, 1);
+    assert.equal(h.terminations, 1);
+    h.emit("session_start");
     assert.equal(h.connects, 1, "must not reconnect or replay tasks");
   }
+});
+
+test("failure to establish the parent connection terminates the worker", () => {
+  const h = harness();
+  h.emit("session_start");
+  const socket = h.sockets[0];
+  socket.emit("error", new Error("Connection refused"));
+  assert.equal(socket.destroyed, true);
+  assert.equal(h.aborts, 1);
+  assert.equal(h.shutdowns, 1);
+  assert.equal(h.terminations, 1);
+});
+
+test("worker's own shutdown closes IPC without recursively requesting termination", () => {
+  const h = harness();
+  const socket = h.start();
+  h.emit("session_shutdown");
+  assert.equal(socket.destroyed, true);
+  assert.equal(h.shutdowns, 0);
+  assert.equal(h.terminations, 0);
+});
+
+test("idle and native workers also terminate on parent loss", () => {
+  for (const native of [false, true]) {
+    const h = harness();
+    const socket = h.start();
+    if (native) h.emit("before_agent_start");
+    socket.destroy();
+    socket.emit("error", new Error("Parent gone"));
+    assert.equal(h.aborts, 1);
+    assert.equal(h.shutdowns, 1);
+    assert.equal(h.terminations, 1);
+  }
+});
+
+test("parent loss during auth preflight invalidates the pending prompt", async () => {
+  const h = harness();
+  const socket = h.start();
+  let resolve: (() => void) | undefined;
+  h.ctx.modelRegistry.hasConfiguredAuth = () => false;
+  h.ctx.modelRegistry.getApiKeyAndHeaders = () =>
+    new Promise((done) => {
+      resolve = () => done({ ok: true });
+    });
+  socket.command({ type: "task", prompt: "work" });
+  socket.destroy();
+  assert.ok(resolve);
+  resolve();
+  await setImmediate();
+  assert.equal(h.messages.length, 0);
+  assert.equal(h.terminations, 1);
 });
 
 test("session replacement closes the old connection and reports the fresh path", () => {
@@ -824,6 +889,8 @@ test("session replacement closes the old connection and reports the fresh path",
   replacement.command({ type: "task", prompt: "fresh" });
   assert.equal(h.messages.length, 1);
   assert.equal(h.messages[0]?.text, "fresh");
+  assert.equal(h.shutdowns, 0);
+  assert.equal(h.terminations, 0);
 });
 
 test("real loopback TCP uses JSONL without taking over Pi stdio", async (t) => {

@@ -135,6 +135,7 @@ export class SubagentManager {
   private readonly queue: { record: AgentRecord; execution: Execution }[] = [];
   private readonly runtimes = new Map<RuntimeId, AgentRuntime>();
   private readonly launches = new Set<Promise<void>>();
+  private readonly closedSessions = new WeakSet<RuntimeSession>();
   private active = 0;
   private disposed = false;
   private closing?: Promise<void>;
@@ -340,7 +341,12 @@ export class SubagentManager {
   stop(id: string): AgentSnapshot {
     const record = this.record(id);
     const execution = record.execution;
-    if (execution.finished) return this.snapshot(record);
+    if (execution.finished) {
+      if (record.snapshot.sessionState === "disconnected") {
+        void this.terminate(record, "error");
+      }
+      return this.snapshot(record);
+    }
     if (
       record.snapshot.status === "queued" ||
       (record.execution.reused && !record.execution.dispatched)
@@ -356,12 +362,7 @@ export class SubagentManager {
         if (closing) void closing.catch(() => undefined);
         void this.terminate(record, "stopped");
       } else if (disconnected || !record.session?.connected) {
-        if (record.execution.reused && !record.execution.accepted) {
-          // An unacknowledged command is not permission to kill native work.
-          record.snapshot.status = "disconnected";
-        } else {
-          void this.terminate(record, "stopped");
-        }
+        void this.terminate(record, "stopped");
       } else {
         try {
           const sent = this.send(record, { type: "cancel" });
@@ -379,14 +380,7 @@ export class SubagentManager {
         }
         record.cancelTimer = setTimeout(() => {
           if (record.execution !== execution || execution.finished) return;
-          if (execution.reused && !execution.accepted) {
-            record.snapshot.status = "disconnected";
-            record.snapshot.error =
-              "Resume cancellation unconfirmed; worker retained to protect native/user work. Concurrency slot retained.";
-            this.changed();
-          } else {
-            void this.terminate(record, "stopped");
-          }
+          void this.terminate(record, "stopped");
         }, this.options.cancelTimeoutMs ?? 5_000);
       }
     }
@@ -505,18 +499,28 @@ export class SubagentManager {
   }
 
   close(): Promise<void> {
-    this.closing ??= this.dispose();
+    this.closing ??= this.dispose().catch((error) => {
+      this.closing = undefined;
+      throw error;
+    });
     return this.closing;
   }
 
   private async dispose(): Promise<void> {
     this.disposed = true;
+    const closing: Promise<void>[] = [];
     for (const record of this.records.values()) {
-      const closing = record.session?.close();
-      if (closing) void closing.catch(() => undefined);
+      const session = record.session;
+      if (session && !this.closedSessions.has(session)) {
+        closing.push(
+          session.close().then(() => {
+            this.closedSessions.add(session);
+          }),
+        );
+      }
       if (!record.execution.finished) this.finish(record, "stopped");
     }
-    await Promise.allSettled([...this.launches]);
+    await Promise.allSettled([...this.launches, ...closing]);
     const cleanup = await Promise.allSettled(
       [...this.records.values()].map(async (record) => {
         const viewClosed = await this.closeView(record.snapshot.id).then(
@@ -525,12 +529,24 @@ export class SubagentManager {
         );
         const terminalClosed = await this.closeSession(record);
         if (!viewClosed || !terminalClosed) {
-          throw new Error(`Could not clean up subagent ${record.snapshot.id}.`);
+          const resources = [
+            ...(!viewClosed ? ["view"] : []),
+            ...(!terminalClosed ? ["runtime"] : []),
+          ].join(" and ");
+          throw new Error(
+            `Could not clean up subagent ${record.snapshot.id}: ${resources}.`,
+          );
         }
       }),
     );
-    if (cleanup.some((result) => result.status === "rejected")) {
-      throw new Error("Some subagent terminals could not be cleaned up.");
+    const errors = cleanup.flatMap((result) =>
+      result.status === "rejected" ? [result.reason as Error] : [],
+    );
+    if (errors.length) {
+      throw new AggregateError(
+        errors,
+        `Some subagent terminals could not be cleaned up. ${errors.map((error) => error.message).join(" ")}`,
+      );
     }
   }
 
@@ -672,7 +688,11 @@ export class SubagentManager {
 
   private async closeSession(record: AgentRecord): Promise<boolean> {
     try {
-      await record.session?.close();
+      const session = record.session;
+      if (session && !this.closedSessions.has(session)) {
+        await session.close();
+        this.closedSessions.add(session);
+      }
       record.snapshot.sessionState = "closed";
       record.snapshot.sessionActivity = undefined;
       this.forgetView(record);
@@ -701,10 +721,15 @@ export class SubagentManager {
       }
       if (await this.closeSession(record)) {
         this.finish(record, status, error);
-      } else if (!record.execution.finished) {
-        record.snapshot.status = "disconnected";
-        record.snapshot.error =
-          "Worker cleanup failed; concurrency slot retained. Retry stop_subagent.";
+      } else {
+        record.snapshot.sessionState = "disconnected";
+        record.snapshot.sessionActivity =
+          "Worker cleanup failed; retry stop_subagent.";
+        if (!record.execution.finished) {
+          record.snapshot.status = "disconnected";
+          record.snapshot.error =
+            "Worker cleanup failed; concurrency slot retained. Retry stop_subagent.";
+        }
         this.changed();
       }
     });
@@ -726,22 +751,22 @@ export class SubagentManager {
     record.snapshot.sessionActivity = undefined;
     this.changed();
     const execution = record.execution;
-    if (execution.finished || record.terminating) return;
-    if (execution.reused && !execution.accepted) {
-      if (execution.dispatched) {
-        record.snapshot.status = "disconnected";
-        record.snapshot.error = `${error} Resume acceptance unconfirmed; concurrency slot retained to protect native/user work.`;
-        this.changed();
-      } else {
-        this.finish(record, "error", `${error} Before resume dispatch.`);
-      }
-    } else if (record.snapshot.status !== "starting") {
-      void this.terminate(
-        record,
-        record.snapshot.status === "stopping" ? "stopped" : "error",
-        error,
-      );
+    if (record.terminating) return;
+    // Fresh startup handles its own rejection/cleanup. All other sessions,
+    // including idle/native sessions and unacknowledged resumes, are parent-
+    // owned and must not survive loss of the control connection.
+    if (
+      !execution.finished &&
+      !execution.reused &&
+      record.snapshot.status === "starting"
+    ) {
+      return;
     }
+    void this.terminate(
+      record,
+      record.snapshot.status === "stopping" ? "stopped" : "error",
+      error,
+    );
   }
 
   private sendFailed(

@@ -34,6 +34,7 @@ function registrations() {
   const tools: string[] = [];
   const commands: string[] = [];
   const hooks: string[] = [];
+  const hookHandlers = new Map<string, () => void | Promise<void>>();
   const definitions = new Map<string, ToolDefinition>();
   const commandHandlers = new Map<
     string,
@@ -52,11 +53,20 @@ function registrations() {
       commands.push(name);
       commandHandlers.set(name, definition);
     },
-    on(event: string) {
+    on(event: string, handler: () => void | Promise<void>) {
       hooks.push(event);
+      hookHandlers.set(event, handler);
     },
   } as unknown as ExtensionAPI;
-  return { pi, tools, commands, hooks, definitions, commandHandlers };
+  return {
+    pi,
+    tools,
+    commands,
+    hooks,
+    hookHandlers,
+    definitions,
+    commandHandlers,
+  };
 }
 
 for (const [name, config, env] of [
@@ -143,6 +153,59 @@ for (const config of [
     ]);
     assert.deepEqual(capture.commands, ["subagent:views"]);
     assert.deepEqual(capture.hooks, ["session_start", "session_shutdown"]);
+  });
+}
+
+for (const failures of [1, 3]) {
+  test(`shutdown retains its manager through ${failures} cleanup failures`, async (t) => {
+    const capture = registrations();
+    const managers: SubagentManager[] = [];
+    const closed: SubagentManager[] = [];
+    t.mock.method(
+      SubagentManager.prototype,
+      "result",
+      async function (this: SubagentManager) {
+        managers.push(this);
+        return {
+          id: "owned",
+          description: "Task",
+          status: "completed" as const,
+        };
+      },
+    );
+    t.mock.method(
+      SubagentManager.prototype,
+      "close",
+      async function (this: SubagentManager) {
+        closed.push(this);
+        if (closed.length <= failures) throw new Error("Cleanup unavailable");
+      },
+    );
+    registerSubagents(capture.pi, {} as MuxAdapter);
+    const tool = capture.definitions.get("get_subagent_result");
+    const shutdown = capture.hookHandlers.get("session_shutdown");
+    assert.ok(tool && shutdown);
+    const read = () =>
+      tool.execute("call", { agent_id: "owned" }, undefined, undefined, {
+        mode: "print",
+      } as ExtensionToolContext);
+    await read();
+    const closing = shutdown();
+    assert.equal(shutdown(), closing);
+    await assert.rejects(read(), /shutting down/);
+    if (failures === 3) {
+      await assert.rejects(Promise.resolve(closing), /Cleanup unavailable/);
+      assert.equal(closed.length, 3, "shutdown retries are bounded");
+      await read();
+      assert.equal(managers.at(-1), managers[0]);
+      await shutdown();
+    } else {
+      await closing;
+    }
+    assert.ok(closed.every((current) => current === managers[0]));
+    await read();
+    assert.notEqual(managers.at(-1), managers[0]);
+    await shutdown();
   });
 }
 

@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { setTimeout as delay } from "node:timers/promises";
 import {
   copyToClipboard,
   defineTool,
@@ -62,7 +63,9 @@ export function registerSubagents(
   let manager: SubagentManager | undefined;
   let status: SubagentStatusWidget | undefined;
   let context: ExtensionContext | undefined;
+  let shutdown: Promise<void> | undefined;
   const getManager = (ctx?: ExtensionContext) => {
+    if (shutdown) throw new Error("Subagent manager is shutting down.");
     context = ctx ?? context;
     manager ??= new SubagentManager(adapter, {
       maxConcurrent,
@@ -412,13 +415,30 @@ export function registerSubagents(
     },
   });
 
-  pi.on("session_shutdown", async () => {
+  pi.on("session_shutdown", () => {
+    if (shutdown) return shutdown;
     const current = manager;
-    manager = undefined;
     status?.dispose();
     status = undefined;
     context = undefined;
-    await current?.close();
+    if (!current) return;
+    shutdown = (async () => {
+      // Retry transient failures without abandoning ownership or keeping
+      // shutdown alive indefinitely. Herdr identity checks remain unchanged.
+      for (let attempt = 0; ; attempt++) {
+        try {
+          await current.close();
+          break;
+        } catch (error) {
+          if (attempt === 2) throw error;
+          await delay(100 * (attempt + 1));
+        }
+      }
+      if (manager === current) manager = undefined;
+    })().finally(() => {
+      shutdown = undefined;
+    });
+    return shutdown;
   });
 }
 
