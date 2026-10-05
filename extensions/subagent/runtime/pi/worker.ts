@@ -402,8 +402,10 @@ export function registerWorkerBridge(
   }
 
   function complete(): void {
-    if (!active || !context) return;
-    reportSession("idle");
+    if ((!active && !preparing) || !context) return;
+    if (active || (sessionState !== "interactive" && context.isIdle())) {
+      reportSession("idle");
+    }
     send({
       type: "completed",
       id: config.id,
@@ -431,17 +433,23 @@ export function registerWorkerBridge(
     // Control and task frames from a previous round must not touch a new batch.
     if (command.type !== "task" && command.round !== round) return;
     if (command.type === "task") {
-      if (active && command.round !== round) return;
+      if ((active || preparing) && command.round !== round) return;
       if (
         !active &&
+        !preparing &&
         ((command.round !== undefined && command.round <= lastRound) ||
           (command.round === undefined && lastRound > 1))
       )
         return;
     }
     if (command.type === "cancel") {
-      if (!active) return;
+      if (!active && !preparing) return;
       canceling = true;
+      // A reservation has no Pi prompt or native queues to abort.
+      if (preparing) {
+        complete();
+        return;
+      }
       pendingCommands = 0;
       startupQueue = [];
       // TUI ctx.abort synchronously clears both native queues, but restores
@@ -449,15 +457,13 @@ export function registerWorkerBridge(
       const editorText = context.ui.getEditorText();
       context.abort();
       context.ui.setEditorText(editorText);
-      // No Pi prompt exists yet while checking credentials.
-      if (preparing) complete();
       return;
     }
     if (canceling) {
       reject("Cancellation is pending; wait for completed");
       return;
     }
-    if (command.type === "steer" && !active) {
+    if (command.type === "steer" && !active && !preparing) {
       reject("No active worker task to steer");
       return;
     }
@@ -467,7 +473,7 @@ export function registerWorkerBridge(
     }
     // Pi's initial submission is asynchronous. Do not race multiple prompts
     // through preflight before streaming starts; native queueing is then safe.
-    if (active && !started) {
+    if ((active || preparing) && !started) {
       startupQueue.push(command);
       pendingCommands += 1;
       return;
@@ -496,10 +502,9 @@ export function registerWorkerBridge(
     const wasActive = active;
     if (!active) {
       reset();
-      active = true;
+      preparing = true;
       round = command.round;
       lastRound = Math.max(lastRound, round ?? 1);
-      reportSession("running");
     }
     pendingCommands += 1;
     if (wasActive) submit(command, true);
@@ -529,11 +534,19 @@ export function registerWorkerBridge(
         if (!auth.ok) throw new Error(auth.error);
       }
       if (generation !== current) return;
+      // Auth can yield to native input or non-agent operations. Commit only
+      // while still idle, with no await between this check and submission.
+      if (sessionState === "interactive" || !ctx.isIdle()) {
+        throw new Error(
+          "Subagent is busy with user interaction; wait until idle.",
+        );
+      }
       preparing = false;
+      active = true;
+      reportSession("running");
       submit(command, false);
     } catch (cause) {
       if (generation !== current) return;
-      preparing = false;
       error = boundedText(String(cause), MAX_ACTIVITY_BYTES).text;
       complete();
     }
@@ -620,15 +633,24 @@ export function registerWorkerBridge(
       return { action: "handled" };
     }
   });
+  function nativeStart(): void {
+    if (active) return;
+    reportSession("interactive", "Thinking…");
+    if (preparing) {
+      error = "Subagent is busy with user interaction; wait until idle.";
+      complete(); // Invalidates the reservation, never the native run.
+    }
+  }
+
   pi.on("before_agent_start", (_event, ctx) => {
     context = ctx;
-    if (!active) reportSession("interactive", "Thinking…");
+    nativeStart();
     if (active && canceling) ctx.abort();
   });
   pi.on("agent_start", (_event, ctx) => {
     context = ctx;
     if (!active) {
-      reportSession("interactive", "Thinking…");
+      nativeStart();
       return;
     }
     if (!started) {
@@ -735,7 +757,7 @@ export function registerWorkerBridge(
   pi.on("agent_settled", (_event, ctx) => {
     context = ctx;
     reportSession("idle");
-    complete();
+    if (active) complete();
   });
   pi.on("session_shutdown", () => {
     disconnect();

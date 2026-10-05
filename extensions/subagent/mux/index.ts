@@ -42,5 +42,6 @@ export interface MuxAdapter {
   /** False for closed, moved, or replaced attachments; never follows them. */
   inspect_view(view: ViewHandle): Promise<{ alive: boolean }>;
   focus_view(view: ViewHandle): Promise<void>;
+  /** Idempotent for owned views retired by close_view or terminal destroy. */
   close_view(view: ViewHandle): Promise<void>;
 }

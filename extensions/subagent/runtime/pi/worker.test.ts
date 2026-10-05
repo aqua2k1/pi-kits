@@ -783,10 +783,110 @@ test("cancel or shutdown during auth preflight cannot submit stale work", async 
     resolve();
     await setImmediate();
     assert.equal(h.messages.length, 0);
+    assert.equal(h.aborts, 0);
     if (action === "cancel") {
       assert.equal(completions(socket)[0]?.canceled, true);
     }
   }
+});
+
+test("native startup invalidates auth reservations without claiming or aborting user work", async () => {
+  for (const event of ["before_agent_start", "agent_start"]) {
+    for (const authFails of [false, true]) {
+      const h = harness();
+      const socket = h.start();
+      let finishAuth = () => {};
+      h.ctx.modelRegistry.hasConfiguredAuth = () => false;
+      h.ctx.modelRegistry.getApiKeyAndHeaders = () =>
+        new Promise((resolve, reject) => {
+          finishAuth = () => {
+            if (authFails) reject(new Error("late auth failure"));
+            else resolve({ ok: true });
+          };
+        });
+      socket.command({ type: "task", prompt: "managed", round: 1 });
+      socket.command({ type: "task", prompt: "queued", round: 1 });
+      h.ctx.isIdle = () => false;
+      h.emit(event);
+      socket.command({ type: "cancel", round: 1 });
+      h.emit("agent_start");
+      h.emit("message_end", { message: assistant("native answer") });
+      finishAuth();
+      await setImmediate();
+      assert.equal(h.messages.length, 0);
+      assert.equal(h.aborts, 0);
+      assert.equal(completions(socket).length, 1);
+      assert.match(completions(socket)[0]?.error ?? "", /busy/);
+      assert.equal(completions(socket)[0]?.result, "");
+      assert.equal(
+        socket.frames.some((frame) => frame.type === "started"),
+        false,
+      );
+      assert.equal(
+        socket.frames.some((frame) => frame.type === "stats"),
+        false,
+      );
+      assert.equal(
+        socket.frames.filter((frame) => frame.type === "session_state").at(-1)
+          ?.state,
+        "interactive",
+      );
+      h.ctx.isIdle = () => true;
+      h.emit("agent_settled");
+      assert.equal(completions(socket).length, 1);
+      h.ctx.modelRegistry.hasConfiguredAuth = () => true;
+      socket.command({ type: "task", prompt: "next round", round: 2 });
+      assert.equal(h.messages.at(-1)?.text, "next round");
+    }
+  }
+});
+
+test("auth commit rechecks idle even without native agent events", async () => {
+  const h = harness();
+  const socket = h.start();
+  let finishAuth = () => {};
+  h.ctx.modelRegistry.hasConfiguredAuth = () => false;
+  h.ctx.modelRegistry.getApiKeyAndHeaders = () =>
+    new Promise((resolve) => {
+      finishAuth = () => resolve({ ok: true });
+    });
+  socket.command({ type: "task", prompt: "managed", round: 1 });
+  h.ctx.isIdle = () => false; // e.g. manual compaction
+  finishAuth();
+  await setImmediate();
+  assert.equal(h.messages.length, 0);
+  assert.equal(h.aborts, 0);
+  assert.match(completions(socket)[0]?.error ?? "", /busy/);
+});
+
+test("canceling auth reservation preserves native queues and invalidates only its round", async () => {
+  const h = harness();
+  const socket = h.start();
+  let finishAuth = () => {};
+  h.ctx.modelRegistry.hasConfiguredAuth = () => false;
+  h.ctx.modelRegistry.getApiKeyAndHeaders = () =>
+    new Promise((resolve) => {
+      finishAuth = () => resolve({ ok: true });
+    });
+  socket.command({ type: "task", prompt: "managed", round: 1 });
+  socket.command({ type: "cancel", round: 1 });
+  assert.equal(h.aborts, 0);
+  assert.equal(h.editor, "local unfinished draft");
+  assert.equal(completions(socket)[0]?.canceled, true);
+  h.ctx.modelRegistry.hasConfiguredAuth = () => true;
+  socket.command({ type: "task", prompt: "new round", round: 2 });
+  h.emit("agent_start");
+  finishAuth();
+  await setImmediate();
+  assert.deepEqual(
+    h.messages.map((message) => message.text),
+    ["new round"],
+  );
+  assert.equal(completions(socket).length, 1);
+  socket.command({ type: "cancel", round: 1 });
+  assert.equal(h.aborts, 0);
+  socket.command({ type: "cancel", round: 2 });
+  assert.equal(h.aborts, 1);
 });
 
 test("synchronous Pi submission failures produce completed errors", () => {

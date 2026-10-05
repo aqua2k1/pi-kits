@@ -1150,6 +1150,98 @@ test("native turn started during result hydration remains interactive", async (t
   );
 });
 
+test("guardian stop requests must confirm exit and retain cleanup ownership on timeout", async (t) => {
+  for (const acceptsIpc of [true, false]) {
+    await t.test(`IPC accepted: ${acceptsIpc}`, async () => {
+      const signals: string[] = [];
+      const child = Object.assign(new EventEmitter(), {
+        stdout: new PassThrough(),
+        stderr: new PassThrough(),
+        exitCode: null as number | null,
+        signalCode: null as string | null,
+        kill(signal: string) {
+          signals.push(signal); // Like the guardian: request, not actual exit.
+          return acceptsIpc;
+        },
+      });
+      const removed: string[] = [];
+      const f = fixture(
+        {},
+        {
+          spawn: () => child as unknown as ChildProcess,
+          async removeDirectory(path) {
+            removed.push(path);
+            await rm(path, { recursive: true, force: true });
+          },
+        },
+      );
+      t.after(async () => {
+        child.signalCode = "SIGKILL";
+        child.emit("exit", null, "SIGKILL");
+        await f.session.close();
+      });
+      await f.session.start();
+      const terminal = await f.session.attachment();
+      const listeners = child.listenerCount("exit");
+      await assert.rejects(f.session.close(), /guardian exit unconfirmed/);
+      assert.deepEqual(signals, ["SIGTERM", "SIGKILL"]);
+      assert.equal(child.listenerCount("exit"), listeners);
+      assert.equal(f.session.terminal, terminal);
+      assert.equal(f.destroyed.length, 0);
+      assert.equal(removed.length, 0);
+      const retry = f.session.close();
+      await tick();
+      assert.deepEqual(signals, ["SIGTERM", "SIGKILL", "SIGTERM"]);
+      child.signalCode = "SIGKILL";
+      child.emit("exit", null, "SIGKILL");
+      await retry;
+      assert.deepEqual(f.destroyed, [terminal]);
+      assert.equal(removed.length, 1);
+      assert.equal(f.session.terminal, undefined);
+    });
+  }
+});
+
+test("forced guardian request still waits for the eventual exit event", async (t) => {
+  const signals: string[] = [];
+  let forceRequested = () => {};
+  const forced = new Promise<void>((resolve) => {
+    forceRequested = resolve;
+  });
+  const child = Object.assign(new EventEmitter(), {
+    stdout: new PassThrough(),
+    stderr: new PassThrough(),
+    exitCode: null as number | null,
+    signalCode: null as string | null,
+    kill(signal: string) {
+      signals.push(signal);
+      if (signal === "SIGKILL") forceRequested();
+      return true;
+    },
+  });
+  const f = fixture({}, { spawn: () => child as unknown as ChildProcess });
+  t.after(async () => {
+    child.signalCode = "SIGKILL";
+    child.emit("exit", null, "SIGKILL");
+    await f.session.close();
+  });
+  await f.session.start();
+  const terminal = await f.session.attachment();
+  let closed = false;
+  const closing = f.session.close().then(() => {
+    closed = true;
+  });
+  await forced;
+  assert.equal(closed, false);
+  assert.equal(f.session.terminal, terminal);
+  assert.equal(f.destroyed.length, 0);
+  child.signalCode = "SIGKILL";
+  child.emit("exit", null, "SIGKILL");
+  await closing;
+  assert.deepEqual(signals, ["SIGTERM", "SIGKILL"]);
+  assert.deepEqual(f.destroyed, [terminal]);
+});
+
 test("failed native destroy retains opaque handle and forbids submit", async (t) => {
   const f = fixture();
   t.after(() => f.session.close());

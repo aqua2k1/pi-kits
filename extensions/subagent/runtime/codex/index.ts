@@ -1025,20 +1025,43 @@ class CodexSession implements RuntimeSession {
     this.rpc = undefined;
     rpc?.close();
     const child = this.child;
-    this.child = undefined;
     if (child && child.exitCode === null && child.signalCode === null) {
-      await new Promise<void>((resolve) => {
-        const timer = setTimeout(() => {
-          child.kill("SIGKILL");
-          resolve();
-        }, 500);
-        child.once("exit", () => {
+      // Guardian kill() requests group cleanup over IPC; even SIGKILL is not
+      // proof of exit. Never OS-kill the guardian and orphan its backend.
+      await new Promise<void>((resolve, reject) => {
+        let timer: ReturnType<typeof setTimeout>;
+        const exited = () => {
           clearTimeout(timer);
           resolve();
-        });
-        child.kill("SIGTERM");
+        };
+        const failed = (cause: unknown) => {
+          clearTimeout(timer);
+          child.removeListener("exit", exited);
+          reject(cause);
+        };
+        child.once("exit", exited);
+        timer = setTimeout(() => {
+          timer = setTimeout(
+            () =>
+              failed(new Error("Codex guardian exit unconfirmed; retry close")),
+            500,
+          );
+          try {
+            child.kill("SIGKILL");
+          } catch (cause) {
+            failed(cause);
+          }
+        }, 500);
+        try {
+          child.kill("SIGTERM");
+        } catch (cause) {
+          failed(cause);
+        }
       });
     }
+    // Retain child, credentials and directory on an unconfirmed stop so the
+    // manager cannot release its concurrency claim and retries keep ownership.
+    if (this.child === child) this.child = undefined;
     const terminal = this.nativeTerminal;
     let terminalError: unknown;
     if (terminal) {

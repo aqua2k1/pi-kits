@@ -44,8 +44,9 @@ honoring `PI_CODING_AGENT_DIR`, including `~` expansion) and `/reload`:
 Configuration is validated and defaulted through `@pi-kits/config`. `mux` accepts
 only `"herdr"` and has no default; `enabled` defaults to `true`.
 `maxConcurrent` limits executing tasks, not retained idle Pi terminals; it is an
-integer from 1 to 32, defaulting to 4. Completed terminals remain available for
-inspection until parent-session cleanup. Activation requires
+integer from 1 to 32, defaulting to 4. Results and session files survive runtime
+release; terminals remain inspectable only while retained by an open native view
+or `keep_alive: true` (see [Automatic runtime release](#automatic-runtime-release)). Activation requires
 `subagent.enabled`, explicit `mux: "herdr"`, and
 exactly `HERDR_ENV === '1'`. There is no environment probing, automatic mux
 selection, or fallback. If unconfigured, disabled, or outside that Herdr
@@ -161,7 +162,8 @@ file. Foreground waits are bound to their round even if another round starts.
 
 Resumed rounds enter the same FIFO concurrency queue as new tasks. If native
 work starts while queued, dispatch fails rather than taking over the user.
-The worker also atomically checks idle at receipt to cover IPC races. Canceling
+The worker checks idle at receipt and again before submission after async auth
+preflight; native startup invalidates any pending reservation. Canceling
 a queued/preflight resume never aborts native work. All workers, including native/user sessions, remain owned by the parent agent.
 Control-connection loss closes the runtime and its views even when a resumed
 round has not acknowledged receipt. Unresponsive managed cancellation also
@@ -577,18 +579,11 @@ They may contain sensitive parent conversation data and add model context cost;
 enable inheritance only when needed. History is local-file data, not task IPC,
 so it is not subject to the 64 KiB command limit.
 
-The generic parser reads only supported frontmatter metadata. Unknown fields,
-including reference fields such as `extensions`, `skills`, `max_turns`, `memory`,
-and `isolation`, are ignored, even if their values are malformed. Top-level
-`tools`, `disallowed_tools`, `prompt_mode`, `inherit_context`, `runtime_args`, and
-`review_target` are also ignored, not migrated or aliased; runtime-exclusive
-settings must be moved into `runtime_config` to take effect. Supported generic
-fields and YAML syntax remain validated. Pi reads only `tools`, `disallowed_tools`,
-`prompt_mode`, and `inherit_context`; Codex reads only `runtime_args` and call-only
-`review_target`. Each runtime validates its own fields and ignores unknown or
-foreign fields, including malformed values, without an unsupported-key whitelist.
-Agent/session `review_target` is ignored and never inherited. Agent files and
-complete task IPC frames each have a 64 KiB limit.
+Supported generic fields and YAML syntax remain validated. Unknown frontmatter
+fields (such as `extensions`, `skills`, `max_turns`, `memory`, and `isolation`)
+are ignored. Runtime fields, ignore rules, precedence, and session/task inheritance
+are defined in [Runtime configuration](#runtime-configuration).
+Agent files and complete task IPC frames each have a 64 KiB limit.
 
 ## Worker extension allowlist
 

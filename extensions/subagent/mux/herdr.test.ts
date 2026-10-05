@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import type { TestContext } from "node:test";
 import { test } from "node:test";
+import { SubagentManager } from "../manager.ts";
+import type { AgentRuntime, RuntimeSession } from "../runtime/index.ts";
 import {
   HerdrAdapter,
   HerdrError,
@@ -256,7 +258,112 @@ test("open/focus/close view only affects the new attachment pane", async (t) => 
   assert.ok(fake.panes.has("external:p1"));
   assert.equal(fake.commands("workspace", "close").length, 0);
   assert.equal(fake.commands("pane", "move").length, 0);
-  await assert.rejects(adapter.close_view(view), code("unowned_view"));
+  await adapter.close_view(view);
+  assert.deepEqual(await adapter.inspect_view(view), { alive: false });
+  assert.equal(fake.commands("pane", "close").length, 1);
+});
+
+test("manager and Herdr compose runtime destruction with stale-view cleanup", async (t) => {
+  environment(t);
+  for (const action of ["remove", "shutdown", "retry-shutdown", "release"]) {
+    await t.test(action, async () => {
+      const fake = new FakeHerdr();
+      const adapter = fake.adapter();
+      const capabilities = {
+        nativeClone: false,
+        steer: false,
+        retainedSession: true,
+        concurrentNativeInput: true,
+      };
+      const runtime: AgentRuntime = {
+        id: "test-herdr",
+        capabilities,
+        validate() {},
+        create(options, host): RuntimeSession {
+          let terminal: TerminalHandle | undefined;
+          let closing: Promise<void> | undefined;
+          return {
+            capabilities,
+            get connected() {
+              return Boolean(terminal);
+            },
+            get terminal() {
+              return terminal;
+            },
+            async start() {
+              terminal = await adapter.start({
+                ...startOptions,
+                agentId: options.id,
+              });
+              host.emit({ type: "session_state", state: "idle" });
+            },
+            send(command) {
+              if (command.type !== "task") return;
+              host.emit({ type: "started", round: command.round });
+              host.emit({
+                type: "completed",
+                result: "retained result",
+                round: command.round,
+              });
+            },
+            async inspect() {
+              return Boolean(terminal);
+            },
+            async attachment() {
+              assert.ok(terminal);
+              return terminal;
+            },
+            close() {
+              closing ??= (async () => {
+                if (terminal) await adapter.destroy(terminal);
+                terminal = undefined;
+              })().catch((error) => {
+                closing = undefined;
+                throw error;
+              });
+              return closing;
+            },
+          };
+        },
+      };
+      const manager = new SubagentManager(adapter, { runtimes: [runtime] });
+      const agent = manager.spawn({
+        runtime: runtime.id,
+        keepAlive: true,
+        prompt: "test",
+        description: "test",
+        cwd: "/tmp",
+      });
+      await manager.result(agent.id, true);
+      const view = await manager.openView(agent.id);
+      if (action === "retry-shutdown") {
+        fake.intercept = (argv) =>
+          argv[0] === "workspace" && argv[1] === "close"
+            ? failure("cleanup_unavailable")
+            : undefined;
+        await assert.rejects(manager.close(), /Could not clean up/);
+        fake.intercept = undefined;
+      }
+      if (action === "remove") await manager.remove(agent.id);
+      else if (action === "release") await manager.release(agent.id);
+      else await manager.close();
+      assert.deepEqual(await adapter.inspect_view(view), { alive: false });
+      await adapter.close_view(view);
+      await assert.rejects(
+        adapter.close_view({ id: "foreign" }),
+        code("unowned_view"),
+      );
+      assert.equal(fake.commands("pane", "close").length, 1);
+      assert.deepEqual([...fake.panes.keys()], ["parent:p1", "external:p1"]);
+      if (action === "remove") assert.equal(manager.list().length, 0);
+      else {
+        assert.equal(manager.get(agent.id).viewId, undefined);
+        assert.equal(manager.get(agent.id).sessionState, "closed");
+        assert.equal(manager.get(agent.id).result, "retained result");
+      }
+      await manager.close();
+    });
+  }
 });
 
 test("adapter executes the shared placement instruction without choosing layout", async (t) => {

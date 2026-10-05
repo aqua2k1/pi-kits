@@ -157,6 +157,9 @@ export class HerdrAdapter implements MuxAdapter {
   private readonly limits: RunOptions;
   private readonly workers = new Map<string, Worker>();
   private readonly views = new Map<string, View>();
+  // Tombstones cover runtime-driven destroy racing manager view cleanup.
+  // Only handles issued and successfully retired by this adapter qualify.
+  private readonly closedViews = new Set<string>();
   private mutation: Promise<void> = Promise.resolve();
 
   constructor(options: HerdrOptions = {}) {
@@ -511,6 +514,7 @@ export class HerdrAdapter implements MuxAdapter {
   }
 
   async inspect_view(handle: ViewHandle): Promise<{ alive: boolean }> {
+    if (this.closedViews.has(handle.id)) return { alive: false };
     return { alive: await this.matches(this.view(handle)) };
   }
 
@@ -566,10 +570,12 @@ export class HerdrAdapter implements MuxAdapter {
   }
 
   private async closeView(handle: ViewHandle): Promise<void> {
+    if (this.closedViews.has(handle.id)) return;
     const view = this.view(handle);
     if (await this.matches(view)) {
       await this.command(["pane", "close", view.paneId]);
     }
     this.views.delete(handle.id);
+    this.closedViews.add(handle.id);
   }
 }
