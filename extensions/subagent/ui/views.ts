@@ -16,8 +16,8 @@ import {
   dockedListBudget,
   dockedPanelLayout,
   runDockedPanel,
-} from "../../shared/ui/docked-panel/index.ts";
-import type { AgentSnapshot } from "./manager.ts";
+} from "../../../shared/ui/docked-panel/index.ts";
+import type { AgentSnapshot } from "../manager.ts";
 import {
   type AgentSource,
   agentDisplayStatus,

@@ -113,8 +113,9 @@ Native conversations update session activity through IPC and remain visible in
 the widget until Pi settles, including retries and continuations. They do not
 overwrite the managed result/statistics, emit another completion notification,
 or acquire a managed concurrency slot. An IPC task cannot take over native work.
-Use `resume_subagent` with `agent_id`, a new `prompt`, optional `description`,
-and optional `run_in_background`. It keeps the same ID, process, terminal, view,
+Use `resume_subagent` with `agent_id`, a new `prompt` (or an explicit
+`review_target` for native review), optional `description`, and optional
+`run_in_background`. It keeps the same ID, process, terminal, view,
 session file/history (including native conversations), and original agent
 instructions. Agent files are not re-read. The worker's current model/thinking/
 tool settings are not reset, so native user changes remain in effect; requested
@@ -172,7 +173,7 @@ task result even when their runtime is closed.
 
 Only [index.ts](../index.ts) is listed in the [root](../../../package.json)
 and [subagent](../package.json) Pi manifests. The background Pi loads
-[worker.ts](../worker.ts) via an explicit `-e`; the worker is never auto-loaded
+[runtime/pi/worker.ts](../runtime/pi/worker.ts) via an explicit `-e`; the worker is never auto-loaded
 as a package resource.
 
 ## Codex runtime
@@ -216,7 +217,7 @@ runtime names are resolved by the runtime registry at launch.
 Native Codex TUI views are created lazily on demand, including while a managed
 task is running, using `codex --remote … resume <thread-id>` against the same
 app-server. They are writable, not screen-scraped viewers. Attachment waits for
-the managed `turn/start` to settle; opening/focusing/detaching a pane never
+the managed `turn/start` or `review/start` to settle; opening/focusing/detaching a pane never
 cancels or relinquishes that managed turn. Native input may steer or interrupt
 it, and its terminal event still determines the managed result. Independent
 native turns never overwrite the managed result or get canceled by
@@ -240,12 +241,73 @@ Herdr workspace/native-attachment or token-directory remnants after abrupt
 parent death are outside this fallback's guarantee. Session history remains in Codex's normal session
 store; there is no automatic restart, reconnect, or cross-process task recovery.
 
+### Native review and search
+
+Codex agents can declare runtime-specific options as CSV or a YAML array:
+
+```markdown
+---
+runtime: codex
+runtime_args: review, search
+model: gpt-6.1-sol
+thinking: medium
+description: Critical code review subagent
+---
+Review correctness, necessity, and better alternatives.
+```
+
+`runtime_args: [review, search]` is equivalent. The common agent parser retains
+these fields; the selected runtime's pure parser interprets them. Pi rejects
+`runtime_args`. The Codex adapter interprets `review` and `search` and forwards
+other options to its native app-server CLI without an option-name whitelist.
+Bare switch names gain a `--` prefix; options already starting with `-` are
+preserved. Use `--option=value` for options with values. This is a switch-list
+shorthand, not a shell command line or a way to replace the app-server with an
+arbitrary subcommand. Codex validates native option availability and rejects
+unsupported flags. No configuration starts a process during parsing.
+
+`search` enables live web search in the thread (`web_search: live`). `review`
+selects native `review/start` with inline delivery instead of ordinary
+`turn/start`, preserving the managed thread, cancellation and native views.
+Codex's native review delegate disables web search, so declaring both options
+**does not enable web search inside the review itself**.
+
+Specify the review scope on every `subagent` or `resume_subagent` call:
+
+```json
+{
+  "subagent_type": "reviewer",
+  "description": "Review changes against main",
+  "review_target": { "type": "baseBranch", "branch": "main" }
+}
+```
+
+`review_target` supports:
+
+- `{ "type": "uncommittedChanges" }`: staged, unstaged and untracked changes.
+- `{ "type": "baseBranch", "branch": "main" }`: changes against a base branch.
+- `{ "type": "commit", "sha": "<SHA>", "title": null }`: one commit; title is optional.
+- `{ "type": "custom", "instructions": "Review authentication for security issues" }`.
+
+Review mode requires an explicit target; it is never guessed or reused from a
+previous round. Non-review Codex tasks and Pi tasks reject `review_target`.
+Omit `prompt` for structured targets: the native review protocol cannot carry
+an additional task prompt. A custom target can include `prompt`, which is
+appended to its instructions. Ordinary tasks still require a nonempty prompt.
+Native review uses Codex's own review rubric and clears the thread's developer
+instructions; the agent Markdown body is not automatically copied into a custom
+review target. Put explicit review requirements in the custom target's
+`instructions`. Codex's own `review_model` configuration may also override the
+thread model; this adapter does not override that native policy. Review results
+are collected from native `exitedReviewMode.review` items, including paginated
+completion hydration.
+
 ## User-defined agent types
 
 There are **no embedded agent definitions or installed templates**. Create your
 own Markdown files in these directories:
 
-1. `<cwd>/.pi/agents/*.md` — project, highest priority.
+1. `<cwd>/.pi/agent/agents/*.md` — project, highest priority.
 2. `$PI_CODING_AGENT_DIR/agents/*.md` — global, normally `~/.pi/agent/agents/`.
 
 The filename without `.md` is the type name, matching `gotgenes/pi-subagents`.
@@ -257,7 +319,7 @@ read afresh when listing or spawning; editing a file affects new tasks, not
 already queued/running tasks. Invalid definitions fail explicitly rather than
 falling back to a less restricted global configuration.
 
-For example, a user-created `.pi/agents/auditor.md` could contain:
+For example, a user-created `.pi/agent/agents/auditor.md` could contain:
 
 ```markdown
 ---
@@ -294,6 +356,7 @@ Supported YAML frontmatter fields use the reference extension's snake_case names
 | `description` | Filename; shown in the type catalogue. |
 | `display_name` | Type name; shown beside the task in widgets, views, and tool cards. |
 | `runtime` | Call parameter, then `pi`; supports `pi` and `codex`. |
+| `runtime_args` | No additional runtime options. Codex-only CSV or YAML array; `review`/`search` are mapped by its adapter, other options go to its native CLI. |
 | `model` | Call parameter, then parent model for Pi or Codex's own default. |
 | `thinking` | Call parameter, then parent thinking for Pi or Codex's own effort default. |
 | `prompt_mode` | `replace` for Pi; accepts `replace` or `append`. Support is validated by the selected runtime at launch; Codex rejects explicit configuration. |
@@ -474,6 +537,6 @@ Configuration is validated by [the shared schema](../../../shared/config/schema.
 and resolved by [the shared config reader](../../../shared/config/index.ts).
 
 Implementation references: [tools and lifecycle](../index.ts),
-[task/session management](../manager.ts), [worker bridge](../worker.ts),
-[agent definitions](../agents.ts), [context cloning](../clone.ts), and
-[extension source resolution](../extensions.ts).
+[task/session management](../manager.ts), [worker bridge](../runtime/pi/worker.ts),
+[agent definitions](../agents.ts), [context cloning](../runtime/pi/clone.ts), and
+[extension source resolution](../runtime/pi/extensions.ts).

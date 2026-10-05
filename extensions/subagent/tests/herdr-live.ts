@@ -3,8 +3,8 @@ import { randomUUID } from "node:crypto";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { HerdrAdapter, runHerdr } from "../herdr.ts";
 import { type AgentSnapshot, SubagentManager } from "../manager.ts";
+import { HerdrAdapter, runHerdr } from "../mux/herdr.ts";
 
 // Explicit opt-in: invokes real models and creates only owned Herdr resources.
 if (process.env.HERDR_ENV !== "1" || process.env.PI_KITS_HERDR_LIVE !== "1") {

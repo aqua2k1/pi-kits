@@ -2,7 +2,7 @@ import { type Dirent, readdirSync, readFileSync, statSync } from "node:fs";
 import { basename, join } from "node:path";
 import { parseFrontmatter } from "@earendil-works/pi-coding-agent";
 import { getAgentDir } from "@pi-kits/config";
-import type { RuntimeId } from "./runtime.ts";
+import type { RuntimeId } from "./runtime/index.ts";
 
 const MAX_FILE_BYTES = 64 * 1024;
 
@@ -11,6 +11,8 @@ export interface AgentDefinition {
   description: string;
   displayName?: string;
   runtime?: RuntimeId;
+  /** Raw runtime-specific frontmatter, interpreted by the selected runtime. */
+  runtimeConfig?: Record<string, unknown>;
   model?: string;
   thinking?: string;
   tools?: string[];
@@ -103,6 +105,9 @@ export function parseAgentDefinition(
   return {
     name,
     ...(runtime ? { runtime } : {}),
+    ...(fields.runtime_args !== undefined
+      ? { runtimeConfig: { runtime_args: fields.runtime_args } }
+      : {}),
     description: string("description") ?? name,
     displayName: string("display_name"),
     model: string("model"),
@@ -130,7 +135,7 @@ export function loadAgentDefinitions(
   >();
   for (const [dir, source] of [
     [join(agentDir, "agents"), "global"],
-    [join(cwd, ".pi", "agents"), "project"],
+    [join(cwd, ".pi", "agent", "agents"), "project"],
   ] as const) {
     let entries: Dirent[];
     try {

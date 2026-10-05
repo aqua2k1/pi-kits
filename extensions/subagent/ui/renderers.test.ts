@@ -11,7 +11,7 @@ import {
   type TUI,
   visibleWidth,
 } from "@earendil-works/pi-tui";
-import type { AgentSnapshot } from "./manager.ts";
+import type { AgentSnapshot } from "../manager.ts";
 import { renderSubagentResult, subagentCallRenderer } from "./renderers.ts";
 
 type RenderContext = Parameters<NonNullable<ToolDefinition["renderResult"]>>[3];

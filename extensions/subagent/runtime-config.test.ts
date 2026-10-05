@@ -11,7 +11,7 @@ import { useAgentDir } from "../../tests/helpers/agent-dir.ts";
 import { parseAgentDefinition } from "./agents.ts";
 import { registerSubagents } from "./index.ts";
 import { type SpawnOptions, SubagentManager } from "./manager.ts";
-import type { MuxAdapter } from "./mux.ts";
+import type { MuxAdapter } from "./mux/index.ts";
 
 function definition(fields: string) {
   return parseAgentDefinition(
@@ -95,9 +95,9 @@ test("Codex rejects explicit prompt modes before worker creation", async () => {
 test("Codex does not inherit Pi model/thinking or read parent context, and frontmatter runtime wins", async (t) => {
   const agentDir = useAgentDir(t);
   const cwd = join(agentDir, "project");
-  mkdirSync(join(cwd, ".pi", "agents"), { recursive: true });
+  mkdirSync(join(cwd, ".pi", "agent", "agents"), { recursive: true });
   writeFileSync(
-    join(cwd, ".pi", "agents", "codex.md"),
+    join(cwd, ".pi", "agent", "agents", "codex.md"),
     "---\nruntime: codex\n---\nRole",
   );
   const tools = new Map<string, ToolDefinition>();

@@ -130,7 +130,7 @@ test("eleven flat extensions explicitly declare their independent runtime entrie
 
 test("flat resource declarations select web-kits without legacy aliases", async () => {
   const { resolveWorkerExtensions } = await import(
-    "../extensions/subagent/extensions.ts"
+    "../extensions/subagent/runtime/pi/extensions.ts"
   );
   assert.deepEqual(
     await resolveWorkerExtensions([

@@ -7,11 +7,11 @@ import { join } from "node:path";
 import test, { type TestContext } from "node:test";
 import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
-import { spawnCodexGuardian } from "./codex-guardian.ts";
+import { spawnCodexGuardian } from "./guardian.ts";
 
 const posix = { skip: process.platform === "win32", timeout: 10_000 };
-const entry = new URL("./codex-guardian.mjs", import.meta.url);
-const helper = new URL("./codex-guardian.ts", import.meta.url).href;
+const entry = new URL("./guardian.mjs", import.meta.url);
+const helper = new URL("./guardian.ts", import.meta.url).href;
 type Pids = { backend: number; tool: number; worker: string; ipc: boolean };
 
 async function until(check: () => boolean | Promise<boolean>): Promise<void> {

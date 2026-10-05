@@ -17,19 +17,20 @@ import {
   DOCKED_PANEL_OPENED,
 } from "../../shared/ui/docked-panel/index.ts";
 import { loadAgentDefinitions, resolveAgentDefinition } from "./agents.ts";
-import { captureParentSession } from "./clone.ts";
-import { HerdrAdapter } from "./herdr.ts";
 import { type AgentSnapshot, SubagentManager } from "./manager.ts";
-import type { MuxAdapter } from "./mux.ts";
+import { HerdrAdapter } from "./mux/herdr.ts";
+import type { MuxAdapter } from "./mux/index.ts";
+import { codexReviewTargetSchema } from "./runtime/codex/schema.ts";
+import { captureParentSession } from "./runtime/pi/clone.ts";
 import {
   renderSubagentNotification,
   renderSubagentResult,
   renderSubagentTypesCall,
   renderSubagentTypesResult,
   subagentCallRenderer,
-} from "./renderers.ts";
-import { SubagentStatusWidget } from "./status-widget.ts";
-import { showSubagentViews } from "./views.ts";
+} from "./ui/renderers.ts";
+import { SubagentStatusWidget } from "./ui/status-widget.ts";
+import { showSubagentViews } from "./ui/views.ts";
 
 const agentId = Type.String({ minLength: 1, description: "Subagent ID" });
 
@@ -124,13 +125,16 @@ export function registerSubagents(
               "Inherit the parent conversation; requires runtime support. False starts fresh.",
           }),
         ),
-        prompt: Type.String({
-          minLength: 1,
-          maxLength: 100_000,
-          pattern: "\\S",
-          description:
-            "Task instructions, relevant context, and expected output; not a system prompt.",
-        }),
+        prompt: Type.Optional(
+          Type.String({
+            minLength: 1,
+            maxLength: 100_000,
+            pattern: "\\S",
+            description:
+              "Task instructions, relevant context, and expected output; not a system prompt. Required for ordinary tasks; omit for structured native review targets.",
+          }),
+        ),
+        review_target: codexReviewTargetSchema(),
         description: Type.String({
           minLength: 1,
           maxLength: 200,
@@ -180,7 +184,10 @@ export function registerSubagents(
             ? captureParentSession(ctx.sessionManager)
             : undefined,
           agent,
-          prompt: params.prompt,
+          prompt: params.prompt ?? "",
+          ...(params.review_target
+            ? { runtimeParams: { review_target: params.review_target } }
+            : {}),
           description: params.description,
           cwd: ctx.cwd,
           model:
@@ -212,12 +219,16 @@ export function registerSubagents(
         "Continue a finished task in the same session, retaining history and settings. Requires an idle, connected session. Background by default; the original agent configuration takes precedence.",
       parameters: Type.Object({
         agent_id: agentId,
-        prompt: Type.String({
-          minLength: 1,
-          maxLength: 100_000,
-          pattern: "\\S",
-          description: "Follow-up task instructions.",
-        }),
+        prompt: Type.Optional(
+          Type.String({
+            minLength: 1,
+            maxLength: 100_000,
+            pattern: "\\S",
+            description:
+              "Follow-up task instructions. Required for ordinary tasks; omit for structured native review targets.",
+          }),
+        ),
+        review_target: codexReviewTargetSchema(),
         description: Type.Optional(
           Type.String({
             minLength: 1,
@@ -238,7 +249,10 @@ export function registerSubagents(
         signal?.throwIfAborted();
         const current = getManager(ctx);
         const snapshot = current.resume(params.agent_id, {
-          prompt: params.prompt,
+          prompt: params.prompt ?? "",
+          ...(params.review_target
+            ? { runtimeParams: { review_target: params.review_target } }
+            : {}),
           description: params.description,
         });
         if (
@@ -275,7 +289,8 @@ export function registerSubagents(
             { type: "text" as const, text: JSON.stringify(result, null, 2) },
           ],
           details: result,
-          structuredContent: result,
+          // Raw runtime configuration comes from YAML; publish JSON-safe metadata.
+          structuredContent: JSON.parse(JSON.stringify(result)),
         };
       },
     }),

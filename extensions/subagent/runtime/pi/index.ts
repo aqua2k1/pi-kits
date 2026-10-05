@@ -5,10 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { SUBAGENT_DEFAULT_EXTENSIONS } from "@pi-kits/config";
-import { createClonedSession } from "../clone.ts";
-import { resolveWorkerExtensions } from "../extensions.ts";
-import { type TerminalHandle, TerminalStartError } from "../mux.ts";
-import { MAX_COMMAND_BYTES } from "../protocol.ts";
+import { type TerminalHandle, TerminalStartError } from "../../mux/index.ts";
 import type {
   AgentRuntime,
   RuntimeCapabilities,
@@ -17,7 +14,11 @@ import type {
   RuntimeHost,
   RuntimeOptions,
   RuntimeSession,
-} from "../runtime.ts";
+} from "../index.ts";
+import { createClonedSession } from "./clone.ts";
+import { parsePiConfig, parsePiTask } from "./config.ts";
+import { resolveWorkerExtensions } from "./extensions.ts";
+import { MAX_COMMAND_BYTES } from "./protocol.ts";
 
 const MAX_FRAME_BYTES = 1_048_576;
 const capabilities: RuntimeCapabilities = {
@@ -33,7 +34,18 @@ export class PiRuntime implements AgentRuntime {
   readonly displayName = "Pi";
   readonly capabilities = capabilities;
 
+  parseConfig(config: Record<string, unknown>): Record<string, unknown> {
+    return parsePiConfig(config);
+  }
+
+  parseTask(command: RuntimeCommand): RuntimeCommand {
+    return parsePiTask(command);
+  }
+
   validate(options: RuntimeOptions): void {
+    this.parseConfig(
+      options.runtimeConfig ?? options.agent?.runtimeConfig ?? {},
+    );
     if (
       options.agent &&
       (options.agent.promptMode ?? "replace") === "replace" &&
@@ -104,7 +116,7 @@ class PiSession implements RuntimeSession {
         "--no-approve",
         "-e",
         this.options.workerPath ??
-          fileURLToPath(new URL("../worker.ts", import.meta.url)),
+          fileURLToPath(new URL("./worker.ts", import.meta.url)),
       ];
       for (const extension of extensions) argv.push("-e", extension);
       if (this.options.parentSession) {
@@ -172,6 +184,7 @@ class PiSession implements RuntimeSession {
   }
 
   send(command: RuntimeCommand): void {
+    parsePiTask(command);
     if (!this.connected) throw new Error("Pi worker is not connected.");
     const frame = JSON.stringify(command);
     if (Buffer.byteLength(frame) > MAX_COMMAND_BYTES) {

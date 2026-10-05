@@ -4,17 +4,17 @@ import { EventEmitter } from "node:events";
 import { access, readFile, rm, stat } from "node:fs/promises";
 import { PassThrough } from "node:stream";
 import test from "node:test";
-import type { AgentDefinition } from "../agents.ts";
+import type { AgentDefinition } from "../../agents.ts";
 import {
   type MuxAdapter,
   type StartOptions,
   type TerminalHandle,
   TerminalStartError,
-} from "../mux.ts";
-import type { RuntimeEvent, RuntimeOptions } from "../runtime.ts";
-import { RuntimeTaskRejectedError } from "../runtime-errors.ts";
-import { type CodexDependencies, CodexRuntime } from "./codex.ts";
-import type { CodexRpc } from "./codex-transport.ts";
+} from "../../mux/index.ts";
+import { RuntimeTaskRejectedError } from "../errors.ts";
+import type { RuntimeEvent, RuntimeOptions } from "../index.ts";
+import { type CodexDependencies, CodexRuntime } from "./index.ts";
+import type { CodexRpc } from "./transport.ts";
 
 const tick = () => new Promise<void>((resolve) => setImmediate(resolve));
 function must<T>(value: T | undefined): T {
@@ -129,10 +129,11 @@ function fixture(
             modelProvider: "openai",
           },
         };
+      case "review/start":
       case "turn/start":
         return {
           turn: {
-            id: `turn-${calls.filter((call) => call.method === "turn/start").length}`,
+            id: `turn-${calls.filter((call) => call.method === method).length}`,
           },
         };
       case "thread/items/list":
@@ -252,6 +253,384 @@ function finished(
     turn: { id, status: "completed", itemsView: "full", items: [], ...extra },
   });
 }
+
+const reviewOptions = { runtimeConfig: { runtime_args: ["review"] } };
+function reviewTask(
+  target: unknown = { type: "uncommittedChanges" },
+  round = 1,
+) {
+  return {
+    type: "task" as const,
+    prompt: "",
+    runtimeParams: { review_target: target },
+    round,
+  };
+}
+function params(f: ReturnType<typeof fixture>, method: string) {
+  return must(f.calls.filter((call) => call.method === method).at(-1)).params;
+}
+function completed(f: ReturnType<typeof fixture>) {
+  return must(f.events.filter((event) => event.type === "completed").at(-1));
+}
+function stats(f: ReturnType<typeof fixture>) {
+  return must(f.events.filter((event) => event.type === "stats").at(-1));
+}
+
+test("Codex exposes parsers and direct validate/create reject malformed runtime_args", () => {
+  const runtime = new CodexRuntime();
+  assert.deepEqual(runtime.parseConfig({ runtime_args: "review,search" }), {
+    runtime_args: ["review", "search"],
+  });
+  const options = {
+    id: "test",
+    cwd: "/tmp",
+    runtimeConfig: { runtime_args: "review," },
+  };
+  assert.throws(() => runtime.validate(options), /nonempty/);
+  assert.throws(() => fixture(options), /nonempty/);
+  assert.throws(
+    () =>
+      fixture({
+        agent: agent({ runtimeConfig: { runtime_args: [" "] } }),
+      }),
+    /nonempty/,
+  );
+  const command = reviewTask();
+  assert.deepEqual(
+    runtime.parseTask(command, { ...options, ...reviewOptions }),
+    command,
+  );
+});
+
+test("unknown native switches reach app-server argv; semantic review/search remain RPC mappings", async (t) => {
+  for (const runtime_args of [
+    "review,search,unknown-switch,exec,--enable=feature,-v,unknown-switch",
+    ["review", "search", "unknown-switch", "exec", "--enable=feature", "-v"],
+  ]) {
+    const f = fixture({ agent: agent({ runtimeConfig: { runtime_args } }) });
+    t.after(() => f.session.close());
+    await f.session.start();
+    assert.equal(f.argv[0], "app-server");
+    assert.deepEqual(f.argv.slice(7), [
+      "--unknown-switch",
+      "--exec",
+      "--enable=feature",
+      "-v",
+    ]);
+    assert.deepEqual(params(f, "thread/start").config, { web_search: "live" });
+    await f.session.send(reviewTask());
+    assert.deepEqual(params(f, "review/start"), {
+      threadId: "thread",
+      target: { type: "uncommittedChanges" },
+      delivery: "inline",
+    });
+    finished(f);
+    await tick();
+  }
+});
+
+test("native CLI switch rejection surfaces child exit and cleans failed startup resources", async (t) => {
+  const f = fixture(
+    { runtimeConfig: { runtime_args: ["unknown-switch"] } },
+    {
+      async connect() {
+        // Simulate Codex CLI rejecting an unknown flag before opening its socket.
+        const child = must(f.children[0]);
+        child.exitCode = 2;
+        child.emit("exit", 2, null);
+        throw new Error("Native CLI rejected --unknown-switch");
+      },
+    },
+  );
+  t.after(() => f.session.close());
+  await assert.rejects(f.session.start(), /startup aborted/);
+  assert.deepEqual(f.argv.slice(7), ["--unknown-switch"]);
+  assert.equal(f.session.connected, false);
+  assert.equal(f.children.length, 1);
+  assert.equal(f.calls.length, 0);
+  assert.equal(f.children[0].killed, false);
+  const tokenFile = must(f.argv[f.argv.indexOf("--ws-token-file") + 1]);
+  await assert.rejects(access(tokenFile));
+  assert.match(
+    String(must(f.events.find((event) => event.type === "disconnected")).error),
+    /app-server exited \(2\)/,
+  );
+  assert.equal(
+    f.events.some((event) => event.type === "completed"),
+    false,
+  );
+});
+
+test("search maps to live web_search thread config alongside effort and agent body", async (t) => {
+  for (const thinking of [undefined, "high"]) {
+    const f = fixture({
+      agent: agent({ thinking, runtimeConfig: { runtime_args: "search" } }),
+    });
+    t.after(() => f.session.close());
+    await f.session.start();
+    assert.deepEqual(params(f, "thread/start").config, {
+      web_search: "live",
+      ...(thinking ? { model_reasoning_effort: thinking } : {}),
+    });
+    assert.equal(
+      params(f, "thread/start").developerInstructions,
+      "developer rules",
+    );
+    assert.equal(f.argv.includes("search"), false);
+    await f.session.send({ type: "task", prompt: "Search the web" });
+    assert.deepEqual(params(f, "turn/start").input, [
+      { type: "text", text: "Search the web", text_elements: [] },
+    ]);
+    finished(f);
+    await tick();
+  }
+});
+
+test("direct review send validates before preflight and requires a target on resume", async (t) => {
+  const f = fixture(reviewOptions);
+  t.after(() => f.session.close());
+  await f.session.start();
+  const count = f.calls.length;
+  for (const command of [
+    { type: "task" as const, prompt: "" },
+    { ...reviewTask(), prompt: "not supported" },
+    reviewTask({ type: "commit", sha: "" }),
+  ])
+    await assert.rejects(async () => {
+      await f.session.send(command);
+    }, RuntimeTaskRejectedError);
+  assert.equal(f.calls.length, count);
+  await f.session.send(reviewTask());
+  assert.deepEqual(params(f, "review/start"), {
+    threadId: "thread",
+    target: { type: "uncommittedChanges" },
+    delivery: "inline",
+  });
+  assert.equal(
+    f.calls.some((call) => call.method === "turn/start"),
+    false,
+  );
+  finished(f, "turn-1", {
+    items: [
+      { id: "review-1", type: "exitedReviewMode", review: "No findings" },
+    ],
+  });
+  await tick();
+  assert.equal(completed(f).result, "No findings");
+  const resumeCount = f.calls.length;
+  await assert.rejects(async () => {
+    await f.session.send({ type: "task", prompt: "", round: 2 });
+  }, /every task/);
+  assert.equal(f.calls.length, resumeCount);
+  assert.equal(f.session.connected, true);
+  await f.session.send(reviewTask({ type: "commit", sha: "abc" }, 2));
+  assert.deepEqual(params(f, "review/start"), {
+    threadId: "thread",
+    target: { type: "commit", sha: "abc", title: null },
+    delivery: "inline",
+  });
+  finished(f, "turn-2");
+  await tick();
+  assert.equal(
+    f.calls.filter((call) => call.method === "thread/start").length,
+    1,
+  );
+});
+
+test("normal direct send rejects review_target and blank prompt without RPC dispatch", async (t) => {
+  const f = fixture();
+  t.after(() => f.session.close());
+  await f.session.start();
+  const count = f.calls.length;
+  await assert.rejects(async () => {
+    await f.session.send({ ...reviewTask(), prompt: "work" });
+  }, /requires runtime_args: review/);
+  await assert.rejects(async () => {
+    await f.session.send({ type: "task", prompt: " " });
+  }, /nonempty/);
+  assert.equal(f.calls.length, count);
+});
+
+test("custom native review consumes prompt exactly once through repeated parsing and send", async (t) => {
+  const options = {
+    id: "test",
+    cwd: "/tmp",
+    runtimeConfig: { runtime_args: "review,search" },
+    agent: agent(),
+  };
+  const f = fixture(options);
+  t.after(() => f.session.close());
+  await f.session.start();
+  let command = f.runtime.parseTask(
+    {
+      ...reviewTask({ type: "custom", instructions: "Review this patch" }),
+      prompt: "Check security",
+    },
+    options,
+  );
+  command = f.runtime.parseTask(command, options);
+  await f.session.send(command);
+  assert.deepEqual(params(f, "review/start"), {
+    threadId: "thread",
+    delivery: "inline",
+    target: {
+      type: "custom",
+      instructions: "Review this patch\n\nCheck security",
+    },
+  });
+  assert.equal(
+    params(f, "thread/start").developerInstructions,
+    "developer rules",
+  );
+  assert.deepEqual(params(f, "thread/start").config, { web_search: "live" });
+  finished(f);
+  await tick();
+});
+
+test("native review caches early exitedReviewMode, prioritizes review output, and excludes review markers from tools", async (t) => {
+  const f = fixture(reviewOptions);
+  t.after(() => f.session.close());
+  await f.session.start();
+  f.handlers.set("review/start", () => {
+    for (const item of [
+      { id: "enter", type: "enteredReviewMode", review: "Reviewing changes" },
+      { id: "tool", type: "commandExecution" },
+      {
+        id: "message",
+        type: "agentMessage",
+        text: "intermediate",
+        phase: "final_answer",
+      },
+      { id: "exit", type: "exitedReviewMode", review: "Review findings" },
+    ])
+      f.event("item/completed", { turnId: "turn-1", item });
+    return { turn: { id: "turn-1" }, reviewThreadId: "thread" };
+  });
+  await f.session.send(reviewTask({ type: "baseBranch", branch: "main" }));
+  finished(f, "turn-1", { itemsView: "notLoaded" });
+  await tick();
+  assert.equal(completed(f).result, "Review findings");
+  assert.equal(stats(f).toolUses, 1);
+  assert.equal(f.events.filter((event) => event.type === "activity").length, 1);
+  assert.equal(
+    f.calls.some((call) => call.method === "thread/items/list"),
+    false,
+  );
+});
+
+test("native review hydrates paginated exitedReviewMode despite intermediate final agentMessage", async (t) => {
+  const f = fixture(reviewOptions);
+  t.after(() => f.session.close());
+  await f.session.start();
+  f.handlers.set("thread/items/list", (params) =>
+    params.cursor
+      ? {
+          data: [
+            {
+              item: {
+                id: "exit",
+                type: "exitedReviewMode",
+                review: "é".repeat(40000),
+              },
+            },
+          ],
+          nextCursor: null,
+        }
+      : {
+          data: [
+            {
+              item: { id: "enter", type: "enteredReviewMode", review: "start" },
+            },
+          ],
+          nextCursor: "next",
+        },
+  );
+  await f.session.send(reviewTask());
+  finished(f, "turn-1", {
+    itemsView: "notLoaded",
+    items: [
+      {
+        id: "message",
+        type: "agentMessage",
+        phase: "final_answer",
+        text: "wrong output",
+      },
+    ],
+  });
+  await tick();
+  assert.equal(completed(f).result, "é".repeat(32768));
+  assert.equal(completed(f).truncated, true);
+  assert.equal(
+    f.calls.filter((call) => call.method === "thread/items/list").length,
+    2,
+  );
+  assert.equal(stats(f).toolUses, 0);
+});
+
+test("empty exited review output is authoritative and native turn output stays separate", async (t) => {
+  const f = fixture(reviewOptions);
+  t.after(() => f.session.close());
+  await f.session.start();
+  await f.session.send(reviewTask());
+  f.event("item/completed", {
+    turnId: "native",
+    item: {
+      id: "native-exit",
+      type: "exitedReviewMode",
+      review: "not managed",
+    },
+  });
+  finished(f, "turn-1", {
+    items: [
+      { id: "message", type: "agentMessage", text: "intermediate" },
+      { id: "exit", type: "exitedReviewMode", review: "" },
+    ],
+  });
+  await tick();
+  assert.equal(completed(f).result, "");
+});
+
+test("native review preserves steer, cancel before acknowledgment, and attachment reservation", async (t) => {
+  const f = fixture(reviewOptions);
+  t.after(() => f.session.close());
+  await f.session.start();
+  const response = deferred<unknown>();
+  f.handlers.set("review/start", () => response.promise);
+  const sending = f.session.send(reviewTask());
+  await tick();
+  await f.session.send({ type: "cancel", round: 1 });
+  const attaching = f.session.attachment();
+  await tick();
+  assert.equal(f.starts.length, 0);
+  assert.equal(
+    f.calls.some((call) => call.method === "turn/interrupt"),
+    false,
+  );
+  response.resolve({ turn: { id: "review-turn" }, reviewThreadId: "thread" });
+  await sending;
+  await attaching;
+  await f.session.send({
+    type: "steer",
+    message: "Focus on security",
+    round: 1,
+  });
+  assert.deepEqual(params(f, "turn/steer"), {
+    threadId: "thread",
+    expectedTurnId: "review-turn",
+    input: [{ type: "text", text: "Focus on security", text_elements: [] }],
+  });
+  assert.deepEqual(params(f, "turn/interrupt"), {
+    threadId: "thread",
+    turnId: "review-turn",
+  });
+  finished(f, "review-turn", {
+    status: "interrupted",
+    items: [{ id: "exit", type: "exitedReviewMode", review: "Stopped" }],
+  });
+  await tick();
+  assert.equal(completed(f).canceled, true);
+  assert.equal(completed(f).result, "Stopped");
+});
 
 test("validate rejects cross-runtime clones and invalid supported thinking", () => {
   const runtime = new CodexRuntime();

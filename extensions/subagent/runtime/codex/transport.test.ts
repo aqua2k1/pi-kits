@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
 import test from "node:test";
 import { WebSocketServer } from "ws";
-import { type CodexSocket, CodexTransport } from "./codex-transport.ts";
+import { type CodexSocket, CodexTransport } from "./transport.ts";
 
 class FakeSocket extends EventEmitter implements CodexSocket {
   sent: Array<{ id?: unknown; error?: { code: number; message: string } }> = [];

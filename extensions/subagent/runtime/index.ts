@@ -1,7 +1,7 @@
 import type { WorkerExtensionSource } from "@pi-kits/config";
-import type { AgentDefinition } from "./agents.ts";
-import type { ParentSessionSnapshot } from "./clone.ts";
-import type { MuxAdapter, TerminalHandle } from "./mux.ts";
+import type { AgentDefinition } from "../agents.ts";
+import type { MuxAdapter, TerminalHandle } from "../mux/index.ts";
+import type { ParentSessionSnapshot } from "./pi/clone.ts";
 
 /** Runtime names are resolved by the registry, not the agent parser. */
 export type RuntimeId = string;
@@ -23,6 +23,7 @@ export interface RuntimeOptions {
   model?: string;
   thinking?: string;
   agent?: AgentDefinition;
+  runtimeConfig?: Record<string, unknown>;
   parentSession?: ParentSessionSnapshot;
   extensionAllowlist?: readonly WorkerExtensionSource[];
   executable?: string;
@@ -34,6 +35,8 @@ export type RuntimeCommand = (
   | {
       type: "task";
       prompt: string;
+      /** Task-local parameters interpreted only by the selected runtime. */
+      runtimeParams?: Record<string, unknown>;
       instructions?: { systemPrompt?: string; tools?: string[] };
     }
   | { type: "steer"; message: string }
@@ -65,6 +68,9 @@ export interface AgentRuntime {
   readonly id: RuntimeId;
   readonly displayName?: string;
   readonly capabilities: RuntimeCapabilities;
+  /** Pure parsers: no processes, transports or lifecycle registration. */
+  parseConfig?(config: Record<string, unknown>): Record<string, unknown>;
+  parseTask?(command: RuntimeCommand, options: RuntimeOptions): RuntimeCommand;
   validate(options: RuntimeOptions): void;
   create(options: RuntimeOptions, host: RuntimeHost): RuntimeSession;
 }

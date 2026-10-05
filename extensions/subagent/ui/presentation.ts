@@ -1,9 +1,9 @@
 import type { Theme } from "@earendil-works/pi-coding-agent";
 import { truncateToWidth } from "@earendil-works/pi-tui";
-import { oneLine } from "../../shared/ui/renderers.ts";
-import type { AgentSnapshot, AgentStatus } from "./manager.ts";
+import { oneLine } from "../../../shared/ui/renderers.ts";
+import type { AgentSnapshot, AgentStatus } from "../manager.ts";
 
-export { oneLine } from "../../shared/ui/renderers.ts";
+export { oneLine } from "../../../shared/ui/renderers.ts";
 
 export interface AgentSource {
   list(): AgentSnapshot[];

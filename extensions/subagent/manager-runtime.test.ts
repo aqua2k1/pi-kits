@@ -3,7 +3,8 @@ import { test } from "node:test";
 import { setTimeout as delay } from "node:timers/promises";
 import { parseAgentDefinition } from "./agents.ts";
 import { SubagentManager } from "./manager.ts";
-import type { MuxAdapter, TerminalHandle } from "./mux.ts";
+import type { MuxAdapter, TerminalHandle } from "./mux/index.ts";
+import { RuntimeTaskRejectedError } from "./runtime/errors.ts";
 import type {
   AgentRuntime,
   RuntimeCommand,
@@ -11,8 +12,7 @@ import type {
   RuntimeId,
   RuntimeOptions,
   RuntimeSession,
-} from "./runtime.ts";
-import { RuntimeTaskRejectedError } from "./runtime-errors.ts";
+} from "./runtime/index.ts";
 
 const task = { prompt: "Inspect", description: "Inspect files", cwd: "/tmp" };
 
@@ -140,6 +140,96 @@ function harness(id: RuntimeId = "codex") {
     },
   };
 }
+
+test("runtime parsers own configuration and per-round tasks without manager runtime branches", async (t) => {
+  const h = harness("custom-parser");
+  h.runtime.parseConfig = (raw) => ({
+    args: String(raw.runtime_args).split(","),
+  });
+  h.runtime.parseTask = (command, options) => {
+    if (command.type !== "task") return command;
+    assert.deepEqual(options.runtimeConfig, { args: ["native"] });
+    if (!command.runtimeParams?.target) throw new Error("Target required");
+    return {
+      ...command,
+      prompt: `Normalized native task round ${command.round ?? 1}`,
+    };
+  };
+  const manager = new SubagentManager(h.mux, { runtimes: [h.runtime] });
+  t.after(() => manager.close());
+  const agent = parseAgentDefinition(
+    "---\nruntime: custom-parser\nruntime_args: native\n---\nRole",
+    "/agents/native.md",
+    "global",
+  );
+  assert.throws(
+    () => manager.spawn({ ...task, agent, prompt: "" }),
+    /Target required/,
+  );
+  assert.equal(manager.list().length, 0);
+  const started = manager.spawn({
+    ...task,
+    agent,
+    prompt: "",
+    runtimeParams: { target: "first" },
+  });
+  await until(() => h.sessions[0]?.commands.length === 1);
+  assert.deepEqual(h.sessions[0].options.runtimeConfig, { args: ["native"] });
+  assert.deepEqual(h.sessions[0].commands[0], {
+    type: "task",
+    prompt: "Normalized native task round 1",
+    runtimeParams: { target: "first" },
+    instructions: {},
+  });
+  h.sessions[0].complete();
+  assert.throws(
+    () => manager.resume(started.id, { prompt: "" }),
+    /Target required/,
+  );
+  assert.equal(manager.get(started.id).round, 1);
+  manager.resume(started.id, {
+    prompt: "",
+    runtimeParams: { target: "second" },
+  });
+  await until(() => h.sessions[0].commands.length === 2);
+  assert.deepEqual(h.sessions[0].commands[1], {
+    type: "task",
+    prompt: "Normalized native task round 2",
+    runtimeParams: { target: "second" },
+    instructions: {},
+    round: 2,
+  });
+});
+
+test("runtimes without parsers reject unsupported parameters before creating workers", (t) => {
+  const h = harness("legacy");
+  const manager = new SubagentManager(h.mux, { runtimes: [h.runtime] });
+  t.after(() => manager.close());
+  assert.throws(
+    () =>
+      manager.spawn({
+        ...task,
+        runtime: "legacy",
+        runtimeConfig: { runtime_args: "review" },
+      }),
+    /does not support runtime configuration/,
+  );
+  assert.throws(
+    () =>
+      manager.spawn({
+        ...task,
+        runtime: "legacy",
+        runtimeParams: { review_target: {} },
+      }),
+    /does not support task parameters/,
+  );
+  assert.throws(
+    () => manager.spawn({ ...task, runtime: "legacy", prompt: "" }),
+    /must not be blank/,
+  );
+  assert.equal(manager.list().length, 0);
+  assert.equal(h.sessions.length, 0);
+});
 
 test("shutdown retries failed runtimes without closing successful sessions again", async (t) => {
   const h = harness();

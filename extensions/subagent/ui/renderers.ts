@@ -8,8 +8,8 @@ import {
   type RenderSummary,
   type ResultRenderer,
   record,
-} from "../../shared/ui/renderers.ts";
-import type { AgentSnapshot } from "./manager.ts";
+} from "../../../shared/ui/renderers.ts";
+import type { AgentSnapshot } from "../manager.ts";
 import { agentHeader } from "./presentation.ts";
 
 export const subagentCallRenderer =

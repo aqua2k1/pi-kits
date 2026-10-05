@@ -1,13 +1,9 @@
 import { randomUUID } from "node:crypto";
 import type { WorkerExtensionSource } from "@pi-kits/config";
 import type { AgentDefinition } from "./agents.ts";
-import type { ParentSessionSnapshot } from "./clone.ts";
-import type { MuxAdapter, ViewHandle } from "./mux.ts";
-import {
-  isWorkerSessionState,
-  MAX_COMMAND_BYTES,
-  type WorkerSessionState,
-} from "./protocol.ts";
+import type { MuxAdapter, ViewHandle } from "./mux/index.ts";
+import { CodexRuntime } from "./runtime/codex/index.ts";
+import { RuntimeTaskRejectedError } from "./runtime/errors.ts";
 import type {
   AgentRuntime,
   RuntimeCapabilities,
@@ -16,10 +12,14 @@ import type {
   RuntimeId,
   RuntimeOptions,
   RuntimeSession,
-} from "./runtime.ts";
-import { RuntimeTaskRejectedError } from "./runtime-errors.ts";
-import { CodexRuntime } from "./runtimes/codex.ts";
-import { PiRuntime } from "./runtimes/pi.ts";
+} from "./runtime/index.ts";
+import type { ParentSessionSnapshot } from "./runtime/pi/clone.ts";
+import { PiRuntime } from "./runtime/pi/index.ts";
+import {
+  isWorkerSessionState,
+  MAX_COMMAND_BYTES,
+  type WorkerSessionState,
+} from "./runtime/pi/protocol.ts";
 
 export type AgentStatus =
   | "queued"
@@ -77,6 +77,8 @@ export interface SpawnOptions {
   model?: string;
   thinking?: string;
   agent?: AgentDefinition;
+  runtimeConfig?: Record<string, unknown>;
+  runtimeParams?: Record<string, unknown>;
   parentSession?: ParentSessionSnapshot;
 }
 
@@ -108,6 +110,7 @@ interface Execution {
 
 export interface ResumeOptions {
   prompt: string;
+  runtimeParams?: Record<string, unknown>;
   description?: string;
 }
 
@@ -188,14 +191,27 @@ export class SubagentManager {
 
   spawn(options: SpawnOptions): AgentSnapshot {
     if (this.disposed) throw new Error("Subagent manager is closed.");
-    if (!options.prompt.trim()) {
-      throw new Error("Task prompt must not be blank.");
-    }
-    validateCommand(taskCommand(options));
     const runtimeId = options.agent?.runtime ?? options.runtime ?? "pi";
     const runtime = this.runtime(runtimeId);
+    const rawConfig =
+      options.agent?.runtimeConfig ?? options.runtimeConfig ?? {};
+    if (!runtime.parseConfig && Object.keys(rawConfig).length) {
+      throw new Error(
+        `Runtime ${runtime.id} does not support runtime configuration.`,
+      );
+    }
+    options = {
+      ...options,
+      ...(runtime.parseConfig
+        ? { runtimeConfig: runtime.parseConfig(rawConfig) }
+        : {}),
+    };
     const id = randomUUID();
-    runtime.validate(this.runtimeOptions(id, options, runtime.id));
+    const runtimeOptions = this.runtimeOptions(id, options, runtime.id);
+    runtime.validate(runtimeOptions);
+    validateCommand(
+      this.parseTask(runtime, taskCommand(options), runtimeOptions),
+    );
     if (
       (options.parentSession || options.agent?.inheritContext === true) &&
       !runtime.capabilities.nativeClone
@@ -269,14 +285,23 @@ export class SubagentManager {
         "Resume requires an idle session; wait for native/user interaction to settle.",
       );
     }
-    if (!options.prompt.trim())
-      throw new Error("Task prompt must not be blank.");
-    const next = { ...record.options, ...options };
+    const next = {
+      ...record.options,
+      ...options,
+      // Task-local runtime parameters must be supplied again on every round.
+      runtimeParams: options.runtimeParams,
+    };
     next.description = options.description ?? record.options.description;
     const round = record.execution.round + 1;
     if (!Number.isSafeInteger(round))
       throw new Error("Subagent round limit reached.");
-    validateCommand({ ...taskCommand(next), round });
+    validateCommand(
+      this.parseTask(
+        record.runtime,
+        { ...taskCommand(next), round },
+        this.runtimeOptions(id, next, record.runtime.id),
+      ),
+    );
     record.options = next;
     record.execution = createExecution(round, true);
     record.snapshot = {
@@ -632,6 +657,7 @@ export class SubagentManager {
       model: options.agent?.model ?? options.model,
       thinking: options.agent?.thinking ?? options.thinking,
       agent: options.agent,
+      runtimeConfig: options.runtimeConfig,
       parentSession: options.parentSession,
       extensionAllowlist:
         runtimeId === "pi" ? this.options.extensionAllowlist : undefined,
@@ -909,11 +935,38 @@ export class SubagentManager {
     if (!record.session?.connected) {
       throw new Error("Subagent runtime is not connected.");
     }
-    // Stamp before async delivery; a later resume cannot retarget this command.
+    // Stamp before parsing/delivery so acceptance and dispatch see the same round.
     if (record.execution.round > 1)
       command = { ...command, round: record.execution.round };
+    command = this.parseTask(
+      record.runtime,
+      command,
+      this.runtimeOptions(
+        record.snapshot.id,
+        record.options,
+        record.runtime.id,
+      ),
+    );
     validateCommand(command);
     return record.session.send(command);
+  }
+
+  private parseTask(
+    runtime: AgentRuntime,
+    command: RuntimeCommand,
+    options: RuntimeOptions,
+  ): RuntimeCommand {
+    if (runtime.parseTask) return runtime.parseTask(command, options);
+    if (command.type === "task") {
+      if (Object.keys(command.runtimeParams ?? {}).length) {
+        throw new Error(
+          `Runtime ${runtime.id} does not support task parameters.`,
+        );
+      }
+      if (!command.prompt.trim())
+        throw new Error("Task prompt must not be blank.");
+    }
+    return command;
   }
 
   private finish(record: AgentRecord, status: AgentStatus, error?: string) {
@@ -1001,10 +1054,11 @@ function createExecution(round: number, reused = false): Execution {
   };
 }
 
-function taskCommand(options: SpawnOptions) {
+function taskCommand(options: SpawnOptions): RuntimeCommand {
   return {
     type: "task" as const,
     prompt: options.prompt,
+    ...(options.runtimeParams ? { runtimeParams: options.runtimeParams } : {}),
     ...(options.agent
       ? {
           instructions: {

@@ -7,7 +7,7 @@ import {
   type MuxAdapter,
   type StartOptions,
   TerminalStartError,
-} from "./mux.ts";
+} from "./mux/index.ts";
 
 const task = { prompt: "Inspect files", description: "Inspect", cwd: "/tmp" };
 

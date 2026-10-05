@@ -12,7 +12,6 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import { useAgentDir } from "../../tests/helpers/agent-dir.ts";
 import { parseAgentDefinition } from "./agents.ts";
-import { captureParentSession } from "./clone.ts";
 import { SubagentManager } from "./manager.ts";
 import type {
   MuxAdapter,
@@ -20,7 +19,8 @@ import type {
   StartOptions,
   TerminalHandle,
   ViewHandle,
-} from "./mux.ts";
+} from "./mux/index.ts";
+import { captureParentSession } from "./runtime/pi/clone.ts";
 
 test("model metadata replaces requested defaults and tracks idle, stats and resumed workers", async (t) => {
   const mux = new FakeMux();
@@ -455,7 +455,7 @@ test("named agent configuration controls worker argv and launch-time system inst
   t.after(() => manager.close());
   const definition = parseAgentDefinition(
     `---\nmodel: agent-model\nthinking: high\ntools: read, grep\ndisallowed_tools: write\ndisplay_name: Reviewer\n---\nSystem instructions`,
-    "/project/.pi/agents/review.md",
+    "/project/.pi/agent/agents/review.md",
     "project",
   );
   const agent = manager.spawn({

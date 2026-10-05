@@ -4,7 +4,8 @@ import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { type TerminalHandle, TerminalStartError } from "../mux.ts";
+import { type TerminalHandle, TerminalStartError } from "../../mux/index.ts";
+import { RuntimeTaskRejectedError } from "../errors.ts";
 import type {
   AgentRuntime,
   RuntimeCapabilities,
@@ -12,14 +13,19 @@ import type {
   RuntimeHost,
   RuntimeOptions,
   RuntimeSession,
-} from "../runtime.ts";
-import { RuntimeTaskRejectedError } from "../runtime-errors.ts";
-import { spawnCodexGuardian } from "./codex-guardian.ts";
+} from "../index.ts";
+import {
+  codexConfig,
+  codexNativeArgs,
+  parseCodexConfig,
+  parseCodexTask,
+} from "./config.ts";
+import { spawnCodexGuardian } from "./guardian.ts";
 import {
   CODEX_REQUEST_TIMEOUT_MS,
   type CodexRpc,
   CodexTransport,
-} from "./codex-transport.ts";
+} from "./transport.ts";
 
 const capabilities: RuntimeCapabilities = Object.freeze({
   nativeClone: false,
@@ -56,6 +62,7 @@ type NativeItem = {
   id: string;
   type: string;
   text?: string;
+  review?: string;
   phase?: string | null;
 };
 type NativeTurn = {
@@ -204,7 +211,14 @@ export class CodexRuntime implements AgentRuntime {
   constructor(dependencies: Partial<CodexDependencies> = {}) {
     this.dependencies = { ...defaults, ...dependencies };
   }
+  parseConfig(config: Record<string, unknown>): Record<string, unknown> {
+    return parseCodexConfig(config);
+  }
+  parseTask(command: RuntimeCommand, options: RuntimeOptions): RuntimeCommand {
+    return parseCodexTask(command, options);
+  }
   validate(options: RuntimeOptions): void {
+    codexConfig(options);
     if (options.agent?.promptMode !== undefined) {
       throw new Error("prompt_mode is only supported by the Pi runtime");
     }
@@ -225,7 +239,11 @@ export class CodexRuntime implements AgentRuntime {
   }
   create(options: RuntimeOptions, host: RuntimeHost): RuntimeSession {
     this.validate(options);
-    return new CodexSession(options, host, this.dependencies);
+    return new CodexSession(
+      { ...options, runtimeConfig: codexConfig(options) },
+      host,
+      this.dependencies,
+    );
   }
 }
 
@@ -240,6 +258,8 @@ type ManagedTurn = {
   finishing: boolean;
   early: Array<[string, Record<string, unknown>]>;
   final: string;
+  review: boolean;
+  reviewResult?: string;
   fallback: string;
   truncated: boolean;
   items: Set<string>;
@@ -333,6 +353,7 @@ class CodexSession implements RuntimeSession {
           "capability-token",
           "--ws-token-file",
           tokenFile,
+          ...codexNativeArgs(codexConfig(this.options)),
         ],
         this.options.cwd,
       );
@@ -409,6 +430,12 @@ class CodexSession implements RuntimeSession {
           );
         }
       }
+      const config: Record<string, unknown> = {};
+      if (configuredEffort !== undefined)
+        config.model_reasoning_effort = configuredEffort;
+      // Native review delegates disable web search even when the thread enables it.
+      if (codexConfig(this.options).runtime_args.includes("search"))
+        config.web_search = "live";
       const started = await this.startupRequest(
         "thread/start",
         {
@@ -417,9 +444,7 @@ class CodexSession implements RuntimeSession {
           sandbox: "workspace-write",
           approvalPolicy: "never",
           developerInstructions: this.systemPrompt || undefined,
-          ...(configuredEffort === undefined
-            ? {}
-            : { config: { model_reasoning_effort: configuredEffort } }),
+          ...(Object.keys(config).length ? { config } : {}),
         },
         remaining(),
       );
@@ -541,6 +566,14 @@ class CodexSession implements RuntimeSession {
       );
   }
   async send(command: RuntimeCommand): Promise<void> {
+    try {
+      command = parseCodexTask(command, this.options);
+    } catch (cause) {
+      throw new RuntimeTaskRejectedError(
+        cause instanceof Error ? cause.message : "Invalid Codex task",
+        { cause },
+      );
+    }
     const rpc = this.requireConnected();
     if (command.type === "cancel") {
       const managed = this.managed;
@@ -598,6 +631,7 @@ class CodexSession implements RuntimeSession {
       finishing: false,
       early: [],
       final: "",
+      review: codexConfig(this.options).runtime_args.includes("review"),
       fallback: "",
       truncated: false,
       items: new Set(),
@@ -624,14 +658,17 @@ class CodexSession implements RuntimeSession {
       }
       const control = this.requireConnected();
       managed.dispatched = true;
+      const method = managed.review ? "review/start" : "turn/start";
       const response = await control.request<{
         turn: NativeTurn;
-      }>("turn/start", {
+      }>(method, {
         threadId: this.threadId,
-        input: input(command.prompt),
+        ...(managed.review
+          ? { target: command.runtimeParams?.review_target, delivery: "inline" }
+          : { input: input(command.prompt) }),
       });
       if (typeof response?.turn?.id !== "string") {
-        this.disconnect(new Error("Incompatible Codex turn/start response"));
+        this.disconnect(new Error(`Incompatible Codex ${method} response`));
         throw new Error("Missing Codex turnId");
       }
       managed.id = response.turn.id;
@@ -728,7 +765,16 @@ class CodexSession implements RuntimeSession {
     if (method === "item/started" || method === "item/completed") {
       this.cacheItem(managed, params.item);
       const tool = params.item?.type;
-      if (tool && !["agentMessage", "userMessage", "reasoning"].includes(tool))
+      if (
+        tool &&
+        ![
+          "agentMessage",
+          "userMessage",
+          "reasoning",
+          "enteredReviewMode",
+          "exitedReviewMode",
+        ].includes(tool)
+      )
         this.emit("activity", {
           round: managed.round,
           turnId,
@@ -770,6 +816,11 @@ class CodexSession implements RuntimeSession {
         managed.tools++;
       if (item.type === "contextCompaction") managed.compactions++;
     }
+    if (item.type === "exitedReviewMode" && typeof item.review === "string") {
+      const result = bounded(item.review);
+      managed.reviewResult = result.text;
+      managed.truncated ||= result.truncated;
+    }
     if (item.type === "agentMessage" && typeof item.text === "string") {
       const result = bounded(item.text);
       if (item.phase === "final_answer") managed.final = result.text;
@@ -802,7 +853,10 @@ class CodexSession implements RuntimeSession {
   ): Promise<void> {
     for (const item of turn.items ?? []) this.cacheItem(managed, item);
     let hydrationError: string | undefined;
-    if (turn.itemsView !== "full" && !managed.final) {
+    if (
+      turn.itemsView !== "full" &&
+      (managed.review ? managed.reviewResult === undefined : !managed.final)
+    ) {
       try {
         let cursor: string | undefined;
         const cursors = new Set<string>();
@@ -845,7 +899,7 @@ class CodexSession implements RuntimeSession {
     this.emit("completed", {
       round: managed.round,
       turnId: managed.id,
-      result: managed.final || managed.fallback,
+      result: managed.reviewResult ?? (managed.final || managed.fallback),
       truncated: managed.truncated,
       canceled: turn.status === "interrupted",
       error:

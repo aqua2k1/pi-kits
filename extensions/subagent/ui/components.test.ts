@@ -11,7 +11,7 @@ import {
   type TuiMouseEvent,
   visibleWidth,
 } from "@earendil-works/pi-tui";
-import type { AgentSnapshot } from "./manager.ts";
+import type { AgentSnapshot } from "../manager.ts";
 import {
   type AgentSource,
   agentStats,

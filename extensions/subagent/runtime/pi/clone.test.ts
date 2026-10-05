@@ -3,7 +3,7 @@ import { readFileSync, statSync } from "node:fs";
 import { test } from "node:test";
 import type { AssistantMessage } from "@earendil-works/pi-ai";
 import { SessionManager } from "@earendil-works/pi-coding-agent";
-import { useAgentDir } from "../../tests/helpers/agent-dir.ts";
+import { useAgentDir } from "../../../../tests/helpers/agent-dir.ts";
 import { captureParentSession, createClonedSession } from "./clone.ts";
 
 function assistant(content: AssistantMessage["content"]): AssistantMessage {

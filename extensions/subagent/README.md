@@ -31,11 +31,11 @@ flowchart LR
 
 - [index.ts](index.ts)：启用检查、工具/命令注册、会话生命周期与完成消息。
 - [manager.ts](manager.ts)：任务轮次、FIFO 并发队列、结果与视图管理。
-- [runtime.ts](runtime.ts) / `runtimes/`：执行会话接口、Pi bridge 与 Codex app-server 适配。
-- [mux.ts](mux.ts) / [herdr.ts](herdr.ts)：终端适配接口与 Herdr 实现，不自建 PTY。
-- [worker.ts](worker.ts) / [protocol.ts](protocol.ts)：Pi worker 的认证 loopback TCP JSONL 桥接。
-- [agents.ts](agents.ts) / [clone.ts](clone.ts)：用户定义加载与独立 Pi 分支克隆。
-- `views.ts`、`status-widget.ts`、`presentation.ts`、`renderers.ts`：TUI 展示。
+- [runtime/index.ts](runtime/index.ts)：执行会话接口；`runtime/pi/` 与 `runtime/codex/` 分别实现各自的配置解析和执行适配。
+- [mux/index.ts](mux/index.ts) / [mux/herdr.ts](mux/herdr.ts)：终端适配接口与 Herdr 实现，不自建 PTY。
+- [runtime/pi/worker.ts](runtime/pi/worker.ts) / [protocol.ts](runtime/pi/protocol.ts)：Pi worker 的认证 loopback TCP JSONL 桥接。
+- [agents.ts](agents.ts)：用户定义加载；[runtime/pi/clone.ts](runtime/pi/clone.ts) 与 [runtime/pi/extensions.ts](runtime/pi/extensions.ts) 分别负责 Pi 分支克隆和 worker 扩展解析。
+- `ui/`：`views.ts`、`status-widget.ts`、`presentation.ts`、`renderers.ts` 及其测试，负责 TUI 展示。
 
 包 manifest 仅加载 `index.ts`；worker 由子 Pi 显式通过 `-e` 加载。
 完成的执行会话保留供查看/续跑；Codex 原生 TUI 惰性启动，关闭视图仅脱离。

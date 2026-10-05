@@ -15,7 +15,7 @@ import {
   type StartOptions,
   type TerminalHandle,
   TerminalStartError,
-} from "./mux.ts";
+} from "./index.ts";
 
 const binary = "/installed/herdr with ' quotes";
 const startOptions: StartOptions = {

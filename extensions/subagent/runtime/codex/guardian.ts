@@ -9,7 +9,7 @@ export function spawnCodexGuardian(
   // Node has no Windows Job Object API. Do not silently weaken ownership.
   if (process.platform === "win32")
     throw new Error("Codex guardian requires POSIX process groups");
-  const guardian = fork(new URL("./codex-guardian.mjs", import.meta.url), [], {
+  const guardian = fork(new URL("./guardian.mjs", import.meta.url), [], {
     cwd,
     detached: true,
     execArgv: [],

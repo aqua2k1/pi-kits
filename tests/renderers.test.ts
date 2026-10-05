@@ -10,7 +10,7 @@ import type {
 import askExtension from "../extensions/ask-user-question/index.ts";
 import openExtension from "../extensions/open/index.ts";
 import { registerSubagents } from "../extensions/subagent/index.ts";
-import type { MuxAdapter } from "../extensions/subagent/mux.ts";
+import type { MuxAdapter } from "../extensions/subagent/mux/index.ts";
 import webExtension from "../extensions/web-kits/index.ts";
 import { useAgentDir } from "./helpers/agent-dir.ts";
 

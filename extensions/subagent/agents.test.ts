@@ -21,7 +21,7 @@ function fixture(t: TestContext) {
       const dir =
         scope === "global"
           ? join(agentDir, "agents")
-          : join(cwd, ".pi", "agents");
+          : join(cwd, ".pi", "agent", "agents");
       mkdirSync(dir, { recursive: true });
       writeFileSync(join(dir, name), body);
     },
@@ -35,6 +35,22 @@ test("agent discovery has no built-in definitions and does not create directorie
     () => resolveAgentDefinition(f.cwd, "Explore", f.agentDir),
     /Unknown subagent type/,
   );
+});
+
+test("project discovery uses .pi/agent/agents and ignores .pi/agents", (t) => {
+  const f = fixture(t);
+  const legacyDir = join(f.cwd, ".pi", "agents");
+  mkdirSync(legacyDir, { recursive: true });
+  writeFileSync(join(legacyDir, "legacy.md"), "Legacy prompt");
+  f.file("project", "review.md", "Project prompt");
+
+  const agents = loadAgentDefinitions(f.cwd, f.agentDir);
+  assert.equal(agents.size, 1);
+  assert.equal(
+    agents.get("review")?.sourcePath,
+    join(f.cwd, ".pi", "agent", "agents", "review.md"),
+  );
+  assert.equal(agents.get("review")?.source, "project");
 });
 
 test("project agents replace same-name global files as a whole, case-insensitively", (t) => {
@@ -227,6 +243,28 @@ test("prompt_mode syntax is parsed independently of runtime support", () => {
   }
 });
 
+test("runtime-specific frontmatter is retained without interpreting it in the common parser", () => {
+  for (const args of ["review, search", "[review, search]", "123"]) {
+    const agent = parseAgentDefinition(
+      `---\nruntime: codex\nruntime_args: ${args}\n---\nReviewer`,
+      "/agents/reviewer.md",
+      "global",
+    );
+    assert.deepEqual(agent.runtimeConfig, {
+      runtime_args:
+        args === "123"
+          ? 123
+          : args.startsWith("[")
+            ? ["review", "search"]
+            : args,
+    });
+  }
+  assert.equal(
+    parseAgentDefinition("Role", "/agents/plain.md", "global").runtimeConfig,
+    undefined,
+  );
+});
+
 test("unknown fields are ignored without activating unsupported capabilities", () => {
   const baseline = parseAgentDefinition("Role", "/agents/test.md", "project");
   for (const fields of [
@@ -326,7 +364,7 @@ test("discovery ignores non-markdown files and directories; rejects duplicate na
   const f = fixture(t);
   f.file("project", "note.txt", "Ignored");
   f.file("project", "same.md", "Prompt");
-  mkdirSync(join(f.cwd, ".pi", "agents", "directory.md"));
+  mkdirSync(join(f.cwd, ".pi", "agent", "agents", "directory.md"));
   assert.equal(loadAgentDefinitions(f.cwd, f.agentDir).size, 1);
   f.file("project", "SAME.md", "Duplicate");
   assert.throws(

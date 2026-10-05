@@ -16,7 +16,7 @@ import {
   type SpawnOptions,
   SubagentManager,
 } from "./manager.ts";
-import type { MuxAdapter } from "./mux.ts";
+import type { MuxAdapter } from "./mux/index.ts";
 
 function environment(t: TestContext, env: Record<string, string | undefined>) {
   for (const [key, value] of Object.entries(env)) {
@@ -209,7 +209,7 @@ for (const failures of [1, 3]) {
   });
 }
 
-test("tool prompts describe parameters without coupling to specific runtimes", () => {
+test("tool prompts stay runtime-neutral except explicitly runtime-specific parameters", () => {
   const capture = registrations();
   registerSubagents(capture.pi, {} as MuxAdapter);
   const properties = (tool: ToolDefinition) =>
@@ -221,7 +221,11 @@ test("tool prompts describe parameters without coupling to specific runtimes", (
   for (const tool of capture.definitions.values()) {
     assert.doesNotMatch(tool.description, /\b(?:Pi|Codex|Herdr)\b/i);
     for (const [name, schema] of Object.entries(properties(tool))) {
-      assert.doesNotMatch(schema.description, /\b(?:Pi|Codex|Herdr)\b/i);
+      if (name === "review_target") {
+        assert.match(schema.description, /Codex-only/);
+      } else {
+        assert.doesNotMatch(schema.description, /\b(?:Pi|Codex|Herdr)\b/i);
+      }
       assert.ok(
         schema.description?.trim(),
         `${tool.name}.${name} needs guidance`,
@@ -239,11 +243,60 @@ test("tool prompts describe parameters without coupling to specific runtimes", (
   assert.ok(!steer.description.includes("after its current tools"));
 });
 
+test("review targets are passed as runtime task parameters on spawn and resume", async (t) => {
+  const cwd = useAgentDir(t);
+  const capture = registrations();
+  const spawned: SpawnOptions[] = [];
+  const resumed: ResumeOptions[] = [];
+  t.mock.method(SubagentManager.prototype, "spawn", (options: SpawnOptions) => {
+    spawned.push(options);
+    return { id: "review-id", description: "Review", status: "queued" };
+  });
+  t.mock.method(
+    SubagentManager.prototype,
+    "resume",
+    (_id: string, options: ResumeOptions) => {
+      resumed.push(options);
+      return { id: "review-id", description: "Review", status: "queued" };
+    },
+  );
+  t.mock.method(
+    SubagentManager.prototype,
+    "backgroundPreference",
+    () => undefined,
+  );
+  registerSubagents(capture.pi, {} as MuxAdapter);
+  const context = { cwd, mode: "print", hasUI: false } as ExtensionToolContext;
+  const target = { type: "baseBranch", branch: "main" };
+  const spawn = capture.definitions.get("subagent");
+  const resume = capture.definitions.get("resume_subagent");
+  assert.ok(spawn && resume);
+  await spawn.execute(
+    "call",
+    { runtime: "codex", description: "Review", review_target: target },
+    undefined,
+    undefined,
+    context,
+  );
+  await resume.execute(
+    "call",
+    { agent_id: "review-id", review_target: target },
+    undefined,
+    undefined,
+    context,
+  );
+  assert.equal(spawned[0].prompt, "");
+  assert.deepEqual(spawned[0].runtimeParams, { review_target: target });
+  assert.equal(resumed[0].prompt, "");
+  assert.deepEqual(resumed[0].runtimeParams, { review_target: target });
+  await capture.hookHandlers.get("session_shutdown")?.();
+});
+
 test("agent catalogue uses project overrides and unknown/disabled names never launch workers", async (t) => {
   const agentDir = useAgentDir(t);
   const cwd = join(agentDir, "project");
   const globalDir = join(agentDir, "agents");
-  const projectDir = join(cwd, ".pi", "agents");
+  const projectDir = join(cwd, ".pi", "agent", "agents");
   mkdirSync(globalDir, { recursive: true });
   mkdirSync(projectDir, { recursive: true });
   writeFileSync(join(globalDir, "review.md"), "Global secret instructions");
@@ -291,7 +344,7 @@ test("agent catalogue uses project overrides and unknown/disabled names never la
 test("inherit_context frontmatter is authoritative and false never reads parent history", async (t) => {
   const agentDir = useAgentDir(t);
   const cwd = join(agentDir, "project");
-  const agents = join(cwd, ".pi", "agents");
+  const agents = join(cwd, ".pi", "agent", "agents");
   mkdirSync(agents, { recursive: true });
   writeFileSync(
     join(agents, "inherit.md"),

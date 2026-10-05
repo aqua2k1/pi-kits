@@ -8,7 +8,7 @@ import {
   type TerminalHandle,
   TerminalStartError,
   type ViewHandle,
-} from "./mux.ts";
+} from "./index.ts";
 
 export interface RunOptions {
   timeoutMs: number;

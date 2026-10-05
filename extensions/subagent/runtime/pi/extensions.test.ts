@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
-import { useAgentDir } from "../../tests/helpers/agent-dir.ts";
+import { useAgentDir } from "../../../../tests/helpers/agent-dir.ts";
 import { resolveWorkerExtensions } from "./extensions.ts";
 
 function packageFixture(root: string, name: string) {
