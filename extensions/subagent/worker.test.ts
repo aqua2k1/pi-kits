@@ -359,7 +359,7 @@ test("busy task/followUp and steer delivery, with only settled completion", () =
   );
 });
 
-test("agent MD is always the system prompt and persists in native views", () => {
+test("worker leaves CLI system prompts intact in managed and native turns", () => {
   const h = harness();
   const socket = h.start();
   const before = () => h.emit("before_agent_start", { systemPrompt: "base" });
@@ -370,9 +370,9 @@ test("agent MD is always the system prompt and persists in native views", () => 
       systemPrompt: "Custom instructions",
     },
   });
-  assert.deepEqual(before(), { systemPrompt: "Custom instructions" });
+  assert.equal(before(), undefined);
   h.emit("agent_settled");
-  assert.deepEqual(before(), { systemPrompt: "Custom instructions" });
+  assert.equal(before(), undefined);
   h.emit("agent_settled");
   socket.command({
     type: "task",
@@ -381,7 +381,7 @@ test("agent MD is always the system prompt and persists in native views", () => 
       systemPrompt: "New role",
     },
   });
-  assert.deepEqual(before(), { systemPrompt: "New role" });
+  assert.equal(before(), undefined);
   h.emit("agent_settled");
   socket.command({ type: "task", prompt: "ordinary task" });
   assert.equal(before(), undefined);
@@ -564,12 +564,19 @@ test("missing requested tools fail before a model turn instead of being ignored"
   assert.equal(h.messages.length, 1);
 });
 
-test("worker rejects malformed prompt instructions rather than ignoring restrictions", () => {
+test("worker rejects malformed instructions and accepts tools without a system prompt", () => {
+  assert.deepEqual(
+    parseWorkerCommand({
+      type: "task",
+      prompt: "work",
+      instructions: { tools: ["read"] },
+    }),
+    { type: "task", prompt: "work", instructions: { tools: ["read"] } },
+  );
   for (const instructions of [
     null,
     false,
     [],
-    {},
     { systemPrompt: 42 },
     { systemPrompt: "x", tools: "codemode" },
     { systemPrompt: "x", tools: [false] },

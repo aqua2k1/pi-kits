@@ -11,6 +11,12 @@ Codex 原生视图只在任务结束后开放；退出原生 TUI 后才能继续
 TUI 使用 `/subagent:views` 管理终端视图，编辑器上方显示实时任务状态。
 不支持调度、worktree、跨进程恢复或自动重连；worker 不是沙箱。
 
+Markdown agent 的 `prompt_mode` 仅支持 Pi，默认 `replace`：通过 CLI 正文文件替换
+system prompt，并传入空 append 文件屏蔽发现的 `APPEND_SYSTEM.md`。
+`append` 保留 Pi 自身基础提示词，以 agent 正文替换发现的 `APPEND_SYSTEM.md`。
+两种模式均按 Pi 原生信任规则保留项目 `AGENTS.md`/`CLAUDE.md`；非 Pi runtime
+显式配置此字段会报错。详见[使用文档](docs/usage.md#user-defined-agent-types)。
+
 ## 架构
 
 ```mermaid

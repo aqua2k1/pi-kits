@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { connect, type Socket } from "node:net";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -7,6 +7,7 @@ import { test } from "node:test";
 import { setTimeout as delay } from "node:timers/promises";
 import {
   DefaultPackageManager,
+  DefaultResourceLoader,
   SessionManager,
 } from "@earendil-works/pi-coding-agent";
 import { useAgentDir } from "../../tests/helpers/agent-dir.ts";
@@ -447,7 +448,7 @@ test("malformed session states fail the authenticated connection closed", async 
   assert.equal(manager.get(agent.id).sessionState, "closed");
 });
 
-test("named agent configuration controls worker argv and structured system instructions", async (t) => {
+test("named agent configuration controls worker argv and launch-time system instructions", async (t) => {
   const mux = new FakeMux();
   const manager = new SubagentManager(mux);
   t.after(() => manager.close());
@@ -468,7 +469,11 @@ test("named agent configuration controls worker argv and structured system instr
   assert.equal(argv[argv.indexOf("--thinking") + 1], "high");
   assert.equal(argv[argv.indexOf("--tools") + 1], "read,grep");
   assert.equal(argv[argv.indexOf("--exclude-tools") + 1], "write");
-  assert.ok(argv.includes("--no-context-files"));
+  assert.ok(!argv.includes("--no-context-files"));
+  const promptPath = argv[argv.indexOf("--system-prompt") + 1];
+  const appendPath = argv[argv.indexOf("--append-system-prompt") + 1];
+  assert.equal(readFileSync(promptPath, "utf8"), "System instructions");
+  assert.equal(readFileSync(appendPath, "utf8"), "");
   assert.ok(argv.includes("--no-extensions"));
   assert.ok(argv.includes("builtin:codemode"));
   assert.ok(argv.includes("builtin:tool-search"));
@@ -477,7 +482,6 @@ test("named agent configuration controls worker argv and structured system instr
       type: "task",
       prompt: task.prompt,
       instructions: {
-        systemPrompt: "System instructions",
         tools: ["read", "grep"],
       },
     },
@@ -485,9 +489,18 @@ test("named agent configuration controls worker argv and structured system instr
   assert.equal(agent.subagentType, "review");
   assert.equal(agent.displayName, "Reviewer");
   assert.equal(agent.agentSource, "project");
+  mux.emit(agent.id, { type: "completed", result: "Done" });
+  await until(() => manager.get(agent.id).status === "completed");
+  manager.resume(agent.id, { prompt: "Next" });
+  await until(() => mux.commands.get(agent.id)?.length === 2);
+  assert.equal(mux.started.length, 1);
+  assert.equal(readFileSync(promptPath, "utf8"), "System instructions");
+  await manager.close();
+  assert.ok(!existsSync(promptPath));
+  assert.ok(!existsSync(appendPath));
 });
 
-test("empty agent tools disable all tools and named agents always disable context file discovery", async (t) => {
+test("empty agent tools disable all tools without disabling project constraints", async (t) => {
   const mux = new FakeMux();
   const manager = new SubagentManager(mux);
   t.after(() => manager.close());
@@ -501,7 +514,131 @@ test("empty agent tools disable all tools and named agents always disable contex
   });
   await until(() => mux.commands.get(agent.id)?.length === 1);
   assert.ok(mux.started[0].argv.includes("--no-tools"));
-  assert.ok(mux.started[0].argv.includes("--no-context-files"));
+  assert.ok(!mux.started[0].argv.includes("--no-context-files"));
+});
+
+test("Pi prompt modes use native resource loading and preserve project constraints", async (t) => {
+  const agentDir = useAgentDir(t);
+  const cwd = join(agentDir, "project");
+  mkdirSync(cwd);
+  writeFileSync(join(agentDir, "SYSTEM.md"), "Existing base role");
+  writeFileSync(join(agentDir, "APPEND_SYSTEM.md"), "Unwanted appended role");
+  writeFileSync(join(cwd, "AGENTS.md"), "Project constraint");
+  const mux = new FakeMux();
+  const manager = new SubagentManager(mux);
+  t.after(() => manager.close());
+  for (const mode of [undefined, "replace", "append"] as const) {
+    for (const body of mode === "append"
+      ? ["Agent role", ""]
+      : ["Agent role"]) {
+      const agent = manager.spawn({
+        ...task,
+        cwd,
+        agent: parseAgentDefinition(
+          `---\n${mode ? `prompt_mode: ${mode}\n` : ""}---\n${body}`,
+          "/agents/role.md",
+          "global",
+        ),
+      });
+      await until(() => mux.commands.get(agent.id)?.length === 1);
+      const argv = mux.started.at(-1)?.argv;
+      assert.ok(argv);
+      const systemIndex = argv.indexOf("--system-prompt");
+      const appendIndex = argv.indexOf("--append-system-prompt");
+      assert.ok(appendIndex >= 0);
+      assert.equal(systemIndex >= 0, mode !== "append");
+      assert.ok(!argv.includes("--no-context-files"));
+      const loader = new DefaultResourceLoader({
+        cwd,
+        agentDir,
+        noExtensions: true,
+        noSkills: true,
+        noPromptTemplates: true,
+        noThemes: true,
+        systemPrompt: systemIndex >= 0 ? argv[systemIndex + 1] : undefined,
+        appendSystemPrompt: [argv[appendIndex + 1]],
+      });
+      await loader.reload();
+      assert.equal(
+        loader.getSystemPrompt(),
+        mode === "append" ? "Existing base role" : body,
+      );
+      assert.deepEqual(loader.getAppendSystemPrompt(), [
+        mode === "append" ? body : "",
+      ]);
+      assert.ok(
+        loader
+          .getAgentsFiles()
+          .agentsFiles.some((file) => file.content === "Project constraint"),
+      );
+      assert.deepEqual(mux.commands.get(agent.id)?.[0].instructions, {});
+      mux.emit(agent.id, { type: "completed", result: "Done" });
+      await until(() => manager.get(agent.id).status === "completed");
+    }
+  }
+});
+
+test("Pi rejects empty replacement roles instead of restoring its default preamble", async (t) => {
+  const mux = new FakeMux();
+  const manager = new SubagentManager(mux);
+  t.after(() => manager.close());
+  for (const fields of ["", "prompt_mode: replace\n"]) {
+    assert.throws(
+      () =>
+        manager.spawn({
+          ...task,
+          agent: parseAgentDefinition(
+            `---\n${fields}---\n  `,
+            "/agents/empty.md",
+            "global",
+          ),
+        }),
+      /replace prompt_mode requires a non-empty agent body/,
+    );
+  }
+  assert.equal(mux.started.length, 0);
+  assert.equal(manager.list().length, 0);
+});
+
+test("Pi prompt files survive failed terminal cleanup and are removed on retry", async (t) => {
+  const mux = new FakeMux();
+  const manager = new SubagentManager(mux);
+  t.after(() => manager.close());
+  const agent = manager.spawn({
+    ...task,
+    agent: parseAgentDefinition("Role", "/agents/role.md", "global"),
+  });
+  await until(() => mux.commands.get(agent.id)?.length === 1);
+  const argv = mux.started[0].argv;
+  const promptPath = argv[argv.indexOf("--system-prompt") + 1];
+  const destroy = mux.destroy.bind(mux);
+  t.mock.method(mux, "destroy", async () => {
+    throw new Error("Failed");
+  });
+  await assert.rejects(manager.remove(agent.id), /retry deletion/);
+  assert.ok(existsSync(promptPath));
+  t.mock.method(mux, "destroy", destroy);
+  await manager.remove(agent.id);
+  assert.ok(!existsSync(promptPath));
+});
+
+test("Pi startup failure cleans up prompt files", async (t) => {
+  const mux = new FakeMux();
+  t.mock.method(mux, "start", async (options: StartOptions) => {
+    mux.started.push(options);
+    throw new Error("Startup failed");
+  });
+  const manager = new SubagentManager(mux);
+  t.after(() => manager.close());
+  const agent = manager.spawn({
+    ...task,
+    agent: parseAgentDefinition("Role", "/agents/role.md", "global"),
+  });
+  const result = await manager.result(agent.id, true);
+  assert.equal(result.status, "error");
+  const argv = mux.started[0].argv;
+  assert.ok(!existsSync(argv[argv.indexOf("--system-prompt") + 1]));
+  assert.ok(!existsSync(argv[argv.indexOf("--append-system-prompt") + 1]));
 });
 
 test("explicit extension allowlists replace defaults, including an empty list", async (t) => {
@@ -616,18 +753,14 @@ test("stopping during native source resolution never starts a terminal afterward
   assert.equal(manager.get(agent.id).status, "stopped");
 });
 
-test("oversized agent instructions fail before worker creation", () => {
+test("oversized task prompts fail before worker creation", () => {
   const mux = new FakeMux();
   const manager = new SubagentManager(mux);
   assert.throws(
     () =>
       manager.spawn({
         ...task,
-        agent: parseAgentDefinition(
-          "x".repeat(64 * 1024),
-          "/agents/large.md",
-          "global",
-        ),
+        prompt: "x".repeat(64 * 1024),
       }),
     /64 KiB protocol limit/,
   );

@@ -16,6 +16,7 @@ export interface AgentDefinition {
   tools?: string[];
   disallowedTools?: string[];
   systemPrompt: string;
+  promptMode?: "replace" | "append";
   inheritContext?: boolean;
   enabled: boolean;
   runInBackground?: boolean;
@@ -91,6 +92,17 @@ export function parseAgentDefinition(
     return [...new Set(names)];
   };
   const runtime = string("runtime");
+  const promptMode = string("prompt_mode");
+  if (
+    promptMode !== undefined &&
+    promptMode !== "replace" &&
+    promptMode !== "append"
+  ) {
+    fail("prompt_mode must be replace or append");
+  }
+  if (promptMode !== undefined && (runtime ?? "pi") !== "pi") {
+    fail("prompt_mode is only supported for the pi runtime");
+  }
   return {
     name,
     ...(runtime ? { runtime } : {}),
@@ -101,6 +113,7 @@ export function parseAgentDefinition(
     tools: tools("tools"),
     disallowedTools: tools("disallowed_tools"),
     systemPrompt: body.trim(),
+    promptMode,
     inheritContext: boolean("inherit_context"),
     enabled: boolean("enabled") ?? true,
     runInBackground: boolean("run_in_background"),

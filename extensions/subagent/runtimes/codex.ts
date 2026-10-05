@@ -555,7 +555,7 @@ class CodexSession implements RuntimeSession {
       return;
     }
     if (
-      command.instructions &&
+      command.instructions?.systemPrompt !== undefined &&
       command.instructions.systemPrompt !== this.systemPrompt
     )
       throw new RuntimeTaskRejectedError(

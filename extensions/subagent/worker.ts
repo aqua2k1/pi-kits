@@ -30,7 +30,8 @@ const MAX_ACTIVITY_BYTES = 4096;
  * Manager must await completed before assigning an independent task.
  */
 export interface WorkerInstructions {
-  systemPrompt: string;
+  /** Accepted for protocol compatibility; Pi prompts are configured at launch. */
+  systemPrompt?: string;
   tools?: string[];
 }
 
@@ -160,7 +161,9 @@ export function parseWorkerCommand(value: unknown): WorkerCommand {
     if (
       !instructions ||
       typeof instructions !== "object" ||
-      typeof instructions.systemPrompt !== "string" ||
+      Array.isArray(instructions) ||
+      (instructions.systemPrompt !== undefined &&
+        typeof instructions.systemPrompt !== "string") ||
       (instructions.tools !== undefined &&
         (!Array.isArray(instructions.tools) ||
           instructions.tools.some((name) => typeof name !== "string" || !name)))
@@ -172,7 +175,9 @@ export function parseWorkerCommand(value: unknown): WorkerCommand {
       prompt: command.prompt,
       ...round,
       instructions: {
-        systemPrompt: instructions.systemPrompt,
+        ...(instructions.systemPrompt !== undefined
+          ? { systemPrompt: instructions.systemPrompt }
+          : {}),
         ...(instructions.tools !== undefined
           ? { tools: instructions.tools }
           : {}),
@@ -276,7 +281,6 @@ export function registerWorkerBridge(
   let generation = 0;
   let preparing = false;
   let result = "";
-  let instructions: WorkerInstructions | undefined;
   let turnCount = 0;
   let toolUses = 0;
   let totalTokens = 0;
@@ -471,7 +475,6 @@ export function registerWorkerBridge(
       active = true;
       round = command.round;
       lastRound = Math.max(lastRound, round ?? 1);
-      if (command.type === "task") instructions = command.instructions;
       reportSession("running");
     }
     pendingCommands += 1;
@@ -596,11 +599,6 @@ export function registerWorkerBridge(
     context = ctx;
     if (!active) reportSession("interactive", "Thinking…");
     if (active && canceling) ctx.abort();
-    if (instructions) {
-      return {
-        systemPrompt: instructions.systemPrompt,
-      };
-    }
   });
   pi.on("agent_start", (_event, ctx) => {
     context = ctx;

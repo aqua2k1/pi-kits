@@ -184,6 +184,9 @@ export class SubagentManager {
     const runtimeId = options.agent?.runtime ?? options.runtime ?? "pi";
     const runtime = this.runtimes.get(runtimeId);
     if (!runtime) throw new Error(`Unknown subagent runtime: ${runtimeId}`);
+    if (options.agent?.promptMode !== undefined && runtimeId !== "pi") {
+      throw new Error("prompt_mode is only supported by the Pi runtime");
+    }
     const id = randomUUID();
     runtime.validate(this.runtimeOptions(id, options, runtime.id));
     const record: AgentRecord = {
@@ -966,7 +969,9 @@ function taskCommand(options: SpawnOptions) {
     ...(options.agent
       ? {
           instructions: {
-            systemPrompt: options.agent.systemPrompt,
+            ...((options.agent.runtime ?? options.runtime ?? "pi") !== "pi"
+              ? { systemPrompt: options.agent.systemPrompt }
+              : {}),
             ...(options.agent.tools !== undefined
               ? {
                   tools: options.agent.tools.filter(

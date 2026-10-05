@@ -1,5 +1,8 @@
 import { randomBytes } from "node:crypto";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { createServer, type Server, type Socket } from "node:net";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { SUBAGENT_DEFAULT_EXTENSIONS } from "@pi-kits/config";
 import { createClonedSession } from "../clone.ts";
@@ -30,9 +33,18 @@ export class PiRuntime implements AgentRuntime {
   readonly displayName = "Pi";
   readonly capabilities = capabilities;
 
-  validate(_options: RuntimeOptions): void {}
+  validate(options: RuntimeOptions): void {
+    if (
+      options.agent &&
+      (options.agent.promptMode ?? "replace") === "replace" &&
+      !options.agent.systemPrompt.trim()
+    ) {
+      throw new Error("Pi replace prompt_mode requires a non-empty agent body");
+    }
+  }
 
   create(options: RuntimeOptions, host: RuntimeHost): RuntimeSession {
+    this.validate(options);
     return new PiSession(options, host);
   }
 }
@@ -48,6 +60,7 @@ class PiSession implements RuntimeSession {
   private closed = false;
   private starting?: Promise<void>;
   private closing?: Promise<void>;
+  private promptDirectory?: string;
   private ready?: () => void;
   private rejectReady?: (error: Error) => void;
 
@@ -117,7 +130,23 @@ class PiSession implements RuntimeSession {
       if (agent?.disallowedTools?.length) {
         argv.push("--exclude-tools", agent.disallowedTools.join(","));
       }
-      if (agent) argv.push("--no-context-files");
+      if (agent) {
+        this.promptDirectory = mkdtempSync(join(tmpdir(), "pi-kits-prompt-"));
+        const promptPath = join(this.promptDirectory, "system.md");
+        writeFileSync(promptPath, agent.systemPrompt, { mode: 0o600 });
+        if (agent.promptMode === "append") {
+          argv.push("--append-system-prompt", promptPath);
+        } else {
+          const emptyPath = join(this.promptDirectory, "append.md");
+          writeFileSync(emptyPath, "", { mode: 0o600 });
+          argv.push(
+            "--system-prompt",
+            promptPath,
+            "--append-system-prompt",
+            emptyPath,
+          );
+        }
+      }
       this.terminal = await this.host.mux.start({
         agentId: this.options.id,
         cwd: this.options.cwd,
@@ -189,6 +218,10 @@ class PiSession implements RuntimeSession {
       if (this.terminal) {
         await this.host.mux.destroy(this.terminal);
         this.terminal = undefined;
+      }
+      if (this.promptDirectory) {
+        rmSync(this.promptDirectory, { recursive: true, force: true });
+        this.promptDirectory = undefined;
       }
     } finally {
       // Keep terminal ownership on destroy failure so close can be retried.

@@ -271,6 +271,7 @@ Supported YAML frontmatter fields use the reference extension's snake_case names
 | `runtime` | Call parameter, then `pi`; supports `pi` and `codex`. |
 | `model` | Call parameter, then parent model for Pi or Codex's own default. |
 | `thinking` | Call parameter, then parent thinking for Pi or Codex's own effort default. |
+| `prompt_mode` | `replace`; Pi only, accepts `replace` or `append`. Explicit configuration is rejected for non-Pi runtimes; omitted frontmatter `runtime` means Pi for this validation. |
 | `tools` | Native Pi defaults; CSV or YAML array, `none`/empty disables all tools. Built-in and whitelisted extension tool names are accepted. |
 | `disallowed_tools` | No additional denylist; CSV or YAML array of tool names, applied after `tools`. |
 | `inherit_context` | Call parameter, then `false`; `true` clones the parent current branch into an independent Pi session. |
@@ -286,15 +287,25 @@ missing requested tools fail before a model turn instead of being silently
 ignored. Codemode cannot use tools outside the CLI allowlist/denylist. Tool
 selection is not a sandbox: `bash` can still change files.
 
-For Pi, the Markdown body is the named agent's full system prompt, and context-file
-discovery is disabled for named workers. It is sent as bounded structured IPC,
-not substituted into shell commands or interpreted as a filename. The role
-remains active after completion for native terminal interaction and resume.
+For Pi, `prompt_mode` controls how the named agent's Markdown body is applied:
 
-`prompt_mode` is no longer read. Like all unknown frontmatter fields, it is
-ignored regardless of value. The MD body is always the full agent system prompt;
-if an old configuration relied on append behavior, put the required instructions
-into the body explicitly.
+- `replace` (default): pass the body in a file via CLI `--system-prompt`, plus an
+  empty file via `--append-system-prompt` to suppress discovered `APPEND_SYSTEM.md`.
+  The body must be non-empty; Pi treats empty custom prompts as its default role.
+- `append`: retain Pi's own base system prompt and pass the body in a file via
+  `--append-system-prompt`, replacing discovered `APPEND_SYSTEM.md` rather than
+  adding to it.
+
+Both modes retain project `AGENTS.md`/`CLAUDE.md` context according to Pi's native
+trust rules; they do not disable context-file discovery or bypass trust. Workers
+use `--no-approve`, so untrusted project resources are not automatically approved.
+The body is file content, never interpolated into shell commands. The role remains
+active after completion for native terminal interaction and resume.
+
+`prompt_mode` is Pi-only. Both explicit `replace` and `append` are rejected when
+frontmatter selects a non-Pi runtime, including Codex. Omission is preserved as
+`undefined` in the parsed definition so runtime validation can distinguish an
+explicit setting; the effective default for Pi is still `replace`.
 
 ## Parent context cloning
 

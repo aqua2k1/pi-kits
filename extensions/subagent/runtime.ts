@@ -31,7 +31,7 @@ export type RuntimeCommand = (
   | {
       type: "task";
       prompt: string;
-      instructions?: { systemPrompt: string; tools?: string[] };
+      instructions?: { systemPrompt?: string; tools?: string[] };
     }
   | { type: "steer"; message: string }
   | { type: "cancel" }

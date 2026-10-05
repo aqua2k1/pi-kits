@@ -42,7 +42,7 @@ test("project agents replace same-name global files as a whole, case-insensitive
   f.file(
     "global",
     "Reviewer.md",
-    "---\nmodel: global-model\ntools: read\nthinking: high\n---\nGlobal prompt",
+    "---\nmodel: global-model\ntools: read\nthinking: high\nprompt_mode: append\n---\nGlobal prompt",
   );
   f.file("global", "other.md", "Other prompt");
   f.file(
@@ -58,6 +58,7 @@ test("project agents replace same-name global files as a whole, case-insensitive
   assert.equal(reviewer.model, undefined);
   assert.equal(reviewer.tools, undefined);
   assert.equal(reviewer.thinking, undefined);
+  assert.equal(reviewer.promptMode, undefined);
   assert.equal(agents.get("other")?.source, "global");
   f.file("project", "reviewer.md", "Updated prompt");
   assert.equal(
@@ -121,7 +122,7 @@ run_in_background: false
   assert.equal(agent.runInBackground, false);
 });
 
-test("inherit_context is optional, strictly boolean and independent of the fixed MD system prompt", () => {
+test("inherit_context is optional, strictly boolean and independent of prompt mode", () => {
   assert.equal(
     parseAgentDefinition("Role", "/agents/plain.md", "global").inheritContext,
     undefined,
@@ -147,12 +148,90 @@ test("inherit_context is optional, strictly boolean and independent of the fixed
   }
 });
 
-test("unknown and removed fields are ignored without activating unsupported capabilities", () => {
+test("prompt_mode preserves omission while defaulting effectively to replace", () => {
+  assert.equal(
+    parseAgentDefinition("Role", "/agents/plain.md", "global").promptMode,
+    undefined,
+  );
+  for (const runtime of ["", "runtime: pi\n", "runtime: codex\n"]) {
+    const agent = parseAgentDefinition(
+      `---\n${runtime}description: Test\n---\nRole`,
+      "/agents/test.md",
+      "project",
+    );
+    assert.equal(agent.promptMode, undefined);
+    assert.equal(agent.promptMode ?? "replace", "replace");
+    assert.equal(agent.systemPrompt, "Role");
+  }
+});
+
+test("prompt_mode accepts replace and append for explicit or omitted Pi runtime", () => {
+  for (const runtime of ["", "runtime: pi\n"]) {
+    for (const mode of ["replace", "append"] as const) {
+      const agent = parseAgentDefinition(
+        `---\n${runtime}prompt_mode: ${mode}\n---\nRole`,
+        "/agents/test.md",
+        "project",
+      );
+      assert.equal(agent.promptMode, mode);
+      assert.equal(agent.systemPrompt, "Role");
+    }
+  }
+});
+
+test("prompt_mode rejects invalid values with the source path", () => {
+  for (const value of [
+    "typo",
+    "Replace",
+    "APPEND",
+    "null",
+    "false",
+    "123",
+    '""',
+    '" "',
+    "[]",
+    "[append]",
+    "{}",
+  ]) {
+    assert.throws(
+      () =>
+        parseAgentDefinition(
+          `---\nprompt_mode: ${value}\n---\nRole`,
+          "/agents/test.md",
+          "project",
+        ),
+      /Invalid agent \/agents\/test\.md: prompt_mode/,
+    );
+  }
+});
+
+test("explicit prompt_mode is rejected for any non-Pi runtime", () => {
+  for (const runtime of ["codex", "future-runtime"]) {
+    for (const mode of ["replace", "append"]) {
+      assert.throws(
+        () =>
+          parseAgentDefinition(
+            `---\nruntime: ${runtime}\nprompt_mode: ${mode}\n---\nRole`,
+            "/agents/test.md",
+            "project",
+          ),
+        /prompt_mode is only supported for the pi runtime/,
+      );
+    }
+    assert.equal(
+      parseAgentDefinition(
+        `---\nruntime: ${runtime}\n---\nRole`,
+        "/agents/test.md",
+        "project",
+      ).runtime,
+      runtime,
+    );
+  }
+});
+
+test("unknown fields are ignored without activating unsupported capabilities", () => {
   const baseline = parseAgentDefinition("Role", "/agents/test.md", "project");
   for (const fields of [
-    "prompt_mode: replace",
-    "prompt_mode: append",
-    "prompt_mode: typo",
     "extensions: [untrusted.ts]",
     "skills: true",
     "max_turns: 30",

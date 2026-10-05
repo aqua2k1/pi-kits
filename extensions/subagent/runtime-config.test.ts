@@ -68,6 +68,26 @@ test("runtime names are validated by the registry, not hardcoded in the parser",
   }
 });
 
+test("prompt_mode rejects an effective non-Pi runtime before worker creation", async () => {
+  const manager = new SubagentManager({} as MuxAdapter);
+  try {
+    assert.throws(
+      () =>
+        manager.spawn({
+          agent: definition("prompt_mode: append"),
+          runtime: "codex",
+          cwd: "/tmp",
+          prompt: "Task",
+          description: "Test",
+        }),
+      /prompt_mode.*Pi runtime/,
+    );
+    assert.equal(manager.list().length, 0);
+  } finally {
+    await manager.close();
+  }
+});
+
 test("Codex does not inherit Pi model/thinking or read parent context, and frontmatter runtime wins", async (t) => {
   const agentDir = useAgentDir(t);
   const cwd = join(agentDir, "project");
