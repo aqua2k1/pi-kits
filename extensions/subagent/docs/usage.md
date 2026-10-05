@@ -221,9 +221,10 @@ frontmatter supplies session settings; calls can supply both session and task
 settings in the same record. `review_target` in agent/session configuration is
 ignored, not inherited.
 
-The shared tools allow unknown extras but read only known generic fields and
-forward raw `runtime_config` to the runtime; their schemas have no Codex schema
-import. `inherit_context` is a Pi-only session field inside `runtime_config`.
+The shared tools allow unknown extras and forward raw `runtime_config` to the
+runtime. Their schemas describe the optional Codex `review_target`, while its
+conditional requirement is enforced by the Codex adapter. `inherit_context` is
+a Pi-only session field inside `runtime_config`.
 Pi's `runtime.prepareSpawn` handles it using opaque host context before queueing;
 resume never recaptures parent context.
 
@@ -688,11 +689,11 @@ Legacy `workflow.enabled: false` disables subagents unless top-level
 Configuration is validated by [the shared schema](../../../shared/config/schema.ts)
 and resolved by [the shared config reader](../../../shared/config/index.ts).
 
-The [shared tool parameter schemas](../index.ts) expose `runtime_config` only
-as a generic record for `subagent` and `resume_subagent`; they allow unknown
-extras but read only known generic fields and forward raw `runtime_config`.
-They do not import Codex schemas or expose top-level `review_target` as a supported
-parameter. Runtime validation covers only the selected adapter's own fields;
+The [shared tool parameter schemas](../index.ts) expose an optional Codex
+`runtime_config.review_target` for `subagent` and `resume_subagent`, while
+allowing other runtime options and forwarding raw `runtime_config`. Top-level
+`review_target` is not a supported parameter. Runtime validation covers only
+the selected adapter's own fields;
 unknown and foreign fields are ignored, including malformed values. See
 [Pi configuration](../runtime/pi/config.ts),
 [Codex configuration](../runtime/codex/config.ts), and the

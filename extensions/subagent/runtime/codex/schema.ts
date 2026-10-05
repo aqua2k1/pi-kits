@@ -17,7 +17,7 @@ export function codexReviewTargetSchema() {
       ],
       {
         description:
-          "Codex-only native review target. Required for agents with runtime_args: review. Omit prompt for structured targets; use custom instructions for tailored review requests. Supply a new target on each resume.",
+          "Codex native review target. Required in runtime_config on every subagent and resume_subagent call when runtime_args includes review; never inherited. Omit prompt for structured targets; use custom instructions for tailored review requests.",
       },
     ),
   );

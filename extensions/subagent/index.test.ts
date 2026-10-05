@@ -210,7 +210,7 @@ for (const failures of [1, 3]) {
   });
 }
 
-test("tool prompts and configuration schemas stay runtime-neutral", () => {
+test("tool prompts stay runtime-neutral while runtime_config documents native review", () => {
   const capture = registrations();
   registerSubagents(capture.pi, {} as MuxAdapter);
   const properties = (tool: ToolDefinition) =>
@@ -222,7 +222,8 @@ test("tool prompts and configuration schemas stay runtime-neutral", () => {
   for (const tool of capture.definitions.values()) {
     assert.doesNotMatch(tool.description, /\b(?:Pi|Codex|Herdr)\b/i);
     for (const [name, schema] of Object.entries(properties(tool))) {
-      assert.doesNotMatch(schema.description, /\b(?:Pi|Codex|Herdr)\b/i);
+      if (name !== "runtime_config")
+        assert.doesNotMatch(schema.description, /\b(?:Pi|Codex|Herdr)\b/i);
       assert.ok(
         schema.description?.trim(),
         `${tool.name}.${name} needs guidance`,
@@ -275,6 +276,20 @@ test("opaque runtime configuration is forwarded on spawn and resume", async (t) 
       }
     ).properties;
     assert.equal(properties.review_target, undefined);
+    const configSchema = properties.runtime_config as {
+      properties: Record<string, { description?: string }>;
+      description?: string;
+      additionalProperties?: boolean;
+    };
+    assert.equal(configSchema.additionalProperties, true);
+    assert.match(
+      configSchema.description ?? "",
+      /review_target.*every spawn and resume call/,
+    );
+    assert.match(
+      configSchema.properties.review_target.description ?? "",
+      /Required in runtime_config on every subagent and resume_subagent call/,
+    );
     const required =
       tool.name === "subagent"
         ? { description: "Future task" }
