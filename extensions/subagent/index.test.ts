@@ -146,6 +146,36 @@ for (const config of [
   });
 }
 
+test("tool prompts describe parameters without coupling to specific runtimes", () => {
+  const capture = registrations();
+  registerSubagents(capture.pi, {} as MuxAdapter);
+  const properties = (tool: ToolDefinition) =>
+    (
+      tool.parameters as unknown as {
+        properties: Record<string, { description: string }>;
+      }
+    ).properties;
+  for (const tool of capture.definitions.values()) {
+    assert.doesNotMatch(tool.description, /\b(?:Pi|Codex|Herdr)\b/i);
+    for (const [name, schema] of Object.entries(properties(tool))) {
+      assert.doesNotMatch(schema.description, /\b(?:Pi|Codex|Herdr)\b/i);
+      assert.ok(
+        schema.description?.trim(),
+        `${tool.name}.${name} needs guidance`,
+      );
+    }
+  }
+  const spawn = capture.definitions.get("subagent");
+  assert.ok(spawn);
+  assert.match(spawn.description, /configuration takes precedence/);
+  assert.match(properties(spawn).prompt.description, /not a system prompt/);
+  assert.match(properties(spawn).model.description, /selected runtime/);
+  const steer = capture.definitions.get("steer_subagent");
+  assert.ok(steer);
+  assert.match(steer.description, /running task/);
+  assert.ok(!steer.description.includes("after its current tools"));
+});
+
 test("agent catalogue uses project overrides and unknown/disabled names never launch workers", async (t) => {
   const agentDir = useAgentDir(t);
   const cwd = join(agentDir, "project");

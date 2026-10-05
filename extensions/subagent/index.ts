@@ -98,26 +98,61 @@ export function registerSubagents(
       ),
       renderResult: renderSubagentResult,
       description:
-        "Run a task in an independent Pi or Codex runtime with Herdr native views. Background by default. Pi supports cloning the parent branch; cross-runtime context inheritance is rejected. Frontmatter is authoritative. Select a user-defined subagent_type or runtime (default pi); use list_subagent_types to discover names. Agent configuration takes precedence. Pi workers share filesystem access; Codex uses its own sandbox/approval policy. Codex native views require a finished task and must be exited before managed continuation. Use /subagent:views for native terminal control.",
+        "Delegate a task to an independent agent session. Background by default. Agent configuration takes precedence over call parameters. Use list_subagent_types to discover agents and resume_subagent for follow-up tasks.",
       parameters: Type.Object({
-        subagent_type: Type.Optional(Type.String({ minLength: 1 })),
-        runtime: Type.Optional(Type.String({ minLength: 1, pattern: "\\S" })),
-        inherit_context: Type.Optional(Type.Boolean({ default: false })),
+        subagent_type: Type.Optional(
+          Type.String({
+            minLength: 1,
+            description:
+              "Agent name from list_subagent_types; omit for an unnamed session.",
+          }),
+        ),
+        runtime: Type.Optional(
+          Type.String({
+            minLength: 1,
+            pattern: "\\S",
+            description: "Execution runtime; omit to use the default.",
+          }),
+        ),
+        inherit_context: Type.Optional(
+          Type.Boolean({
+            default: false,
+            description:
+              "Inherit the parent conversation; requires runtime support. False starts fresh.",
+          }),
+        ),
         prompt: Type.String({
           minLength: 1,
           maxLength: 100_000,
           pattern: "\\S",
+          description:
+            "Task instructions, relevant context, and expected output; not a system prompt.",
         }),
-        description: Type.String({ minLength: 1, maxLength: 200 }),
-        model: Type.Optional(Type.String({ minLength: 1 })),
+        description: Type.String({
+          minLength: 1,
+          maxLength: 200,
+          description: "Short task title for status displays.",
+        }),
+        model: Type.Optional(
+          Type.String({
+            minLength: 1,
+            description: "Model identifier understood by the selected runtime.",
+          }),
+        ),
         thinking: Type.Optional(
           Type.String({
             minLength: 1,
             description:
-              "Runtime-native thinking level: Pi thinking or Codex reasoning effort. Parent defaults apply only to Pi.",
+              "Thinking or reasoning level understood by the selected runtime.",
           }),
         ),
-        run_in_background: Type.Optional(Type.Boolean({ default: true })),
+        run_in_background: Type.Optional(
+          Type.Boolean({
+            default: true,
+            description:
+              "Return immediately with the task ID, or wait for completion when false.",
+          }),
+        ),
       }),
       async execute(_id, params, signal, _onUpdate, ctx) {
         signal?.throwIfAborted();
@@ -168,18 +203,30 @@ export function registerSubagents(
       ),
       renderResult: renderSubagentResult,
       description:
-        "Continue a finished managed task in the same retained runtime session/history without restarting. Re-enters the shared concurrency queue. Requires idle sessionState; rejects native/user interaction, closed or disconnected sessions. Codex native TUI must be exited first; detaching its view is not enough. Retains original instructions and current runtime settings. Background by default, respecting original agent configuration.",
+        "Continue a finished task in the same session, retaining history and settings. Requires an idle, connected session. Background by default; the original agent configuration takes precedence.",
       parameters: Type.Object({
         agent_id: agentId,
         prompt: Type.String({
           minLength: 1,
           maxLength: 100_000,
           pattern: "\\S",
+          description: "Follow-up task instructions.",
         }),
         description: Type.Optional(
-          Type.String({ minLength: 1, maxLength: 200 }),
+          Type.String({
+            minLength: 1,
+            maxLength: 200,
+            description:
+              "New short task title; omit to retain the previous title.",
+          }),
         ),
-        run_in_background: Type.Optional(Type.Boolean({ default: true })),
+        run_in_background: Type.Optional(
+          Type.Boolean({
+            default: true,
+            description:
+              "Return immediately, or wait for completion when false.",
+          }),
+        ),
       }),
       async execute(_id, params, signal, _onUpdate, ctx) {
         signal?.throwIfAborted();
@@ -206,7 +253,7 @@ export function registerSubagents(
       renderCall: renderSubagentTypesCall,
       renderResult: renderSubagentTypesResult,
       description:
-        "List user-defined agent Markdown configurations. Project .pi/agents definitions replace same-name global agents. No built-in types. Disabled definitions are listed but cannot be spawned.",
+        "List configured agents and their settings. Disabled agents are listed but cannot be started.",
       parameters: Type.Object({}),
       outputSchema: Type.Object({ agents: Type.Array(Type.Any()) }),
       async execute(_id, _params, _signal, _onUpdate, ctx) {
@@ -236,11 +283,15 @@ export function registerSubagents(
         manager?.list().find((agent) => agent.id === id),
       ),
       renderResult: renderSubagentResult,
-      description:
-        "Read the managed task status/result and live sessionState. wait waits for the managed task, not independent native/user work.",
+      description: "Read a task's status, result, and current session state.",
       parameters: Type.Object({
         agent_id: agentId,
-        wait: Type.Optional(Type.Boolean()),
+        wait: Type.Optional(
+          Type.Boolean({
+            description:
+              "Wait for the managed task to finish; otherwise return immediately.",
+          }),
+        ),
       }),
       async execute(_id, params, signal) {
         return toolResult(
@@ -259,13 +310,15 @@ export function registerSubagents(
       ),
       renderResult: renderSubagentResult,
       description:
-        "Send guidance to a running subagent after its current tools.",
+        "Send additional guidance to a running task. Use resume_subagent for a finished task.",
       parameters: Type.Object({
         agent_id: agentId,
         message: Type.String({
           minLength: 1,
           maxLength: 100_000,
           pattern: "\\S",
+          description:
+            "Additional instructions for the currently running task.",
         }),
       }),
       async execute(_id, params) {
@@ -285,7 +338,7 @@ export function registerSubagents(
       ),
       renderResult: renderSubagentResult,
       description:
-        "Cancel a queued or running managed task without closing its view. Does not cancel independent native/user work.",
+        "Cancel a queued or running managed task, not independent user interaction.",
       parameters: Type.Object({ agent_id: agentId }),
       async execute(_id, params) {
         return toolResult(getManager().stop(params.agent_id));
