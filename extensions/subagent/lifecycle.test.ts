@@ -98,8 +98,8 @@ test("running cancellation retains its queue slot until the worker settles", asy
   const mux = harness();
   const manager = new SubagentManager(mux.adapter, { maxConcurrent: 1 });
   t.after(() => manager.close());
-  const first = manager.spawn(task);
-  const next = manager.spawn(task);
+  const first = manager.spawn({ ...task, keepAlive: true });
+  const next = manager.spawn({ ...task, keepAlive: true });
   await until(() => mux.prompts.includes(first.id));
   assert.equal(manager.stop(first.id).status, "stopping");
   await delay(10);

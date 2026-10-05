@@ -331,6 +331,65 @@ test("opaque runtime configuration is forwarded on spawn and resume", async (t) 
   await capture.hookHandlers.get("session_shutdown")?.();
 });
 
+test("keep_alive is validated and forwarded only at session creation", async (t) => {
+  const agentDir = useAgentDir(t);
+  const agents = join(agentDir, "agents");
+  mkdirSync(agents, { recursive: true });
+  writeFileSync(
+    join(agents, "retained.md"),
+    "---\nkeep_alive: false\n---\nRole",
+  );
+  const capture = registrations();
+  capture.pi.getThinkingLevel = () => "low";
+  registerSubagents(capture.pi, {} as MuxAdapter);
+  const spawn = capture.definitions.get("subagent");
+  const resume = capture.definitions.get("resume_subagent");
+  assert.ok(spawn && resume);
+  const properties = (
+    resume.parameters as unknown as {
+      properties: Record<string, unknown>;
+    }
+  ).properties;
+  assert.equal(properties.keep_alive, undefined);
+  let latest: SpawnOptions | undefined;
+  t.mock.method(SubagentManager.prototype, "spawn", (options: SpawnOptions) => {
+    latest = options;
+    return { id: "retained", description: "Task", status: "queued" };
+  });
+  const ctx = { cwd: agentDir, mode: "print" } as ExtensionToolContext;
+  for (const keep_alive of [undefined, false, true]) {
+    const params = { prompt: "Task", description: "Task", keep_alive };
+    assert.equal(Value.Check(spawn.parameters, params), true);
+    await spawn.execute("call", params, undefined, undefined, ctx);
+    assert.equal(latest?.keepAlive, keep_alive);
+  }
+  for (const keep_alive of [null, "true", 1, [], {}]) {
+    assert.equal(
+      Value.Check(spawn.parameters, {
+        prompt: "Task",
+        description: "Task",
+        keep_alive,
+      }),
+      false,
+    );
+  }
+  await spawn.execute(
+    "call",
+    {
+      subagent_type: "retained",
+      prompt: "Task",
+      description: "Task",
+      keep_alive: true,
+    },
+    undefined,
+    undefined,
+    ctx,
+  );
+  assert.equal(latest?.keepAlive, true);
+  assert.equal(latest?.agent?.keepAlive, false);
+  await capture.hookHandlers.get("session_shutdown")?.();
+});
+
 test("agent catalogue uses project overrides and unknown/disabled names never launch workers", async (t) => {
   const agentDir = useAgentDir(t);
   const cwd = join(agentDir, "project");

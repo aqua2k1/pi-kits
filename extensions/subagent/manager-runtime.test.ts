@@ -163,11 +163,12 @@ test("runtime parsers own configuration and per-round tasks without manager runt
     "global",
   );
   assert.throws(
-    () => manager.spawn({ ...task, agent, prompt: "" }),
+    () => manager.spawn({ keepAlive: true, ...task, agent, prompt: "" }),
     /Target required/,
   );
   assert.equal(manager.list().length, 0);
   const started = manager.spawn({
+    keepAlive: true,
     ...task,
     agent,
     prompt: "",
@@ -227,6 +228,7 @@ test("runtimes partition opaque call configuration without shared key knowledge"
   const manager = new SubagentManager(h.mux, { runtimes: [h.runtime] });
   t.after(() => manager.close());
   const started = manager.spawn({
+    keepAlive: true,
     ...task,
     runtime: h.runtime.id,
     runtimeConfig: { native: "agent-native" },
@@ -273,13 +275,20 @@ test("runtimes without parsers receive opaque configuration without shared field
   const manager = new SubagentManager(h.mux, { runtimes: [h.runtime] });
   t.after(() => manager.close());
   assert.throws(
-    () => manager.spawn({ ...task, runtime: "legacy", prompt: "" }),
+    () =>
+      manager.spawn({
+        keepAlive: true,
+        ...task,
+        runtime: "legacy",
+        prompt: "",
+      }),
     /must not be blank/,
   );
   assert.equal(manager.list().length, 0);
   const config = { future_session_option: { opaque: true } };
   const params = { future_task_option: ["native"] };
   const started = manager.spawn({
+    keepAlive: true,
     ...task,
     runtime: "legacy",
     runtimeConfig: config,
@@ -344,7 +353,7 @@ test("shutdown retains failed view and runtime ownership for retry", async (t) =
     for (const session of h.sessions) session.failClose = false;
     await manager.close();
   });
-  const agent = manager.spawn({ ...task, runtime: "codex" });
+  const agent = manager.spawn({ keepAlive: true, ...task, runtime: "codex" });
   await until(() => h.sessions[0]?.commands.length === 1);
   h.sessions[0].complete();
   const view = await manager.openView(agent.id);
@@ -448,10 +457,15 @@ test("runtime preparation freezes opaque context before queueing and is not repe
     maxConcurrent: 1,
   });
   t.after(() => manager.close());
-  const first = manager.spawn({ ...task, runtime: h.runtime.id });
+  const first = manager.spawn({
+    keepAlive: true,
+    ...task,
+    runtime: h.runtime.id,
+  });
   await until(() => h.sessions[0]?.commands.length === 1);
   const context = { file: "/parent/original.jsonl" };
   const queued = manager.spawn({
+    keepAlive: true,
     ...task,
     runtime: h.runtime.id,
     runtimeConfig: { native_clone: true },
@@ -498,7 +512,7 @@ test("long Codex roles do not consume task command budget on spawn or resume", a
     "project",
   );
   const prompt = "P".repeat(30_000);
-  const spawned = manager.spawn({ ...task, agent, prompt });
+  const spawned = manager.spawn({ keepAlive: true, ...task, agent, prompt });
   await until(() => h.sessions[0]?.commands.length === 1);
   assert.equal(h.validated[0].agent?.systemPrompt, agent.systemPrompt);
   assert.deepEqual(h.sessions[0].commands[0], {
@@ -539,6 +553,7 @@ test("runtime injection waits for ready, forwards options and resumes without an
     "project",
   );
   const first = manager.spawn({
+    keepAlive: true,
     ...task,
     runtime: "pi",
     agent,
@@ -597,8 +612,8 @@ test("lazy native attachment errors leave queued/running tasks intact and view c
     maxConcurrent: 1,
   });
   t.after(() => manager.close());
-  const first = manager.spawn({ ...task, runtime: "codex" });
-  const queued = manager.spawn({ ...task, runtime: "codex" });
+  const first = manager.spawn({ keepAlive: true, ...task, runtime: "codex" });
+  const queued = manager.spawn({ keepAlive: true, ...task, runtime: "codex" });
   await assert.rejects(manager.openView(queued.id), /not ready/);
   await until(() => h.sessions[0].commands.length === 1);
   await assert.rejects(manager.openView(first.id), /no managed task/);
@@ -682,7 +697,7 @@ test("late async task/cancel failures cannot terminate a subsequent round", asyn
   });
   const manager = new SubagentManager(h.mux, { runtimes: [h.runtime] });
   t.after(() => manager.close());
-  const first = manager.spawn({ ...task, runtime: "codex" });
+  const first = manager.spawn({ keepAlive: true, ...task, runtime: "codex" });
   await until(() => h.sessions[0].commands.length === 1);
   const session = h.sessions[0];
   session.complete();
@@ -719,7 +734,7 @@ test("uncertain async resumed delivery/cancel closes the parent-owned runtime", 
     cancelTimeoutMs: 5,
   });
   t.after(() => manager.close());
-  const first = manager.spawn({ ...task, runtime: "codex" });
+  const first = manager.spawn({ keepAlive: true, ...task, runtime: "codex" });
   await until(() => h.sessions[0].commands.length === 1);
   h.sessions[0].complete();
   manager.resume(first.id, { prompt: "Round 2" });
@@ -729,7 +744,7 @@ test("uncertain async resumed delivery/cancel closes the parent-owned runtime", 
   await until(() => manager.get(first.id).status === "stopped");
   assert.equal(manager.get(first.id).sessionState, "closed");
   assert.ok(h.sessions[0].closeCalls > 0);
-  const queued = manager.spawn({ ...task, runtime: "codex" });
+  const queued = manager.spawn({ keepAlive: true, ...task, runtime: "codex" });
   await until(() => manager.get(queued.id).status === "running");
 });
 
@@ -740,7 +755,7 @@ test("finished native session cleanup failures retain ownership and stop retries
     h.sessions[0].failClose = false;
     await manager.close();
   });
-  const agent = manager.spawn({ ...task, runtime: "codex" });
+  const agent = manager.spawn({ keepAlive: true, ...task, runtime: "codex" });
   await until(() => h.sessions[0]?.commands.length === 1);
   h.sessions[0].complete();
   const finished = manager.get(agent.id);
@@ -807,7 +822,7 @@ test("a definitive runtime rejection preserves an idle native UI and releases on
     maxConcurrent: 1,
   });
   t.after(() => manager.close());
-  const first = manager.spawn({ ...task, runtime: "codex" });
+  const first = manager.spawn({ keepAlive: true, ...task, runtime: "codex" });
   await until(() => h.sessions[0].commands.length === 1);
   const session = h.sessions[0];
   session.complete();
@@ -821,7 +836,7 @@ test("a definitive runtime rejection preserves an idle native UI and releases on
   assert.equal(rejected.viewId, view.id);
   assert.equal(session.closeCalls, 0);
   assert.deepEqual(h.closedViews, []);
-  const next = manager.spawn({ ...task, runtime: "codex" });
+  const next = manager.spawn({ keepAlive: true, ...task, runtime: "codex" });
   await until(() => h.sessions.length === 2);
   h.sessions[1].complete();
   assert.equal(manager.get(next.id).status, "completed");
@@ -850,7 +865,7 @@ test("initial task rejection retains the ready runtime and restores idle without
     maxConcurrent: 1,
   });
   t.after(() => manager.close());
-  const first = manager.spawn({ ...task, runtime: "codex" });
+  const first = manager.spawn({ keepAlive: true, ...task, runtime: "codex" });
   const result = await manager.result(first.id, true);
   assert.equal(result.status, "error");
   assert.equal(result.error, "Native thread is busy");
@@ -894,4 +909,293 @@ test("executable and Pi worker configuration are scoped to the selected runtime"
   assert.equal(h.validated[0].workerPath, undefined);
   assert.equal(h.validated[0].extensionAllowlist, undefined);
   await until(() => h.sessions[0].commands.length === 1);
+});
+
+test("default terminal rounds release resources and preserve results and errors", async (t) => {
+  for (const outcome of ["completed", "stopped", "error"] as const) {
+    const h = harness();
+    const manager = new SubagentManager(h.mux, { runtimes: [h.runtime] });
+    t.after(() => manager.close());
+    const agent = manager.spawn({ ...task, runtime: h.runtime.id });
+    assert.equal(agent.keepAlive, false);
+    await until(() => h.sessions[0]?.commands.length === 1);
+    const session = h.sessions[0];
+    session.managed = false;
+    session.emit({
+      type: "completed",
+      result: "Saved",
+      canceled: outcome === "stopped",
+      error: outcome === "error" ? "Task failed" : undefined,
+    });
+    await until(() => manager.get(agent.id).sessionState === "closed");
+    const result = await manager.result(agent.id);
+    assert.equal(result.status, outcome);
+    assert.equal(result.result, "Saved");
+    assert.equal(result.error, outcome === "error" ? "Task failed" : undefined);
+    assert.equal(result.terminalId, undefined);
+    assert.equal(manager.list().length, 1);
+    assert.equal(session.closeCalls, 1);
+    assert.throws(
+      () => manager.resume(agent.id, { prompt: "Next" }),
+      /released/,
+    );
+    await assert.rejects(manager.openView(agent.id), /released/);
+    await manager.release(agent.id);
+    await manager.close();
+    assert.equal(session.closeCalls, 1);
+  }
+});
+
+test("keepAlive retains workers, agent preference wins, and explicit release is idempotent", async (t) => {
+  const h = harness();
+  const manager = new SubagentManager(h.mux, { runtimes: [h.runtime] });
+  t.after(() => manager.close());
+  const definition = parseAgentDefinition(
+    "---\nkeep_alive: false\n---\nRole",
+    "/agents/one.md",
+    "global",
+  );
+  const retained = manager.spawn({
+    ...task,
+    runtime: h.runtime.id,
+    keepAlive: true,
+  });
+  const defaulted = manager.spawn({
+    ...task,
+    runtime: h.runtime.id,
+    keepAlive: true,
+    agent: definition,
+  });
+  assert.equal(manager.get(defaulted.id).keepAlive, false);
+  await until(() =>
+    h.sessions.every((session) => session.commands.length === 1),
+  );
+  await assert.rejects(manager.release(retained.id), /finished/);
+  h.sessions[0].complete();
+  h.sessions[1].complete();
+  await until(() => manager.get(defaulted.id).sessionState === "closed");
+  assert.equal(h.sessions[0].closeCalls, 0);
+  const view = await manager.openView(retained.id);
+  await Promise.all([
+    manager.release(retained.id),
+    manager.release(retained.id),
+  ]);
+  assert.deepEqual(h.closedViews, [view.id]);
+  assert.equal(h.sessions[0].closeCalls, 1);
+  assert.equal(manager.get(retained.id).result, "Result 1");
+  assert.equal(manager.get(retained.id).status, "completed");
+});
+
+test("a live view retains a finished worker; closing a running view never cancels", async (t) => {
+  const h = harness();
+  h.runtime.capabilities.concurrentNativeInput = true;
+  const manager = new SubagentManager(h.mux, { runtimes: [h.runtime] });
+  t.after(() => manager.close());
+  const agent = manager.spawn({ ...task, runtime: h.runtime.id });
+  await until(() => h.sessions[0]?.commands.length === 1);
+  await manager.openView(agent.id);
+  await manager.closeView(agent.id);
+  assert.equal(manager.get(agent.id).status, "running");
+  assert.equal(h.sessions[0].closeCalls, 0);
+  assert.equal(h.sessions[0].commands.length, 1);
+  await manager.openView(agent.id);
+  h.sessions[0].complete();
+  // Drain policy operations while preserving a live view.
+  await manager.openView(agent.id);
+  assert.equal(h.sessions[0].closeCalls, 0);
+  await manager.closeView(agent.id);
+  await until(() => manager.get(agent.id).sessionState === "closed");
+  assert.equal(manager.get(agent.id).result, "Result 1");
+});
+
+test("external view closure releases a worker and polling stops after release or disposal", async (t) => {
+  const h = harness();
+  h.runtime.capabilities.concurrentNativeInput = true;
+  let alive = true;
+  let inspections = 0;
+  h.mux.inspect_view = async () => {
+    inspections++;
+    return { alive };
+  };
+  const manager = new SubagentManager(h.mux, { runtimes: [h.runtime] });
+  t.after(() => manager.close());
+  const agent = manager.spawn({ ...task, runtime: h.runtime.id });
+  await until(() => h.sessions[0]?.commands.length === 1);
+  await manager.openView(agent.id);
+  h.sessions[0].complete();
+  await manager.openView(agent.id);
+  alive = false;
+  await delay(1_100);
+  await until(() => manager.get(agent.id).sessionState === "closed");
+  assert.equal(manager.get(agent.id).viewId, undefined);
+  const afterRelease = inspections;
+  await delay(1_100);
+  assert.equal(inspections, afterRelease);
+  alive = true;
+  const next = manager.spawn({ ...task, runtime: h.runtime.id });
+  await until(() => h.sessions[1]?.commands.length === 1);
+  await manager.openView(next.id);
+  h.sessions[1].complete();
+  await manager.openView(next.id);
+  await manager.close();
+  const afterDisposal = inspections;
+  await delay(1_100);
+  assert.equal(inspections, afterDisposal);
+});
+
+test("opening before completion retains the view, but release during opening forbids attachment", async (t) => {
+  const h = harness();
+  h.runtime.capabilities.concurrentNativeInput = true;
+  const manager = new SubagentManager(h.mux, { runtimes: [h.runtime] });
+  t.after(() => manager.close());
+  const agent = manager.spawn({ ...task, runtime: h.runtime.id });
+  await until(() => h.sessions[0]?.commands.length === 1);
+  const gate = deferred();
+  const original = h.mux.open_view;
+  let entered = false;
+  h.mux.open_view = async (options) => {
+    entered = true;
+    await gate.promise;
+    return original(options);
+  };
+  const opening = manager.openView(agent.id);
+  await until(() => entered);
+  h.sessions[0].complete();
+  gate.resolve();
+  await opening;
+  await manager.openView(agent.id);
+  assert.equal(h.sessions[0].closeCalls, 0);
+  await manager.closeView(agent.id);
+  await until(() => manager.get(agent.id).sessionState === "closed");
+
+  const next = manager.spawn({
+    ...task,
+    runtime: h.runtime.id,
+    keepAlive: true,
+  });
+  await until(() => h.sessions[1]?.commands.length === 1);
+  h.sessions[1].complete();
+  const attachment = deferred();
+  const session = h.sessions[1];
+  const attach = session.attachment.bind(session);
+  session.attachment = async () => {
+    await attachment.promise;
+    return attach();
+  };
+  const pending = manager.openView(next.id);
+  const rejected = assert.rejects(pending, /released/);
+  await delay(5);
+  const releasing = manager.release(next.id);
+  assert.throws(() => manager.resume(next.id, { prompt: "Race" }), /released/);
+  attachment.resolve();
+  await rejected;
+  await releasing;
+  assert.equal(h.opened.includes(next.id), false);
+});
+
+test("auto-release failure is visible and stop retries without changing round data", async (t) => {
+  const h = harness();
+  const manager = new SubagentManager(h.mux, { runtimes: [h.runtime] });
+  t.after(async () => {
+    h.sessions[0].failClose = false;
+    await manager.close();
+  });
+  const agent = manager.spawn({ ...task, runtime: h.runtime.id });
+  await until(() => h.sessions[0]?.commands.length === 1);
+  h.sessions[0].failClose = true;
+  h.sessions[0].complete(1, "Original error");
+  await until(() => manager.get(agent.id).sessionState === "disconnected");
+  assert.match(manager.get(agent.id).sessionActivity ?? "", /cleanup failed/);
+  assert.equal(manager.get(agent.id).error, "Original error");
+  const finished = manager.get(agent.id);
+  await assert.rejects(manager.release(agent.id), /retry release/);
+  h.sessions[0].failClose = false;
+  manager.stop(agent.id);
+  await until(() => manager.get(agent.id).sessionState === "closed");
+  assert.equal(manager.get(agent.id).result, finished.result);
+  assert.equal(manager.get(agent.id).status, finished.status);
+  assert.equal(manager.get(agent.id).error, finished.error);
+  assert.equal(manager.get(agent.id).completedAt, finished.completedAt);
+});
+
+test("failed release retains view ownership even after runtime closes and disposal retries it", async (t) => {
+  const h = harness();
+  const manager = new SubagentManager(h.mux, { runtimes: [h.runtime] });
+  t.after(() => manager.close());
+  const agent = manager.spawn({
+    ...task,
+    runtime: h.runtime.id,
+    keepAlive: true,
+  });
+  await until(() => h.sessions[0]?.commands.length === 1);
+  h.sessions[0].complete();
+  const view = await manager.openView(agent.id);
+  const close = h.mux.close_view;
+  h.mux.close_view = async () => {
+    throw new Error("Mux unavailable");
+  };
+  await assert.rejects(manager.release(agent.id), /retry release/);
+  assert.equal(manager.get(agent.id).viewId, view.id);
+  assert.equal(manager.get(agent.id).terminalId, undefined);
+  assert.equal(manager.get(agent.id).result, "Result 1");
+  await assert.rejects(manager.close(), /could not be cleaned up/);
+  h.mux.close_view = close;
+  await manager.close();
+  assert.deepEqual(h.closedViews, [view.id]);
+  assert.equal(h.sessions[0].closeCalls, 1);
+});
+
+test("a resumed round invalidates an in-flight finished-view lifecycle check", async (t) => {
+  const h = harness();
+  h.runtime.capabilities.concurrentNativeInput = true;
+  const manager = new SubagentManager(h.mux, { runtimes: [h.runtime] });
+  t.after(() => manager.close());
+  const agent = manager.spawn({ ...task, runtime: h.runtime.id });
+  await until(() => h.sessions[0]?.commands.length === 1);
+  await manager.openView(agent.id);
+  const gate = deferred();
+  let entered = false;
+  h.mux.inspect_view = async () => {
+    entered = true;
+    await gate.promise;
+    return { alive: false };
+  };
+  h.sessions[0].complete();
+  await until(() => entered);
+  manager.resume(agent.id, { prompt: "Continue" });
+  gate.resolve();
+  await until(() => h.sessions[0].commands.length === 2);
+  await manager.closeView(agent.id);
+  assert.equal(manager.get(agent.id).status, "running");
+  assert.equal(h.sessions[0].closeCalls, 0);
+  h.sessions[0].complete(2);
+  await until(() => manager.get(agent.id).sessionState === "closed");
+  assert.equal(manager.get(agent.id).result, "Result 2");
+});
+
+test("resume cannot dispatch while a non-concurrent native attachment is opening", async (t) => {
+  const h = harness();
+  const manager = new SubagentManager(h.mux, { runtimes: [h.runtime] });
+  t.after(() => manager.close());
+  const agent = manager.spawn({
+    ...task,
+    runtime: h.runtime.id,
+    keepAlive: true,
+  });
+  await until(() => h.sessions[0]?.commands.length === 1);
+  h.sessions[0].complete();
+  const gate = deferred();
+  const attach = h.sessions[0].attachment.bind(h.sessions[0]);
+  h.sessions[0].attachment = async () => {
+    await gate.promise;
+    return attach();
+  };
+  const opening = manager.openView(agent.id);
+  assert.throws(
+    () => manager.resume(agent.id, { prompt: "Unsafe" }),
+    /opening is still in progress/,
+  );
+  gate.resolve();
+  await opening;
+  assert.equal(h.sessions[0].commands.length, 1);
 });

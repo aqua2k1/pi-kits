@@ -18,6 +18,7 @@ export interface AgentDefinition {
   systemPrompt: string;
   enabled: boolean;
   runInBackground?: boolean;
+  keepAlive?: boolean;
   source: "global" | "project";
   sourcePath: string;
 }
@@ -90,6 +91,7 @@ export function parseAgentDefinition(
     systemPrompt: body.trim(),
     enabled: boolean("enabled") ?? true,
     runInBackground: boolean("run_in_background"),
+    keepAlive: boolean("keep_alive"),
     source,
     sourcePath,
   };

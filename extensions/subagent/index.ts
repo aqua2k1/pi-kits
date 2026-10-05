@@ -132,6 +132,13 @@ export function registerSubagents(
           }),
         ),
         runtime_config: runtimeConfig,
+        keep_alive: Type.Optional(
+          Type.Boolean({
+            default: false,
+            description:
+              "Keep the session after completion for later resume. Default false: release when no native view is open. Agent configuration takes precedence.",
+          }),
+        ),
         description: Type.String({
           minLength: 1,
           maxLength: 200,
@@ -169,6 +176,7 @@ export function registerSubagents(
           runtime,
           context: ctx.sessionManager,
           agent,
+          keepAlive: params.keep_alive,
           prompt: params.prompt ?? "",
           runtimeParams: params.runtime_config,
           description: params.description,

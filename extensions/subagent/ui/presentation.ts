@@ -22,7 +22,8 @@ export function isBusy(agent: AgentSnapshot): boolean {
 
 export function agentDisplayStatus(agent: AgentSnapshot): string {
   return agent.sessionState === "interactive" ||
-    agent.sessionState === "disconnected"
+    agent.sessionState === "disconnected" ||
+    agent.sessionState === "closed"
     ? `${agent.status} · ${agent.sessionState}`
     : agent.status;
 }

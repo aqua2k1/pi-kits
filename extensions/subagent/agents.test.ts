@@ -133,6 +133,7 @@ runtime_config:
   inherit_context: true
 enabled: false
 run_in_background: false
+keep_alive: true
 ---
 
 Review carefully.
@@ -155,6 +156,7 @@ Review carefully.
   assert.equal(agent.enabled, false);
   assert.equal(agent.systemPrompt, "Review carefully.");
   assert.equal(agent.runInBackground, false);
+  assert.equal(agent.keepAlive, true);
   for (const field of [
     "tools",
     "disallowedTools",
@@ -359,7 +361,7 @@ test("invalid generic values and malformed YAML still fail closed", () => {
       );
     }
   }
-  for (const field of ["enabled", "run_in_background"]) {
+  for (const field of ["enabled", "run_in_background", "keep_alive"]) {
     for (const value of ["null", "yes", "1", '""', "[]", "{}"]) {
       assert.throws(
         () =>

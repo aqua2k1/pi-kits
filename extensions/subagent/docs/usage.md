@@ -66,7 +66,8 @@ and each subsequent view opens below the last surviving view, forming a right-si
 column. There is no direction picker or right/down command argument. This policy
 belongs to the shared subagent manager and applies to every mux adapter; adapters
 only execute the supplied placement instruction. Concurrent opens are serialized
-across agents. Closing a view only detaches it; it does not kill the worker.
+across agents. Closing a view does not cancel a running task; a finished task
+releases its runtime unless `keep_alive` is true.
 Use `/subagent:views <id> close` to close an attachment from the parent Pi, or
 `focus` to focus an existing view. Running `/subagent:views` without arguments
 opens the shared lower-half docked panel with a single live agent list, without
@@ -78,7 +79,7 @@ confirmation. These actions close the panel; deletion closes the native terminal
 and removes the manager record but retains session files. Explicit `copy` and
 `delete` command actions are also supported.
 Queued agents without a terminal cannot open a view yet. Use the explicit
-`close` command above to detach a view without stopping its worker.
+`close` command above to detach a view without canceling its running task.
 Subagent views, tool cards, and `subagent-notification` completion messages share
 the header: status icon, `agent name(runtime display name)`, frontmatter-configured model value, task description,
 eight-character ID, and status. Agent names fall back from `display_name` to the
@@ -100,8 +101,8 @@ activity, elapsed time, assistant turns, tool calls, cumulative tokens, context
 percentage (when available), and compactions. Tokens exclude repeated cache-read
 prefixes. Up to four active tasks are expanded; additional active/queued tasks
 are summarized to bound widget height. Completed rows linger for five seconds;
-disconnected cleanup errors remain visible until resolved. Results and terminals
-remain available after rows disappear. Shutdown/reload removes the widget and
+disconnected cleanup errors remain visible until resolved. Results remain available
+after rows disappear; runtime retention follows the policy below. Shutdown/reload removes the widget and
 its refresh timer.
 
 Task and session states are separate: `status` remains the last managed task's
@@ -114,6 +115,24 @@ Native conversations update session activity through IPC and remain visible in
 the widget until Pi settles, including retries and continuations. They do not
 overwrite the managed result/statistics, emit another completion notification,
 or acquire a managed concurrency slot. An IPC task cannot take over native work.
+### Automatic runtime release
+
+A finished managed task (`completed`, `stopped`, or `error`) automatically releases
+its runtime when no native view is open and `keep_alive` is false. Results, manager
+records, and session files are retained; `get_subagent_result` continues to work.
+Released sessions have `sessionState: "closed"` and cannot resume or open a native
+view. A view must already be open (or opening) when the task finishes to retain it.
+Closing a view during execution does not cancel the task; it releases on completion.
+Closing the last view after completion releases the runtime, including views closed
+outside the extension.
+
+Set `keep_alive: true` on the initial `subagent` call or agent frontmatter only when
+later resume is needed. It defaults to false and is fixed for the session, including
+resumed rounds. Explicit frontmatter values, including false, override the call.
+A keep-alive runtime remains owned until user deletion or parent shutdown, regardless
+of whether any view is open. Opening the `/subagent:views` management panel alone is
+not a native attachment and does not retain runtimes.
+
 Use `resume_subagent` with `agent_id`, a new `prompt` (or an explicit
 `runtime_config.review_target` for native review), optional `description`,
 `runtime_config`, and `run_in_background`. It keeps the same ID, process,
@@ -132,7 +151,8 @@ The original agent's `run_in_background` setting takes precedence; otherwise
 resume defaults to background, just like spawn.
 
 Resume requires a finished managed task and an idle, retained, connected worker;
-completed, cooperatively stopped, and errored rounds may resume. Interactive,
+completed, cooperatively stopped, and errored rounds may resume only while retained
+by `keep_alive` or an open native view. Interactive,
 active, closed, or disconnected sessions are rejected without replacing their
 results. No process is restarted. Each accepted resume increments `round` and
 resets the current result/error, per-round usage, timestamps, waiter claims, and
@@ -148,8 +168,8 @@ round has not acknowledged receipt. Unresponsive managed cancellation also
 closes the runtime after its timeout. The concurrency claim is released only
 after cleanup succeeds; failed cleanup retains ownership for retry.
 
-`stop_subagent` cancels the managed task, not independent native/user work, and
-retains its terminal when Pi cooperates;
+`stop_subagent` cancels the managed task, not independent native/user work. After
+cooperative cancellation, the same automatic release policy applies;
 if cancellation does not settle within five seconds, the terminal is destroyed.
 Parent session shutdown/reload cleans up owned workers and views. Shutdown
 coalesces concurrent cleanup calls and retries failures up to three times with
@@ -386,7 +406,8 @@ For the named `reviewer` above, its Markdown supplies the session's
 }
 ```
 
-Specify the review scope again on every `resume_subagent` call:
+For repeated review, set `keep_alive: true` on the initial call (or keep its native
+view open), then specify the review scope again on every `resume_subagent` call:
 
 ```json
 {
@@ -482,8 +503,9 @@ Supported YAML frontmatter fields use the reference extension's snake_case names
 | `thinking` | Call parameter, then parent thinking for Pi or Codex's own effort default. |
 | `enabled` | `true`; `false` disables selection. |
 | `run_in_background` | Call parameter, then `true`. |
+| `keep_alive` | Call parameter, then `false`; retain the runtime after completion even without an open view. |
 
-Configured model, thinking, and background mode take precedence over call
+Configured model, thinking, background mode, and keep-alive policy take precedence over call
 parameters, including explicit `false`. Runtime session settings, including Pi's
 `runtime_config.inherit_context`, take precedence per key as described above. Thinking is a
 non-empty string interpreted by the selected runtime. For Pi, it is passed
@@ -516,7 +538,8 @@ Both modes retain project `AGENTS.md`/`CLAUDE.md` context according to Pi's nati
 trust rules; they do not disable context-file discovery or bypass trust. Workers
 use `--no-approve`, so untrusted project resources are not automatically approved.
 The body is file content, never interpolated into shell commands. The role remains
-active after completion for native terminal interaction and resume.
+active after completion for native terminal interaction and resume while the runtime
+is retained.
 
 Of the built-in runtimes, only Pi supports `runtime_config.prompt_mode`.
 Codex ignores this foreign field, including `replace`, `append`, and malformed

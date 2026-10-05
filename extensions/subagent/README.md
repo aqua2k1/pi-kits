@@ -3,7 +3,7 @@
 ## 功能简介
 
 通过 Pi 或 Codex runtime 执行独立任务，默认后台运行，Herdr 提供原生终端视图。
-支持自定义 Markdown agent、引导、取消及保留会话续跑；父上下文克隆仅支持 Pi → Pi。
+支持自定义 Markdown agent、引导、取消及显式保留会话续跑；父上下文克隆仅支持 Pi → Pi。
 Codex 使用独立 app-server，默认 workspace-write sandbox、never 审批策略。
 Codex 运行中也可打开可交互原生视图；新一轮受管任务仍需先退出原生 TUI，关闭视图仅脱离。
 提供六个工具：`subagent`、`resume_subagent`、`list_subagent_types`、
@@ -56,7 +56,10 @@ flowchart LR
 - `ui/`：`views.ts`、`status-widget.ts`、`presentation.ts`、`renderers.ts` 及其测试，负责 TUI 展示。
 
 包 manifest 仅加载 `index.ts`；worker 由子 Pi 显式通过 `-e` 加载。
-完成的执行会话保留供查看/续跑；Codex 原生 TUI 惰性启动，关闭视图仅脱离。
+任务完成后，没有打开的原生视图且 `keep_alive` 未开启时自动释放执行资源，保留结果与会话文件。
+打开的视图保持会话驻留；关闭视图不会取消运行中任务，但已完成任务会释放。
+`keep_alive: true` 在创建时固定，允许后续续跑，直到用户删除或父会话退出；agent 定义优先于调用参数。
+释放后的会话不能续跑或重新打开原生视图。Codex 原生 TUI 惰性启动。
 父会话退出或重载清理拥有的执行后端和终端，不使用用户的全局 Codex daemon。
 
 ## 配置

@@ -32,6 +32,7 @@ export interface ViewChoice {
 }
 
 function nativeViewAvailable(agent: AgentSnapshot): boolean {
+  if (agent.sessionState === "closed") return false;
   if (agent.terminalId) return true;
   return (
     agent.capabilities?.retainedSession === true &&
@@ -194,11 +195,13 @@ export class SubagentViewsPanel {
         truncateToWidth(
           this.theme.fg(
             "muted",
-            agent.terminalId
-              ? `${agent.id.slice(0, 8)} · ${agentDisplayStatus(agent)} · ${agent.sessionState === "interactive" ? "User interaction" : agentStats(agent)}`
-              : nativeViewAvailable(agent)
-                ? "Native view available; Enter to open"
-                : "Terminal not ready; waiting…",
+            agent.sessionState === "closed"
+              ? "Runtime released; result retained, resume unavailable"
+              : agent.terminalId
+                ? `${agent.id.slice(0, 8)} · ${agentDisplayStatus(agent)} · ${agent.sessionState === "interactive" ? "User interaction" : agentStats(agent)}`
+                : nativeViewAvailable(agent)
+                  ? "Native view available; Enter to open"
+                  : "Terminal not ready; waiting…",
           ),
           width,
         ),

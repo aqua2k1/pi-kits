@@ -40,9 +40,18 @@ test("model metadata replaces requested defaults and tracks idle, stats and resu
     "/agents/model.md",
     "global",
   );
-  const first = manager.spawn({ ...task, model: "parent/default", agent });
+  const first = manager.spawn({
+    keepAlive: true,
+    ...task,
+    model: "parent/default",
+    agent,
+  });
   assert.equal(first.model, "agent/requested");
-  const fallback = manager.spawn({ ...task, model: "parent/default" });
+  const fallback = manager.spawn({
+    keepAlive: true,
+    ...task,
+    model: "parent/default",
+  });
   assert.equal(fallback.model, "parent/default");
   await until(() => mux.commands.get(first.id)?.length === 1);
   assert.equal(manager.get(first.id).model, "actual/ready");
@@ -202,6 +211,7 @@ test("inheritance opens one native cloned session, keeps IPC small and never rec
   const manager = new SubagentManager(mux);
   t.after(() => manager.close());
   const agent = manager.spawn({
+    keepAlive: true,
     ...task,
     parentSession: captureParentSession(parent),
   });
@@ -401,7 +411,7 @@ test("finished tasks retain results while native session state continues changin
     onComplete: (record) => notifications.push(record.id),
   });
   t.after(() => manager.close());
-  const agent = manager.spawn(task);
+  const agent = manager.spawn({ ...task, keepAlive: true });
   await until(() => mux.commands.get(agent.id)?.length === 1);
   assert.equal(manager.get(agent.id).sessionState, "running");
   mux.emit(agent.id, { type: "completed", result: "Original result" });
@@ -459,6 +469,7 @@ test("named agent configuration controls worker argv and launch-time system inst
     "project",
   );
   const agent = manager.spawn({
+    keepAlive: true,
     ...task,
     agent: definition,
     model: "call-model",
@@ -951,7 +962,7 @@ test("resume reuses identity, terminal, view and agent configuration with fresh 
     "/agents/review.md",
     "global",
   );
-  const first = manager.spawn({ ...task, agent });
+  const first = manager.spawn({ keepAlive: true, ...task, agent });
   await until(() => mux.commands.get(first.id)?.length === 1);
   await manager.openView(first.id);
   mux.emit(first.id, {
@@ -1013,7 +1024,7 @@ test("resume rejects active, interactive, disconnected, closed and invalid tasks
   const mux = new FakeMux();
   const manager = new SubagentManager(mux);
   t.after(() => manager.close());
-  const first = manager.spawn(task);
+  const first = manager.spawn({ ...task, keepAlive: true });
   assert.throws(
     () => manager.resume(first.id, { prompt: "Again" }),
     /finished/,
@@ -1047,11 +1058,11 @@ test("resume shares FIFO concurrency and canceling a queued round cannot resurre
   const mux = new FakeMux();
   const manager = new SubagentManager(mux, { maxConcurrent: 1 });
   t.after(() => manager.close());
-  const first = manager.spawn(task);
+  const first = manager.spawn({ ...task, keepAlive: true });
   await until(() => mux.commands.get(first.id)?.length === 1);
   mux.emit(first.id, { type: "completed", result: "First" });
   await until(() => manager.get(first.id).status === "completed");
-  const blocker = manager.spawn(task);
+  const blocker = manager.spawn({ ...task, keepAlive: true });
   await until(() => mux.commands.get(blocker.id)?.length === 1);
   assert.equal(
     manager.resume(first.id, { prompt: "Canceled" }).status,
@@ -1060,7 +1071,7 @@ test("resume shares FIFO concurrency and canceling a queued round cannot resurre
   const canceled = manager.result(first.id, true);
   manager.stop(first.id);
   assert.equal((await canceled).status, "stopped");
-  const ahead = manager.spawn(task);
+  const ahead = manager.spawn({ ...task, keepAlive: true });
   manager.resume(first.id, { prompt: "Third" });
   mux.emit(blocker.id, { type: "completed", result: "Blocker" });
   await until(() => mux.commands.get(ahead.id)?.length === 1);
@@ -1076,11 +1087,11 @@ test("native work beginning while resume is queued rejects dispatch without canc
   const mux = new FakeMux();
   const manager = new SubagentManager(mux, { maxConcurrent: 1 });
   t.after(() => manager.close());
-  const first = manager.spawn(task);
+  const first = manager.spawn({ ...task, keepAlive: true });
   await until(() => mux.commands.get(first.id)?.length === 1);
   mux.emit(first.id, { type: "completed", result: "First" });
   await until(() => manager.get(first.id).status === "completed");
-  const blocker = manager.spawn(task);
+  const blocker = manager.spawn({ ...task, keepAlive: true });
   await until(() => mux.commands.get(blocker.id)?.length === 1);
   manager.resume(first.id, { prompt: "Waited continuation" });
   mux.emit(first.id, { type: "session_state", state: "interactive" });
@@ -1101,7 +1112,7 @@ test("old waiters and late round events never consume or finish a resumed round"
     onComplete: (snapshot) => notifications.push(snapshot.round ?? 0),
   });
   t.after(() => manager.close());
-  const first = manager.spawn(task);
+  const first = manager.spawn({ ...task, keepAlive: true });
   await until(() => mux.commands.get(first.id)?.length === 1);
   const oldWaiter = manager.result(first.id, true);
   const unsubscribe = manager.subscribe(() => {
@@ -1144,7 +1155,7 @@ test("stopped and errored retained workers resume; missing terminals do not rest
   const mux = new FakeMux();
   const manager = new SubagentManager(mux);
   t.after(() => manager.close());
-  const first = manager.spawn(task);
+  const first = manager.spawn({ ...task, keepAlive: true });
   await until(() => mux.commands.get(first.id)?.length === 1);
   mux.emit(first.id, { type: "completed", canceled: true, result: "Canceled" });
   await until(() => manager.get(first.id).status === "stopped");
@@ -1167,7 +1178,7 @@ test("cancel before resume inspection finishes never sends a task or kills the r
   const mux = new FakeMux();
   const manager = new SubagentManager(mux);
   t.after(() => manager.close());
-  const first = manager.spawn(task);
+  const first = manager.spawn({ ...task, keepAlive: true });
   await until(() => mux.commands.get(first.id)?.length === 1);
   mux.emit(first.id, { type: "completed", result: "First" });
   await until(() => manager.get(first.id).status === "completed");
@@ -1195,7 +1206,7 @@ test("unacknowledged resume cancellation closes an unresponsive parent-owned wor
     cancelTimeoutMs: 5,
   });
   t.after(() => manager.close());
-  const first = manager.spawn(task);
+  const first = manager.spawn({ ...task, keepAlive: true });
   await until(() => mux.commands.get(first.id)?.length === 1);
   mux.emit(first.id, { type: "completed", result: "First" });
   await until(() => manager.get(first.id).status === "completed");
@@ -1205,7 +1216,7 @@ test("unacknowledged resume cancellation closes an unresponsive parent-owned wor
   await until(() => manager.get(first.id).status === "stopped");
   assert.equal(manager.get(first.id).sessionState, "closed");
   assert.deepEqual(mux.destroyed, [first.id]);
-  const queued = manager.spawn(task);
+  const queued = manager.spawn({ ...task, keepAlive: true });
   await until(() => mux.commands.get(queued.id)?.length === 1);
 });
 
@@ -1215,7 +1226,7 @@ test("accepted resume cancellation may clean up an unresponsive owned worker", a
     cancelTimeoutMs: 5,
   });
   t.after(() => manager.close());
-  const first = manager.spawn(task);
+  const first = manager.spawn({ ...task, keepAlive: true });
   await until(() => mux.commands.get(first.id)?.length === 1);
   mux.emit(first.id, { type: "completed", result: "First" });
   await until(() => manager.get(first.id).status === "completed");
@@ -1238,7 +1249,7 @@ test("connection loss before resume acknowledgement closes the worker and releas
   const mux = new FakeMux();
   const manager = new SubagentManager(mux, { maxConcurrent: 1 });
   t.after(() => manager.close());
-  const first = manager.spawn(task);
+  const first = manager.spawn({ ...task, keepAlive: true });
   await until(() => mux.commands.get(first.id)?.length === 1);
   mux.emit(first.id, { type: "completed", result: "First" });
   await until(() => manager.get(first.id).status === "completed");
@@ -1248,7 +1259,7 @@ test("connection loss before resume acknowledgement closes the worker and releas
   await until(() => manager.get(first.id).status === "error");
   assert.equal(manager.get(first.id).sessionState, "closed");
   assert.deepEqual(mux.destroyed, [first.id]);
-  const next = manager.spawn(task);
+  const next = manager.spawn({ ...task, keepAlive: true });
   await until(() => mux.commands.get(next.id)?.length === 1);
 });
 
@@ -1256,7 +1267,7 @@ test("a stale cancellation timer cannot change a later resumed round", async (t)
   const mux = new FakeMux();
   const manager = new SubagentManager(mux);
   t.after(() => manager.close());
-  const first = manager.spawn(task);
+  const first = manager.spawn({ ...task, keepAlive: true });
   await until(() => mux.commands.get(first.id)?.length === 1);
   mux.emit(first.id, { type: "completed", result: "First" });
   await until(() => manager.get(first.id).status === "completed");
@@ -1286,7 +1297,7 @@ test("resume cannot race an already-started terminal cleanup after cooperative c
   const mux = new FakeMux();
   const manager = new SubagentManager(mux, { cancelTimeoutMs: 5 });
   t.after(() => manager.close());
-  const first = manager.spawn(task);
+  const first = manager.spawn({ ...task, keepAlive: true });
   await until(() => mux.commands.get(first.id)?.length === 1);
   mux.emit(first.id, { type: "completed", result: "First" });
   await until(() => manager.get(first.id).status === "completed");
@@ -1324,7 +1335,7 @@ test("Pi disconnect is one-shot: an unconfirmed resume closes and cannot reauthe
   const mux = new FakeMux();
   const manager = new SubagentManager(mux, { maxConcurrent: 1 });
   t.after(() => manager.close());
-  const first = manager.spawn(task);
+  const first = manager.spawn({ ...task, keepAlive: true });
   await until(() => mux.commands.get(first.id)?.length === 1);
   mux.emit(first.id, { type: "completed", result: "First" });
   await until(() => manager.get(first.id).status === "completed");
@@ -1350,7 +1361,7 @@ test("Pi disconnect is one-shot: an unconfirmed resume closes and cannot reauthe
   assert.equal(manager.get(first.id).status, "error");
   assert.equal(manager.get(first.id).sessionState, "closed");
   assert.deepEqual(mux.destroyed, [first.id]);
-  const queued = manager.spawn(task);
+  const queued = manager.spawn({ ...task, keepAlive: true });
   await until(() => mux.commands.get(queued.id)?.length === 1);
 });
 

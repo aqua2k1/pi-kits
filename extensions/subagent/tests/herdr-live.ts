@@ -90,6 +90,7 @@ try {
   const secret = `MEMORY_${randomUUID().replaceAll("-", "")}`;
   const codex = manager.spawn({
     runtime: "codex",
+    keepAlive: true,
     cwd,
     prompt: `Remember this key for this session: ${secret}. Reply exactly CODEX_RUNTIME_OK. Do not use tools or modify files.`,
     description: "Live Codex task",

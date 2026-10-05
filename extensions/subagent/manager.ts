@@ -39,6 +39,7 @@ export interface AgentSnapshot {
   status: AgentStatus;
   round?: number;
   inheritedContext?: boolean;
+  keepAlive?: boolean;
   runtime?: RuntimeId;
   runtimeName?: string;
   capabilities?: RuntimeCapabilities;
@@ -70,6 +71,7 @@ export interface AgentSnapshot {
 }
 
 export interface SpawnOptions {
+  keepAlive?: boolean;
   runtime?: RuntimeId;
   prompt: string;
   description: string;
@@ -93,6 +95,10 @@ interface AgentRecord {
   cancelTimer?: ReturnType<typeof setTimeout>;
   terminating?: Promise<void>;
   launch?: Promise<void>;
+  releaseRequested?: boolean;
+  releasing?: Promise<void>;
+  openingViews?: number;
+  viewTimer?: ReturnType<typeof setTimeout>;
 }
 
 interface Execution {
@@ -233,6 +239,7 @@ export class SubagentManager {
         status: "queued",
         round: 1,
         inheritedContext: Boolean(options.parentSession),
+        keepAlive: options.agent?.keepAlive ?? options.keepAlive ?? false,
         model: options.agent?.model ?? options.model,
         configuredModel: options.agent?.model,
         ...(options.agent
@@ -267,8 +274,21 @@ export class SubagentManager {
   resume(id: string, options: ResumeOptions): AgentSnapshot {
     if (this.disposed) throw new Error("Subagent manager is closed.");
     const record = this.record(id);
+    if (record.releaseRequested || record.snapshot.sessionState === "closed") {
+      throw new Error(
+        "Subagent runtime is closed/released; no connected worker remains.",
+      );
+    }
     if (!record.execution.finished) {
       throw new Error("Only a finished managed task can be resumed.");
+    }
+    if (
+      record.openingViews &&
+      !record.runtime.capabilities.concurrentNativeInput
+    ) {
+      throw new Error(
+        "Native view opening is still in progress; resume is unavailable.",
+      );
     }
     if (record.terminating) {
       throw new Error(
@@ -311,6 +331,7 @@ export class SubagentManager {
         this.runtimeOptions(id, next, record.runtime.id),
       ),
     );
+    this.clearViewTimer(record);
     record.options = next;
     record.execution = createExecution(round, true);
     record.snapshot = {
@@ -424,8 +445,17 @@ export class SubagentManager {
 
   openView(id: string) {
     const record = this.record(id);
+    record.openingViews = (record.openingViews ?? 0) + 1;
     return this.viewOperation(async () => {
       if (this.disposed) throw new Error("Subagent manager is closed.");
+      if (
+        record.releaseRequested ||
+        record.snapshot.sessionState === "closed" ||
+        record.terminating ||
+        (record.session && this.closedSessions.has(record.session))
+      ) {
+        throw new Error("Subagent runtime is closed/released.");
+      }
       if (!record.session) {
         throw new Error("Subagent terminal is not ready yet.");
       }
@@ -438,6 +468,9 @@ export class SubagentManager {
         );
       }
       const terminal = await record.session.attachment();
+      if (this.disposed || record.releaseRequested) {
+        throw new Error("Subagent runtime is closed/released.");
+      }
       const existing = await this.liveView(record);
       if (existing) {
         await this.adapter.focus_view(existing);
@@ -457,18 +490,126 @@ export class SubagentManager {
       );
       record.view = view;
       this.views.set(view.id, record);
+      this.scheduleViewCheck(record);
       this.changed();
+      if (this.disposed || record.releaseRequested) {
+        throw new Error("Subagent runtime is closed/released.");
+      }
       return view;
+    }).finally(() => {
+      record.openingViews = (record.openingViews ?? 1) - 1;
     });
   }
 
   closeView(id: string): Promise<void> {
     const record = this.record(id);
     return this.viewOperation(async () => {
-      if (!record.view) return;
-      await this.adapter.close_view(record.view);
-      this.forgetView(record);
+      if (record.view) {
+        await this.adapter.close_view(record.view);
+        this.forgetView(record);
+      }
+      this.autoRelease(record);
     });
+  }
+
+  /** Close resources while preserving the managed record and round results. */
+  release(id: string): Promise<void> {
+    const record = this.record(id);
+    if (record.releasing) return record.releasing;
+    if (!record.execution.finished) {
+      return Promise.reject(
+        new Error("Only a finished managed task can be released."),
+      );
+    }
+    record.releaseRequested = true;
+    this.clearViewTimer(record);
+    const operation = this.viewOperation(async () => {
+      let viewClosed = true;
+      if (record.view) {
+        try {
+          await this.adapter.close_view(record.view);
+          this.forgetView(record);
+        } catch {
+          viewClosed = false;
+        }
+      }
+      const sessionClosed = await this.closeSession(record);
+      if (!viewClosed || !sessionClosed) {
+        record.snapshot.sessionState = "disconnected";
+        record.snapshot.sessionActivity =
+          "Worker cleanup failed; retry release or stop_subagent.";
+        this.changed();
+        throw new Error(`Could not release subagent ${id}; retry release.`);
+      }
+      record.snapshot.capabilities = {
+        ...(record.session?.capabilities ??
+          record.snapshot.capabilities ??
+          record.runtime.capabilities),
+      };
+      record.session = undefined;
+      record.options = {
+        ...record.options,
+        context: undefined,
+        parentSession: undefined,
+      };
+      this.changed();
+    });
+    record.releasing = operation;
+    const settled = () => {
+      record.releasing = undefined;
+    };
+    void operation.then(settled, settled);
+    return operation;
+  }
+
+  private clearViewTimer(record: AgentRecord): void {
+    clearTimeout(record.viewTimer);
+    record.viewTimer = undefined;
+  }
+
+  private scheduleViewCheck(record: AgentRecord): void {
+    if (
+      this.disposed ||
+      record.releaseRequested ||
+      record.snapshot.keepAlive ||
+      !record.execution.finished ||
+      !record.view ||
+      record.viewTimer
+    )
+      return;
+    record.viewTimer = setTimeout(() => {
+      record.viewTimer = undefined;
+      this.autoRelease(record);
+    }, 1_000);
+    record.viewTimer.unref();
+  }
+
+  private autoRelease(record: AgentRecord): void {
+    if (
+      this.disposed ||
+      record.releaseRequested ||
+      record.snapshot.keepAlive ||
+      !record.execution.finished ||
+      record.snapshot.sessionState === "closed"
+    )
+      return;
+    const execution = record.execution;
+    void this.viewOperation(async () => {
+      if (
+        this.disposed ||
+        record.releaseRequested ||
+        record.execution !== execution ||
+        !execution.finished ||
+        record.snapshot.sessionState === "closed"
+      )
+        return;
+      if (await this.liveView(record)) {
+        this.scheduleViewCheck(record);
+      } else if (record.execution === execution && execution.finished) {
+        // Do not await release from inside the serialized view operation.
+        void this.release(record.snapshot.id).catch(() => undefined);
+      }
+    }).catch(() => this.scheduleViewCheck(record));
   }
 
   /** Close native resources and forget the agent, never its session files. */
@@ -476,6 +617,8 @@ export class SubagentManager {
     const record = this.record(id);
     // Even a previously stopped startup may still acquire a terminal.
     const launch = record.launch;
+    record.releaseRequested = true;
+    this.clearViewTimer(record);
     record.execution.consumed = true;
     clearTimeout(record.cancelTimer);
     record.cancelTimer = undefined;
@@ -509,6 +652,7 @@ export class SubagentManager {
   }
 
   private forgetView(record: AgentRecord): void {
+    this.clearViewTimer(record);
     if (record.view) this.views.delete(record.view.id);
     record.view = undefined;
     this.changed();
@@ -518,6 +662,7 @@ export class SubagentManager {
     if (record.view && !(await this.adapter.inspect_view(record.view)).alive) {
       await this.adapter.close_view(record.view);
       this.forgetView(record);
+      this.autoRelease(record);
     }
     return record.view;
   }
@@ -544,6 +689,8 @@ export class SubagentManager {
     this.disposed = true;
     const closing: Promise<void>[] = [];
     for (const record of this.records.values()) {
+      record.releaseRequested = true;
+      this.clearViewTimer(record);
       const session = record.session;
       if (session && !this.closedSessions.has(session)) {
         closing.push(
@@ -594,9 +741,15 @@ export class SubagentManager {
     return {
       ...record.snapshot,
       capabilities: {
-        ...(record.session?.capabilities ?? record.runtime.capabilities),
+        ...(record.session?.capabilities ??
+          record.snapshot.capabilities ??
+          record.runtime.capabilities),
       },
-      terminalId: record.session?.terminal?.id,
+      terminalId:
+        record.snapshot.sessionState === "closed" ||
+        (record.session && this.closedSessions.has(record.session))
+          ? undefined
+          : record.session?.terminal?.id,
       viewId: record.view?.id,
     };
   }
@@ -731,10 +884,13 @@ export class SubagentManager {
       }
       record.snapshot.sessionState = "closed";
       record.snapshot.sessionActivity = undefined;
-      this.forgetView(record);
       return true;
     } catch {
       // Retain ownership and the concurrency slot until cleanup can be retried.
+      record.snapshot.sessionState = "disconnected";
+      record.snapshot.sessionActivity =
+        "Worker cleanup failed; retry stop_subagent.";
+      this.changed();
       return false;
     }
   }
@@ -747,15 +903,18 @@ export class SubagentManager {
     if (record.terminating) return record.terminating;
     const operation = this.viewOperation(async () => {
       // View ownership is independent from the runtime's execution resources.
+      let viewClosed = true;
       if (record.view) {
         try {
           await this.adapter.close_view(record.view);
           this.forgetView(record);
         } catch {
           // Runtime cleanup must still run if a detached view cannot be closed.
+          viewClosed = false;
         }
       }
-      if (await this.closeSession(record)) {
+      const sessionClosed = await this.closeSession(record);
+      if (sessionClosed && viewClosed) {
         this.finish(record, status, error);
       } else {
         record.snapshot.sessionState = "disconnected";
@@ -990,6 +1149,7 @@ export class SubagentManager {
     this.notify(record, execution);
     this.changed();
     this.pump();
+    this.autoRelease(record);
   }
 
   private notify(record: AgentRecord, execution = record.execution): void {

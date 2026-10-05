@@ -195,6 +195,26 @@ test("Enter opens a native view for a running headless Codex task", () => {
   h.component.dispose();
 });
 
+test("released tasks show retained results without allowing native open", () => {
+  const source = new Source();
+  source.agents = [
+    {
+      ...headlessAgent(),
+      status: "completed",
+      sessionState: "closed",
+      terminalId: "stale-terminal",
+    },
+  ];
+  const h = panel(source);
+  assert.match(
+    h.component.render(100).join("\n"),
+    /Runtime released; result retained/,
+  );
+  h.component.handleInput("\r");
+  assert.equal(h.completions, 0);
+  h.component.dispose();
+});
+
 test("click opens a native view for a running headless Codex task only once", () => {
   const source = new Source();
   source.agents = [{ ...headlessAgent(), runtime: "codex" }];
@@ -281,7 +301,7 @@ test("native view eligibility uses capabilities and live session state, not runt
       const h = panel(source);
       const lines = h.component.render(80);
       assert.equal(
-        lines.join("\n").includes("Terminal not ready"),
+        /Terminal not ready|Runtime released/.test(lines.join("\n")),
         !available,
         JSON.stringify(patch),
       );
