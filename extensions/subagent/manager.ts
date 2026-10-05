@@ -76,6 +76,8 @@ export interface SpawnOptions {
   prompt: string;
   description: string;
   cwd: string;
+  /** Name chosen at spawn and retained across rounds. */
+  sessionName?: string;
   model?: string;
   thinking?: string;
   agent?: AgentDefinition;
@@ -213,6 +215,10 @@ export class SubagentManager {
         (runtime.parseConfig
           ? { runtimeConfig: runtime.parseConfig(rawConfig) }
           : { runtimeConfig: rawConfig })),
+    };
+    options = {
+      ...options,
+      sessionName: `Sub · ${options.agent?.name ?? "-"} · ${options.description.replace(/\s+/g, " ").trim()}`,
     };
     const id = randomUUID();
     let runtimeOptions = this.runtimeOptions(id, options, runtime.id);
@@ -816,6 +822,7 @@ export class SubagentManager {
     return {
       id,
       cwd: options.cwd,
+      sessionName: options.sessionName,
       model: options.agent?.model ?? options.model,
       thinking: options.agent?.thinking ?? options.thinking,
       agent: options.agent,

@@ -30,7 +30,11 @@ Herdr owns native terminal views; the runtime owns the execution session.
 The Pi behavior described below uses native Pi terminals plus a worker bridge;
 Codex-specific behavior is described in [Codex runtime](#codex-runtime). The extension does not build its own PTY. Task parameters
 include `model` and `thinking`, plus an optional named `subagent_type` backed by
-user Markdown files. This first version does not support scheduling or worktrees.
+user Markdown files. Native sessions are named at creation as
+`Sub · <agent type or -> · <initial description>` (for example,
+`Sub · explorer · Inspect auth`). Resuming may change the displayed task
+description but does not rename the native session. This first version does not
+support scheduling or worktrees.
 
 Configure `<agent-dir>/pi-kits.json` (normally `~/.pi/agent/pi-kits.json`,
 honoring `PI_CODING_AGENT_DIR`, including `~` expansion) and `/reload`:

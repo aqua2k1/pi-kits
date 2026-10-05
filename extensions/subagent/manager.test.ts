@@ -199,6 +199,36 @@ const task = {
   cwd: "/tmp/project",
 };
 
+test("native session names use the agent type or '-' and stay fixed on resume", async (t) => {
+  const mux = new FakeMux();
+  const manager = new SubagentManager(mux);
+  t.after(() => manager.close());
+  const named = manager.spawn({
+    ...task,
+    keepAlive: true,
+    agent: parseAgentDefinition(
+      "---\n---\nReview",
+      "/agents/explorer.md",
+      "global",
+    ),
+    description: "Inspect\n auth",
+  });
+  const anonymous = manager.spawn({ ...task, keepAlive: true });
+  await until(() => mux.commands.get(anonymous.id)?.length === 1);
+  const name = (id: string) => {
+    const argv = mux.started.find((entry) => entry.agentId === id)?.argv;
+    assert.ok(argv);
+    return argv[argv.indexOf("--name") + 1];
+  };
+  assert.equal(name(named.id), "Sub · explorer · Inspect auth");
+  assert.equal(name(anonymous.id), "Sub · - · Inspect auth");
+  mux.emit(named.id, { type: "completed", result: "Done" });
+  await until(() => manager.get(named.id).status === "completed");
+  manager.resume(named.id, { prompt: "Continue", description: "New title" });
+  assert.equal(manager.get(named.id).description, "New title");
+  assert.equal(name(named.id), "Sub · explorer · Inspect auth");
+});
+
 test("inheritance opens one native cloned session, keeps IPC small and never reclones on resume", async (t) => {
   useAgentDir(t);
   const parent = SessionManager.inMemory(task.cwd);

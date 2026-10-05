@@ -97,6 +97,16 @@ test("Pi CLI uses normalized session tools, denies, model and thinking for unnam
   ]);
 });
 
+test("Pi CLI sets the native session name when provided", async (t) => {
+  const { started } = await launch(t, {
+    sessionName: "Sub · explorer · Inspect auth",
+  });
+  assert.equal(
+    argument(started.argv, "--name"),
+    "Sub · explorer · Inspect auth",
+  );
+});
+
 test("Pi rejects prompt mode for unnamed sessions instead of ignoring it", () => {
   const runtime = new PiRuntime();
   for (const prompt_mode of ["replace", "append"]) {

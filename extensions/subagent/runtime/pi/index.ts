@@ -175,6 +175,8 @@ class PiSession implements RuntimeSession {
       } else {
         argv.push("--session-id", `subagent-${this.options.id}`);
       }
+      if (this.options.sessionName)
+        argv.push("--name", this.options.sessionName);
       const agent = this.options.agent;
       const model = agent?.model ?? this.options.model;
       const thinking = agent?.thinking ?? this.options.thinking;

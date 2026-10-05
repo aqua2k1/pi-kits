@@ -459,6 +459,13 @@ class CodexSession implements RuntimeSession {
       remaining();
       this.threadId = started.thread.id;
       this.runtimeSessionId = started.thread.sessionId ?? started.thread.id;
+      if (this.options.sessionName) {
+        await this.startupRequest(
+          "thread/name/set",
+          { threadId: this.threadId, name: this.options.sessionName },
+          remaining(),
+        );
+      }
       this.ready = true;
       this.emit("model_select", {
         provider: started.modelProvider,

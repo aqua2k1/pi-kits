@@ -20,6 +20,8 @@ export interface RuntimeCapabilities {
 export interface RuntimeOptions {
   id: string;
   cwd: string;
+  /** Native session name fixed at creation; never updated for later rounds. */
+  sessionName?: string;
   model?: string;
   thinking?: string;
   agent?: AgentDefinition;

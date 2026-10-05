@@ -302,6 +302,33 @@ test("Codex exposes parsers and direct validate/create reject malformed runtime_
   );
 });
 
+test("Codex names the native thread once before the first task", async (t) => {
+  const f = fixture({ sessionName: "Sub · explorer · Inspect auth" });
+  t.after(() => f.session.close());
+  await f.session.start();
+  assert.deepEqual(params(f, "thread/name/set"), {
+    threadId: "thread",
+    name: "Sub · explorer · Inspect auth",
+  });
+  await f.session.send({ type: "task", prompt: "First" });
+  finished(f);
+  await tick();
+  await f.session.send({ type: "task", prompt: "Follow up" });
+  assert.equal(
+    f.calls.filter((call) => call.method === "thread/name/set").length,
+    1,
+  );
+});
+
+test("Codex startup rejects a failed native thread rename", async (t) => {
+  const f = fixture({ sessionName: "Sub · - · Inspect auth" });
+  t.after(() => f.session.close());
+  f.handlers.set("thread/name/set", () => {
+    throw new Error("rename failed");
+  });
+  await assert.rejects(f.session.start(), /rename failed/);
+});
+
 test("unknown native switches reach app-server argv; semantic review/search remain RPC mappings", async (t) => {
   for (const runtime_args of [
     "review,search,unknown-switch,exec,--enable=feature,-v,unknown-switch",
