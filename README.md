@@ -23,6 +23,7 @@ pi install https://github.com/aqua2k1/pi-kits.git
 | [commit](extensions/commit/README.md) | 生成并确认 Conventional Commits 提交 |
 | [notify](extensions/notify/README.md) | 任务完成桌面通知 |
 | [ask-user-question](extensions/ask-user-question/README.md) | 单选、多选和自定义回答 |
+| [subagent](extensions/subagent/README.md) | Pi/Codex 独立任务与原生终端视图；须配置 Herdr mux 并在 Herdr 内运行 |
 | [web-kits](extensions/web-kits/README.md) | Web 搜索、网页与 GitHub 内容获取 |
 
 ## 配置

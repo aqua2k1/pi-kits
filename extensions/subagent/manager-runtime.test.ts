@@ -162,6 +162,103 @@ test("registered runtime names work without parser or manager enum changes", asy
   assert.equal((await manager.result(spawned.id, true)).status, "completed");
 });
 
+test("registered runtimes own prompt validation and accept native Pi snapshots by capability", async (t) => {
+  const h = harness("native-pi");
+  h.runtime.capabilities.nativeClone = true;
+  const manager = new SubagentManager(h.mux, {
+    runtimes: [
+      {
+        ...h.runtime,
+        validate(options) {
+          h.runtime.validate(options);
+          if (options.agent?.promptMode === "replace") {
+            throw new Error("This runtime requires append mode");
+          }
+        },
+      },
+    ],
+  });
+  t.after(() => manager.close());
+  const agent = parseAgentDefinition(
+    "---\nruntime: native-pi\nprompt_mode: append\ninherit_context: true\n---\nRole",
+    "/agents/custom.md",
+    "project",
+  );
+  const parentSession = { entries: [] };
+  const spawned = manager.spawn({ ...task, agent, parentSession });
+  assert.equal(h.validated[0].agent?.promptMode, "append");
+  assert.equal(h.validated[0].parentSession, parentSession);
+  await until(() => h.sessions[0]?.commands.length === 1);
+  h.sessions[0].complete();
+  assert.equal((await manager.result(spawned.id)).status, "completed");
+  assert.throws(
+    () =>
+      manager.spawn({
+        ...task,
+        agent: { ...agent, promptMode: "replace" },
+        parentSession,
+      }),
+    /This runtime requires append mode/,
+  );
+  assert.equal(h.validated.length, 2);
+  assert.equal(h.sessions.length, 1);
+});
+
+test("clone capability rejects unsupported inheritance even when runtime is named pi", async (t) => {
+  const h = harness("pi");
+  const manager = new SubagentManager(h.mux, { runtimes: [h.runtime] });
+  t.after(() => manager.close());
+  for (const inheritance of [
+    { parentSession: { entries: [] } },
+    {
+      agent: parseAgentDefinition(
+        "---\ninherit_context: true\n---\nRole",
+        "/agents/custom.md",
+        "project",
+      ),
+    },
+  ]) {
+    assert.throws(
+      () => manager.spawn({ ...task, ...inheritance }),
+      /context cloning is unsupported/,
+    );
+  }
+  assert.equal(h.sessions.length, 0);
+  assert.equal(manager.list().length, 0);
+});
+
+test("long Codex roles do not consume task command budget on spawn or resume", async (t) => {
+  const h = harness();
+  const manager = new SubagentManager(h.mux, { runtimes: [h.runtime] });
+  t.after(() => manager.close());
+  const agent = parseAgentDefinition(
+    `---\nruntime: codex\n---\n${"R".repeat(40_000)}`,
+    "/agents/codex.md",
+    "project",
+  );
+  const prompt = "P".repeat(30_000);
+  const spawned = manager.spawn({ ...task, agent, prompt });
+  await until(() => h.sessions[0]?.commands.length === 1);
+  assert.equal(h.validated[0].agent?.systemPrompt, agent.systemPrompt);
+  assert.deepEqual(h.sessions[0].commands[0], {
+    type: "task",
+    prompt,
+    instructions: {},
+  });
+  h.sessions[0].complete();
+  manager.resume(spawned.id, { prompt });
+  await until(() => h.sessions[0].commands.length === 2);
+  assert.deepEqual(h.sessions[0].commands[1], {
+    type: "task",
+    prompt,
+    instructions: {},
+    round: 2,
+  });
+  h.sessions[0].complete(2);
+  assert.equal(h.sessions.length, 1);
+  assert.equal((await manager.result(spawned.id)).status, "completed");
+});
+
 test("runtime injection waits for ready, forwards options and resumes without any terminal", async (t) => {
   const h = harness();
   const gate = deferred();

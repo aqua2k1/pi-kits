@@ -205,18 +205,16 @@ test("prompt_mode rejects invalid values with the source path", () => {
   }
 });
 
-test("explicit prompt_mode is rejected for any non-Pi runtime", () => {
+test("prompt_mode syntax is parsed independently of runtime support", () => {
   for (const runtime of ["codex", "future-runtime"]) {
     for (const mode of ["replace", "append"]) {
-      assert.throws(
-        () =>
-          parseAgentDefinition(
-            `---\nruntime: ${runtime}\nprompt_mode: ${mode}\n---\nRole`,
-            "/agents/test.md",
-            "project",
-          ),
-        /prompt_mode is only supported for the pi runtime/,
+      const agent = parseAgentDefinition(
+        `---\nruntime: ${runtime}\nprompt_mode: ${mode}\n---\nRole`,
+        "/agents/test.md",
+        "project",
       );
+      assert.equal(agent.runtime, runtime);
+      assert.equal(agent.promptMode, mode);
     }
     assert.equal(
       parseAgentDefinition(

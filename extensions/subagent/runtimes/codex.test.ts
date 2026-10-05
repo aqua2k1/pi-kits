@@ -268,6 +268,18 @@ test("validate rejects cross-runtime clones and invalid supported thinking", () 
   });
 });
 
+test("Codex validates explicit prompt modes while allowing omission", () => {
+  const runtime = new CodexRuntime();
+  const base = { id: "test", cwd: "/tmp" };
+  for (const promptMode of ["replace", "append"] as const) {
+    assert.throws(
+      () => runtime.validate({ ...base, agent: agent({ promptMode }) }),
+      /prompt_mode.*Pi runtime/,
+    );
+  }
+  runtime.validate({ ...base, agent: agent() });
+});
+
 test("unsupported options are ignored without changing Codex policy or task tools", async (t) => {
   const rawAgent = {
     ...agent({ tools: [], disallowedTools: ["edit"] }),

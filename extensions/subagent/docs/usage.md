@@ -2,7 +2,7 @@
 
 See the [package overview](../README.md) for architecture and minimal configuration.
 
-- [Herdr subagents (MVP)](#herdr-subagents-mvp)
+- [Herdr subagents](#herdr-subagents)
 - [User-defined agent types](#user-defined-agent-types)
 - [Parent context cloning](#parent-context-cloning)
 - [Worker extension allowlist](#worker-extension-allowlist)
@@ -79,7 +79,7 @@ and removes the manager record but retains session files. Explicit `copy` and
 Queued agents without a terminal cannot open a view yet. Use the explicit
 `close` command above to detach a view without stopping its worker.
 Subagent views, tool cards, and `subagent-notification` completion messages share
-the header: status icon, `agent name(runtime display name)`, current model ID, task description,
+the header: status icon, `agent name(runtime display name)`, frontmatter-configured model value, task description,
 eight-character ID, and status. Agent names fall back from `display_name` to the
 type name, then `Subagent`; runtime labels come from the adapter, not UI-specific
 runtime branches. Unavailable models appear as `—`. Workers report actual model
@@ -277,7 +277,7 @@ Supported YAML frontmatter fields use the reference extension's snake_case names
 | `runtime` | Call parameter, then `pi`; supports `pi` and `codex`. |
 | `model` | Call parameter, then parent model for Pi or Codex's own default. |
 | `thinking` | Call parameter, then parent thinking for Pi or Codex's own effort default. |
-| `prompt_mode` | `replace`; Pi only, accepts `replace` or `append`. Explicit configuration is rejected for non-Pi runtimes; omitted frontmatter `runtime` means Pi for this validation. |
+| `prompt_mode` | `replace` for Pi; accepts `replace` or `append`. Support is validated by the selected runtime at launch; Codex rejects explicit configuration. |
 | `tools` | Native Pi defaults; CSV or YAML array, `none`/empty disables all tools. Built-in and whitelisted extension tool names are accepted. |
 | `disallowed_tools` | No additional denylist; CSV or YAML array of tool names, applied after `tools`. |
 | `inherit_context` | Call parameter, then `false`; `true` clones the parent current branch into an independent Pi session. |
@@ -286,7 +286,12 @@ Supported YAML frontmatter fields use the reference extension's snake_case names
 
 Configured model, thinking, background mode, and `inherit_context` take
 precedence over call parameters, including explicit `false`. Thinking is a
-non-empty string passed directly to Pi; Pi owns the supported levels. Tool names include Pi built-ins (`read`, `bash`, `edit`, `write`,
+non-empty string interpreted by the selected runtime. For Pi, it is passed
+directly to Pi, which owns the supported levels. The Codex adapter accepts
+`off`, `none`, `minimal`, `low`, `medium`, `high`, and `xhigh`; `off` maps to
+`none`. It also checks that the selected model supports the mapped effort.
+Pi's `max` is not accepted by the Codex adapter.
+Tool names include Pi built-ins (`read`, `bash`, `edit`, `write`,
 `grep`, `find`, `ls`, `powershell`), `codemode`, `tool_search`, and tools registered
 by explicitly whitelisted extensions. A denylist is applied after the allowlist;
 missing requested tools fail before a model turn instead of being silently
@@ -308,8 +313,9 @@ use `--no-approve`, so untrusted project resources are not automatically approve
 The body is file content, never interpolated into shell commands. The role remains
 active after completion for native terminal interaction and resume.
 
-`prompt_mode` is Pi-only. Both explicit `replace` and `append` are rejected when
-frontmatter selects a non-Pi runtime, including Codex. Omission is preserved as
+Of the built-in runtimes, only Pi supports `prompt_mode`. Both explicit
+`replace` and `append` are rejected at launch when the effective runtime is
+Codex, whether selected by frontmatter or a call parameter. Omission is preserved as
 `undefined` in the parsed definition so runtime validation can distinguish an
 explicit setting; the effective default for Pi is still `replace`.
 

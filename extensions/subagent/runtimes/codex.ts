@@ -205,6 +205,9 @@ export class CodexRuntime implements AgentRuntime {
     this.dependencies = { ...defaults, ...dependencies };
   }
   validate(options: RuntimeOptions): void {
+    if (options.agent?.promptMode !== undefined) {
+      throw new Error("prompt_mode is only supported by the Pi runtime");
+    }
     if (options.parentSession || options.agent?.inheritContext === true) {
       throw new Error(
         "Codex cannot clone a Pi parentSession or inheritContext; use an explicit prompt",

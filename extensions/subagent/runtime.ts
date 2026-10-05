@@ -7,6 +7,9 @@ import type { MuxAdapter, TerminalHandle } from "./mux.ts";
 export type RuntimeId = string;
 
 export interface RuntimeCapabilities {
+  /** Can create an independent session from a native Pi branch snapshot.
+   * This does not imply conversion of transcripts from other runtimes.
+   */
   nativeClone: boolean;
   steer: boolean;
   retainedSession: boolean;

@@ -100,9 +100,6 @@ export function parseAgentDefinition(
   ) {
     fail("prompt_mode must be replace or append");
   }
-  if (promptMode !== undefined && (runtime ?? "pi") !== "pi") {
-    fail("prompt_mode is only supported for the pi runtime");
-  }
   return {
     name,
     ...(runtime ? { runtime } : {}),

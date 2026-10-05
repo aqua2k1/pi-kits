@@ -175,6 +175,16 @@ export class SubagentManager {
     return this.snapshot(this.record(id));
   }
 
+  runtimeCapabilities(id: RuntimeId): RuntimeCapabilities {
+    return { ...this.runtime(id).capabilities };
+  }
+
+  private runtime(id: RuntimeId): AgentRuntime {
+    const runtime = this.runtimes.get(id);
+    if (!runtime) throw new Error(`Unknown subagent runtime: ${id}`);
+    return runtime;
+  }
+
   spawn(options: SpawnOptions): AgentSnapshot {
     if (this.disposed) throw new Error("Subagent manager is closed.");
     if (!options.prompt.trim()) {
@@ -182,13 +192,17 @@ export class SubagentManager {
     }
     validateCommand(taskCommand(options));
     const runtimeId = options.agent?.runtime ?? options.runtime ?? "pi";
-    const runtime = this.runtimes.get(runtimeId);
-    if (!runtime) throw new Error(`Unknown subagent runtime: ${runtimeId}`);
-    if (options.agent?.promptMode !== undefined && runtimeId !== "pi") {
-      throw new Error("prompt_mode is only supported by the Pi runtime");
-    }
+    const runtime = this.runtime(runtimeId);
     const id = randomUUID();
     runtime.validate(this.runtimeOptions(id, options, runtime.id));
+    if (
+      (options.parentSession || options.agent?.inheritContext === true) &&
+      !runtime.capabilities.nativeClone
+    ) {
+      throw new Error(
+        "Cross-runtime context cloning is unsupported by this runtime.",
+      );
+    }
     const record: AgentRecord = {
       snapshot: {
         id,
@@ -969,9 +983,6 @@ function taskCommand(options: SpawnOptions) {
     ...(options.agent
       ? {
           instructions: {
-            ...((options.agent.runtime ?? options.runtime ?? "pi") !== "pi"
-              ? { systemPrompt: options.agent.systemPrompt }
-              : {}),
             ...(options.agent.tools !== undefined
               ? {
                   tools: options.agent.tools.filter(

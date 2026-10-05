@@ -286,6 +286,72 @@ test("inherit_context frontmatter is authoritative and false never reads parent 
   }
 });
 
+test("context capture follows selected runtime capabilities rather than its name", async (t) => {
+  const cwd = useAgentDir(t);
+  const session = SessionManager.inMemory(cwd);
+  session.appendMessage({ role: "user", content: "Parent", timestamp: 1 });
+  const branch = session.getBranch();
+  let reads = 0;
+  t.mock.method(session, "getBranch", () => {
+    reads += 1;
+    return branch;
+  });
+  let nativeClone = true;
+  const queried: string[] = [];
+  t.mock.method(
+    SubagentManager.prototype,
+    "runtimeCapabilities",
+    (id: string) => {
+      queried.push(id);
+      return {
+        nativeClone,
+        steer: true,
+        retainedSession: true,
+        concurrentNativeInput: true,
+      };
+    },
+  );
+  const spawned: SpawnOptions[] = [];
+  t.mock.method(SubagentManager.prototype, "spawn", (options: SpawnOptions) => {
+    spawned.push(options);
+    return { id: "child", description: options.description, status: "queued" };
+  });
+  const capture = registrations();
+  capture.pi.getThinkingLevel = () => "low";
+  registerSubagents(capture.pi, {} as MuxAdapter);
+  const spawn = capture.definitions.get("subagent");
+  assert.ok(spawn);
+  const ctx = {
+    mode: "print",
+    cwd,
+    sessionManager: session,
+  } as unknown as ExtensionToolContext;
+  const params = { inherit_context: true, prompt: "Task", description: "Test" };
+  await spawn.execute(
+    "call",
+    { ...params, runtime: "native-pi" },
+    undefined,
+    undefined,
+    ctx,
+  );
+  assert.equal(reads, 1);
+  assert.ok(spawned[0].parentSession);
+  nativeClone = false;
+  await assert.rejects(
+    spawn.execute(
+      "call",
+      { ...params, runtime: "pi" },
+      undefined,
+      undefined,
+      ctx,
+    ),
+    /context cloning is unsupported/,
+  );
+  assert.equal(reads, 1);
+  assert.equal(spawned.length, 1);
+  assert.deepEqual(queried, ["native-pi", "pi"]);
+});
+
 test("resume tool respects retained background preferences and aborted callers never enqueue work", async (t) => {
   const capture = registrations();
   const adapter = new Proxy({} as MuxAdapter, {

@@ -162,12 +162,15 @@ export function registerSubagents(
         const runtime = agent?.runtime ?? params.runtime ?? "pi";
         const inheritContext =
           agent?.inheritContext ?? params.inherit_context ?? false;
-        if (runtime !== "pi" && inheritContext) {
+        const current = getManager(ctx);
+        if (
+          inheritContext &&
+          !current.runtimeCapabilities(runtime).nativeClone
+        ) {
           throw new Error(
-            "Cross-runtime context cloning is unsupported; Codex must start fresh.",
+            "Cross-runtime context cloning is unsupported by this runtime.",
           );
         }
-        const current = getManager(ctx);
         const snapshot = current.spawn({
           runtime,
           parentSession: inheritContext
