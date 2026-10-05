@@ -2,8 +2,10 @@
 
 ## 功能简介
 
-通过 Herdr 原生 Pi 终端执行独立任务，默认后台运行。
-支持自定义 Markdown agent、父上下文克隆、引导、取消及保留会话续跑。
+通过 Pi 或 Codex runtime 执行独立任务，默认后台运行，Herdr 提供原生终端视图。
+支持自定义 Markdown agent、引导、取消及保留会话续跑；父上下文克隆仅支持 Pi → Pi。
+Codex 使用独立 app-server，默认 workspace-write sandbox、never 审批策略。
+Codex 原生视图只在任务结束后开放；退出原生 TUI 后才能继续受管任务，关闭视图仅脱离。
 提供六个工具：`subagent`、`resume_subagent`、`list_subagent_types`、
 `get_subagent_result`、`steer_subagent`、`stop_subagent`。
 TUI 使用 `/subagent:views` 管理终端视图，编辑器上方显示实时任务状态。
@@ -22,14 +24,16 @@ flowchart LR
 ```
 
 - [index.ts](index.ts)：启用检查、工具/命令注册、会话生命周期与完成消息。
-- [manager.ts](manager.ts)：任务轮次、FIFO 并发队列、IPC、worker 与视图管理。
+- [manager.ts](manager.ts)：任务轮次、FIFO 并发队列、结果与视图管理。
+- [runtime.ts](runtime.ts) / `runtimes/`：执行会话接口、Pi bridge 与 Codex app-server 适配。
 - [mux.ts](mux.ts) / [herdr.ts](herdr.ts)：终端适配接口与 Herdr 实现，不自建 PTY。
-- [worker.ts](worker.ts) / [protocol.ts](protocol.ts)：认证的 loopback TCP JSONL 桥接。
+- [worker.ts](worker.ts) / [protocol.ts](protocol.ts)：Pi worker 的认证 loopback TCP JSONL 桥接。
 - [agents.ts](agents.ts) / [clone.ts](clone.ts)：用户定义加载与独立 Pi 分支克隆。
 - `views.ts`、`status-widget.ts`、`presentation.ts`、`renderers.ts`：TUI 展示。
 
 包 manifest 仅加载 `index.ts`；worker 由子 Pi 显式通过 `-e` 加载。
-完成的终端保留供查看/续跑；关闭视图仅脱离，父会话退出或重载清理 worker。
+完成的执行会话保留供查看/续跑；Codex 原生 TUI 惰性启动，关闭视图仅脱离。
+父会话退出或重载清理拥有的执行后端和终端，不使用用户的全局 Codex daemon。
 
 ## 配置
 

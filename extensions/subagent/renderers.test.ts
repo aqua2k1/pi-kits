@@ -23,9 +23,12 @@ const snapshot: AgentSnapshot = Object.freeze({
   id: "07ea6fc5-4c49-4759-afb3-7dd643bb5cd8",
   description: "LIVE_CODEMODE_SUCCESS",
   status: "completed",
+  runtime: "pi",
+  runtimeName: "Pi",
   subagentType: "long-config-name",
   displayName: "Reviewer",
   model: "provider/model-id",
+  configuredModel: "provider/model-id",
   modelName: "Model Name",
   agentPath: "/private/agents/config.md",
   sessionPath: "/private/session.jsonl",
@@ -53,7 +56,7 @@ test("collapsed subagent output shows shared identity header and one preview lin
   assert.equal(lines.length, 2);
   assert.equal(
     lines[0],
-    "✓ Reviewer · Model Name · LIVE_CODEMODE_SUCCESS · 07ea6fc5 · completed",
+    "✓ Reviewer(Pi) · provider/model-id · LIVE_CODEMODE_SUCCESS · 07ea6fc5 · completed",
   );
   assert.match(lines[1], /packageName/);
   for (const hidden of [
@@ -83,14 +86,69 @@ test("headers fall back to type, model ID and generic agent name", () => {
   const typed = { ...snapshot, displayName: undefined, modelName: undefined };
   assert.match(
     render(typed).render(200)[0],
-    /long-config-name · provider\/model-id/,
+    /long-config-name\(Pi\) · provider\/model-id/,
   );
   assert.match(
-    render({ ...typed, subagentType: undefined, model: undefined }).render(
-      200,
-    )[0],
-    /Subagent · —/,
+    render({
+      ...typed,
+      subagentType: undefined,
+      configuredModel: undefined,
+    }).render(200)[0],
+    /Subagent\(Pi\) · —/,
   );
+});
+
+test("headers use adapter runtime names and model IDs without runtime branches", () => {
+  for (const [runtime, runtimeName] of [
+    ["pi", "Pi"],
+    ["custom-runtime", "Custom Engine"],
+  ]) {
+    const header = render({
+      ...snapshot,
+      runtime,
+      runtimeName,
+      displayName: "Explore",
+      model: "reported-provider/model",
+      configuredModel: "openai-codex/gpt-6-luna",
+      modelName: "Friendly model name",
+    }).render(200)[0];
+    assert.ok(
+      header.includes(`Explore(${runtimeName}) · openai-codex/gpt-6-luna ·`),
+    );
+    assert.ok(!header.includes("Friendly model name"));
+  }
+  const renderer = subagentCallRenderer("Subagent");
+  const context = { expanded: false } as RenderContext;
+  const header = renderer(
+    {
+      runtime: "custom-runtime",
+      subagent_type: "Explore",
+      model: "custom/model",
+    },
+    theme,
+    context,
+  ).render(200)[0];
+  assert.ok(header.includes("Explore(Custom-runtime) · — ·"));
+  assert.ok(renderer({}, theme, context).render(200)[0].includes("Subagent ·"));
+});
+
+test("model display preserves configuration verbatim instead of runtime metadata", () => {
+  const header = render({
+    ...snapshot,
+    configuredModel: "frontmatter/model-alias",
+    model: "resolved-provider/actual-model",
+    modelName: "Friendly name",
+  }).render(200)[0];
+  assert.ok(header.includes(" · frontmatter/model-alias ·"));
+  assert.ok(!header.includes("resolved-provider"));
+  assert.ok(!header.includes("Friendly name"));
+  const unknown = render({
+    ...snapshot,
+    configuredModel: undefined,
+    model: "reported-provider/model",
+    modelName: "Friendly name",
+  }).render(200)[0];
+  assert.ok(unknown.includes(" · — ·"));
 });
 
 test("interactive state is visible without replacing the completed task result", () => {
@@ -110,20 +168,20 @@ test("result rows retain the unified identity header", () => {
   );
   assert.equal(
     component.render(200)[0],
-    "✓ Reviewer · Model Name · LIVE_CODEMODE_SUCCESS · 07ea6fc5 · completed",
+    "✓ Reviewer(Pi) · provider/model-id · LIVE_CODEMODE_SUCCESS · 07ea6fc5 · completed",
   );
 });
 
 test("errors, empty results and truncation remain truthful without JSON noise", () => {
-  assert.deepEqual(render({ ...snapshot, result: "" }).render(80), [
-    "✓ Reviewer · Model Name · LIVE_CODEMODE_SUCCESS · 07ea6fc5 · completed",
+  assert.deepEqual(render({ ...snapshot, result: "" }).render(200), [
+    "✓ Reviewer(Pi) · provider/model-id · LIVE_CODEMODE_SUCCESS · 07ea6fc5 · completed",
   ]);
   const error = render({
     ...snapshot,
     status: "error",
     error: "Missing tool",
     result: "old result",
-  }).render(80);
+  }).render(200);
   assert.match(error[0], /error/);
   assert.equal(error[1], "Missing tool");
   assert.deepEqual(
@@ -163,7 +221,7 @@ test("collapsed output is width bounded and terminal-safe; expansion escapes con
   assert.match(full, /\\u009b/);
 });
 
-test("tool calls show model and short ID but hide prompts until expanded", () => {
+test("tool calls show short ID but do not infer frontmatter model from parameters", () => {
   const args = {
     description: "Review",
     prompt: "Private task prompt",
@@ -174,9 +232,7 @@ test("tool calls show model and short ID but hide prompts until expanded", () =>
   const collapsed = renderer(args, theme, {
     expanded: false,
   } as RenderContext).render(80);
-  assert.deepEqual(collapsed, [
-    "◦ Subagent · a/model · Review · 07ea6fc5 · queued",
-  ]);
+  assert.deepEqual(collapsed, ["◦ Subagent · — · Review · 07ea6fc5 · queued"]);
   assert.ok(!collapsed.join("\n").includes(args.prompt));
   const expanded = renderer(args, theme, { expanded: true } as RenderContext)
     .render(100)
@@ -214,7 +270,10 @@ test("starting results do not re-enter rendering or duplicate the call header", 
     );
     const lines = [...call.render(200), ...result.render(200)];
     assert.equal(lines.length, 1);
-    assert.match(lines[0], /Reviewer · Model Name .* · starting$/);
+    assert.match(
+      lines[0],
+      /Reviewer\(Pi\) · provider\/model-id .* · starting$/,
+    );
   }
   assert.equal(
     invalidations,
@@ -256,7 +315,10 @@ test("Pi tool card keeps exactly one starting header across repeated updates", (
       lines.filter((line) => line.includes(snapshot.description)).length,
       1,
     );
-    assert.match(lines.join("\n"), /Reviewer · Model Name .* · starting/);
+    assert.match(
+      lines.join("\n"),
+      /Reviewer\(Pi\) · provider\/model-id .* · starting/,
+    );
   }
 });
 
@@ -274,7 +336,7 @@ test("result owns the identity header; calls without results use manager identit
   );
   const renderer = subagentCallRenderer("Subagent");
   const expected =
-    "✓ Reviewer · Model Name · LIVE_CODEMODE_SUCCESS · 07ea6fc5 · completed";
+    "✓ Reviewer(Pi) · provider/model-id · LIVE_CODEMODE_SUCCESS · 07ea6fc5 · completed";
   assert.deepEqual(renderer({}, theme, context).render(200), []);
   const lookup = subagentCallRenderer("Subagent result", () => snapshot);
   assert.equal(

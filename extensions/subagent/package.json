@@ -15,11 +15,13 @@
     ]
   },
   "scripts": {
-    "test": "node --import tsx --test *.test.ts"
+    "test": "node --import tsx --test *.test.ts runtimes/*.test.ts",
+    "test:herdr": "node --import tsx tests/herdr-live.ts"
   },
   "dependencies": {
     "@pi-kits/config": "0.1.0",
-    "@pi-kits/shared": "0.1.0"
+    "@pi-kits/shared": "0.1.0",
+    "ws": "^8.22.0"
   },
   "peerDependencies": {
     "@earendil-works/pi-ai": "*",

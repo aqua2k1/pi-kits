@@ -1187,3 +1187,93 @@ test("resume cannot race an already-started terminal cleanup after cooperative c
   }
   await until(() => manager.get(first.id).sessionState === "closed");
 });
+
+test("Pi disconnect is one-shot: an unconfirmed resume cannot reauthenticate or release native ownership", async (t) => {
+  const mux = new FakeMux();
+  const manager = new SubagentManager(mux, { maxConcurrent: 1 });
+  t.after(() => manager.close());
+  const first = manager.spawn(task);
+  await until(() => mux.commands.get(first.id)?.length === 1);
+  mux.emit(first.id, { type: "completed", result: "First" });
+  await until(() => manager.get(first.id).status === "completed");
+  manager.resume(first.id, { prompt: "Unconfirmed resume" });
+  await until(() => mux.commands.get(first.id)?.length === 2);
+  mux.sockets.get(first.id)?.destroy();
+  await until(() => manager.get(first.id).status === "disconnected");
+  const start = mux.started[0];
+  const [host, port] = start.env.PI_KITS_SUBAGENT_ENDPOINT.split(":");
+  const replacement = connect({ host, port: Number(port) });
+  t.after(() => replacement.destroy());
+  replacement.on("error", () => undefined);
+  replacement.on("connect", () => {
+    replacement.write(
+      `${JSON.stringify({
+        type: "ready",
+        id: first.id,
+        token: start.env.PI_KITS_SUBAGENT_TOKEN,
+      })}\n`,
+    );
+  });
+  await until(() => replacement.destroyed);
+  assert.equal(manager.get(first.id).status, "disconnected");
+  assert.equal(manager.get(first.id).sessionState, "disconnected");
+  assert.deepEqual(mux.destroyed, []);
+  const queued = manager.spawn(task);
+  assert.equal(queued.status, "queued");
+});
+
+test("startup cancellation does not wait for another agent's blocked view operation", async (t) => {
+  useAgentDir(t);
+  let releaseResolution = () => {};
+  let releaseView = () => {};
+  let resolutions = 0;
+  const resolving = new Promise<void>((resolve) => {
+    releaseResolution = resolve;
+  });
+  const viewing = new Promise<void>((resolve) => {
+    releaseView = resolve;
+  });
+  t.mock.method(
+    DefaultPackageManager.prototype,
+    "resolveExtensionSources",
+    async () => {
+      resolutions++;
+      if (resolutions > 1) await resolving;
+      return {
+        extensions: [{ path: "/native/resolved.ts", enabled: true }],
+        skills: [],
+        prompts: [],
+        themes: [],
+      };
+    },
+  );
+  const mux = new FakeMux();
+  const manager = new SubagentManager(mux, {
+    extensionAllowlist: ["native-source"],
+  });
+  t.after(async () => {
+    releaseResolution();
+    releaseView();
+    await manager.close();
+  });
+  const first = manager.spawn(task);
+  await until(() => mux.commands.get(first.id)?.length === 1);
+  const open = mux.open_view.bind(mux);
+  let viewEntered = false;
+  t.mock.method(mux, "open_view", async (options: OpenViewOptions) => {
+    viewEntered = true;
+    await viewing;
+    return open(options);
+  });
+  const opening = manager.openView(first.id);
+  await until(() => viewEntered);
+  const canceled = manager.spawn(task);
+  await until(() => resolutions === 2);
+  assert.equal(manager.stop(canceled.id).status, "stopping");
+  releaseResolution();
+  await delay(20);
+  assert.equal(mux.started.length, 1);
+  releaseView();
+  await opening;
+  assert.equal((await manager.result(canceled.id, true)).status, "stopped");
+});

@@ -2,6 +2,7 @@ import { type Dirent, readdirSync, readFileSync, statSync } from "node:fs";
 import { basename, join } from "node:path";
 import { parseFrontmatter } from "@earendil-works/pi-coding-agent";
 import { getAgentDir } from "@pi-kits/config";
+import type { RuntimeId } from "./runtime.ts";
 
 const MAX_FILE_BYTES = 64 * 1024;
 
@@ -9,6 +10,7 @@ export interface AgentDefinition {
   name: string;
   description: string;
   displayName?: string;
+  runtime?: RuntimeId;
   model?: string;
   thinking?: string;
   tools?: string[];
@@ -88,8 +90,10 @@ export function parseAgentDefinition(
     }
     return [...new Set(names)];
   };
+  const runtime = string("runtime");
   return {
     name,
+    ...(runtime ? { runtime } : {}),
     description: string("description") ?? name,
     displayName: string("display_name"),
     model: string("model"),

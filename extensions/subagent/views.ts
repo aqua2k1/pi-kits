@@ -79,7 +79,16 @@ export class SubagentViewsPanel {
 
   private confirm(): void {
     const { agent } = this.selected();
-    if (!agent?.terminalId) return;
+    if (
+      !agent ||
+      (!agent.terminalId &&
+        !(
+          agent.runtime === "codex" &&
+          agent.sessionState === "idle" &&
+          ["completed", "stopped", "error"].includes(agent.status)
+        ))
+    )
+      return;
     this.finished = true;
     this.done({ agentId: agent.id, action: agent.viewId ? "focus" : "open" });
   }
@@ -183,7 +192,9 @@ export class SubagentViewsPanel {
             "muted",
             agent.terminalId
               ? `${agent.id.slice(0, 8)} · ${agentDisplayStatus(agent)} · ${agent.sessionState === "interactive" ? "User interaction" : agentStats(agent)}`
-              : "Terminal not ready; waiting…",
+              : agent.runtime === "codex" && agent.sessionState === "idle"
+                ? "Native Codex view available after completion; Enter to open"
+                : "Terminal not ready; waiting…",
           ),
           width,
         ),

@@ -168,6 +168,34 @@ test("queued terminal actions are unavailable, cancel never stops a worker", () 
   assert.equal(h.completions, 1);
 });
 
+test("finished Codex sessions can lazily open a native view without a terminal", () => {
+  for (const status of [
+    "completed",
+    "stopped",
+    "error",
+    "running",
+    "queued",
+  ] as const) {
+    const source = new Source();
+    source.agents = [
+      {
+        ...agent("codex", status),
+        runtime: "codex",
+        sessionState: "idle",
+        terminalId: undefined,
+      },
+    ];
+    const h = panel(source);
+    h.component.handleInput("\r");
+    if (["completed", "stopped", "error"].includes(status)) {
+      assert.deepEqual(h.result, { agentId: "codex", action: "open" });
+    } else {
+      assert.equal(h.completions, 0);
+    }
+    h.component.dispose();
+  }
+});
+
 test("docked panel is half-height and width safe at narrow/short sizes", () => {
   const source = new Source();
   source.agents = [

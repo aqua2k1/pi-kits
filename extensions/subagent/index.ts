@@ -98,9 +98,10 @@ export function registerSubagents(
       ),
       renderResult: renderSubagentResult,
       description:
-        "Run a task in an independent Pi session hosted by Herdr. Background by default. inherit_context clones the parent current branch into an independent child session; false starts fresh. Frontmatter is authoritative. Optionally select a user-defined subagent_type; use list_subagent_types to discover names. Agent configuration takes precedence over call parameters. Workers share the filesystem and are not a sandbox. Use /subagent:views for native terminal control.",
+        "Run a task in an independent Pi or Codex runtime with Herdr native views. Background by default. Pi supports cloning the parent branch; cross-runtime context inheritance is rejected. Frontmatter is authoritative. Select a user-defined subagent_type or runtime (default pi); use list_subagent_types to discover names. Agent configuration takes precedence. Pi workers share filesystem access; Codex uses its own sandbox/approval policy. Codex native views require a finished task and must be exited before managed continuation. Use /subagent:views for native terminal control.",
       parameters: Type.Object({
         subagent_type: Type.Optional(Type.String({ minLength: 1 })),
+        runtime: Type.Optional(Type.String({ minLength: 1, pattern: "\\S" })),
         inherit_context: Type.Optional(Type.Boolean({ default: false })),
         prompt: Type.String({
           minLength: 1,
@@ -112,7 +113,8 @@ export function registerSubagents(
         thinking: Type.Optional(
           Type.String({
             minLength: 1,
-            description: "Thinking level passed directly to Pi.",
+            description:
+              "Runtime-native thinking level: Pi thinking or Codex reasoning effort. Parent defaults apply only to Pi.",
           }),
         ),
         run_in_background: Type.Optional(Type.Boolean({ default: true })),
@@ -122,20 +124,32 @@ export function registerSubagents(
         const agent = params.subagent_type
           ? resolveAgentDefinition(ctx.cwd, params.subagent_type)
           : undefined;
+        const runtime = agent?.runtime ?? params.runtime ?? "pi";
+        const inheritContext =
+          agent?.inheritContext ?? params.inherit_context ?? false;
+        if (runtime !== "pi" && inheritContext) {
+          throw new Error(
+            "Cross-runtime context cloning is unsupported; Codex must start fresh.",
+          );
+        }
         const current = getManager(ctx);
         const snapshot = current.spawn({
-          parentSession:
-            (agent?.inheritContext ?? params.inherit_context ?? false)
-              ? captureParentSession(ctx.sessionManager)
-              : undefined,
+          runtime,
+          parentSession: inheritContext
+            ? captureParentSession(ctx.sessionManager)
+            : undefined,
           agent,
           prompt: params.prompt,
           description: params.description,
           cwd: ctx.cwd,
           model:
             params.model ??
-            (ctx.model ? `${ctx.model.provider}/${ctx.model.id}` : undefined),
-          thinking: params.thinking ?? pi.getThinkingLevel(),
+            (runtime === "pi" && ctx.model
+              ? `${ctx.model.provider}/${ctx.model.id}`
+              : undefined),
+          thinking:
+            params.thinking ??
+            (runtime === "pi" ? pi.getThinkingLevel() : undefined),
         });
         if ((agent?.runInBackground ?? params.run_in_background) !== false) {
           return toolResult(snapshot);
@@ -154,7 +168,7 @@ export function registerSubagents(
       ),
       renderResult: renderSubagentResult,
       description:
-        "Continue a finished managed task in the same retained Pi process/session/history. Re-enters the shared concurrency queue. Requires idle sessionState; rejects native/user interaction, closed or disconnected workers. Retains original agent instructions and current worker model/thinking/tool settings, including native changes. Background by default, respecting original agent configuration.",
+        "Continue a finished managed task in the same retained runtime session/history without restarting. Re-enters the shared concurrency queue. Requires idle sessionState; rejects native/user interaction, closed or disconnected sessions. Codex native TUI must be exited first; detaching its view is not enough. Retains original instructions and current runtime settings. Background by default, respecting original agent configuration.",
       parameters: Type.Object({
         agent_id: agentId,
         prompt: Type.String({
@@ -197,7 +211,10 @@ export function registerSubagents(
       outputSchema: Type.Object({ agents: Type.Array(Type.Any()) }),
       async execute(_id, _params, _signal, _onUpdate, ctx) {
         const agents = [...loadAgentDefinitions(ctx.cwd).values()].map(
-          ({ systemPrompt: _prompt, ...metadata }) => metadata,
+          ({ systemPrompt: _prompt, ...metadata }) => ({
+            ...metadata,
+            runtime: metadata.runtime ?? "pi",
+          }),
         );
         const result = { agents };
         return {
@@ -253,7 +270,7 @@ export function registerSubagents(
       }),
       async execute(_id, params) {
         const current = getManager();
-        current.steer(params.agent_id, params.message);
+        await current.steer(params.agent_id, params.message);
         return toolResult(current.get(params.agent_id));
       },
     }),

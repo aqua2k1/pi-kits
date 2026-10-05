@@ -32,11 +32,18 @@ export function agentTitle(agent: AgentSnapshot): string {
 }
 
 export function agentName(agent: AgentSnapshot): string {
-  return oneLine(agent.displayName || agent.subagentType || "Subagent");
+  const name = oneLine(agent.displayName || agent.subagentType || "Subagent");
+  const runtime = oneLine(
+    agent.runtimeName ||
+      (agent.runtime
+        ? agent.runtime[0].toUpperCase() + agent.runtime.slice(1)
+        : ""),
+  );
+  return runtime ? `${name}(${runtime})` : name;
 }
 
 export function agentModel(agent: AgentSnapshot): string {
-  return oneLine(agent.modelName || agent.model || "—");
+  return oneLine(agent.configuredModel || "—");
 }
 
 /** Shared identity/status row for widgets, tool cards and views. */

@@ -33,6 +33,7 @@ export const subagentCallRenderer =
             ? data.subagent_type
             : undefined,
         model: typeof data.model === "string" ? data.model : undefined,
+        runtime: typeof data.runtime === "string" ? data.runtime : undefined,
         status: context.executionStarted ? "running" : "queued",
       };
     return {

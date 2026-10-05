@@ -22,10 +22,12 @@ subagents: configure the mux and run inside Herdr as described below.
 Herdr's CLI defaults to `herdr`; `HERDR_BIN_PATH` can override its executable path.
 Opening views also requires the parent pane's `HERDR_PANE_ID` supplied by Herdr.
 
-## Herdr subagents (MVP)
+## Herdr subagents
 
-Subagents run general tasks in the background using Herdr's native Pi terminals
-plus a worker bridge. The extension does not build its own PTY. Task parameters
+Subagents run general tasks in the background using Pi or Codex runtimes.
+Herdr owns native terminal views; the runtime owns the execution session.
+The Pi behavior described below uses native Pi terminals plus a worker bridge;
+Codex-specific behavior is described in [Codex runtime](#codex-runtime). The extension does not build its own PTY. Task parameters
 include `model` and `thinking`, plus an optional named `subagent_type` backed by
 user Markdown files. This first version does not support scheduling or worktrees.
 
@@ -77,10 +79,14 @@ and removes the manager record but retains session files. Explicit `copy` and
 Queued agents without a terminal cannot open a view yet. Use the explicit
 `close` command above to detach a view without stopping its worker.
 Subagent views, tool cards, and `subagent-notification` completion messages share
-the header: status icon, agent name, current model name, task description,
+the header: status icon, `agent name(runtime display name)`, current model ID, task description,
 eight-character ID, and status. Agent names fall back from `display_name` to the
-type name, then `Subagent`; unavailable models appear as `—`. Workers report
-actual model IDs/names, including native model changes. Tool results add a
+type name, then `Subagent`; runtime labels come from the adapter, not UI-specific
+runtime branches. Unavailable models appear as `—`. Workers report actual model
+IDs/names, including native model changes. Headers show the configured
+frontmatter `model` verbatim; runtime metadata never rewrites that display value.
+Without a frontmatter model, the header shows `—`, not a call-parameter or
+runtime-reported model. Tool results add a
 one-line result/error preview. Full IDs, paths, timestamps, counters, and full
 prompts/results appear when expanded with Ctrl+O. Rendering does not change tool
 data or JSON/print output.
@@ -158,6 +164,57 @@ and [subagent](../package.json) Pi manifests. The background Pi loads
 [worker.ts](../worker.ts) via an explicit `-e`; the worker is never auto-loaded
 as a package resource.
 
+## Codex runtime
+
+Select `runtime: "codex"` in a tool call, or define a named agent:
+
+```markdown
+---
+runtime: codex
+description: Implement and verify code
+model: gpt-6-luna
+thinking: high
+---
+Implement the task and verify the result. Report relevant files and tests.
+```
+
+`runtime` is `pi` (default) or `codex`. Frontmatter overrides the call runtime.
+Codex model/effort defaults come from Codex, never the parent Pi model/thinking.
+The Markdown body is a developer instruction, not a replacement for Codex's
+base instructions. Codex still discovers its own project instructions/config.
+Pi `tools`/`disallowed_tools` do not apply to Codex and are ignored by its
+adapter. Context cloning is unsupported: `inherit_context: true` never converts
+or copies a Pi transcript into Codex. The extension allowlist applies only to Pi.
+
+Codex currently requires CLI 0.160.0 (other versions are rejected until their
+protocol is verified) and existing Codex authentication. Each subagent owns a private app-server, with an
+authenticated loopback WebSocket endpoint and a private temporary token file.
+It does not use the user's shared daemon. `thread/start` creates the session;
+each managed round maps to a Codex turn. Steering uses `expectedTurnId` and
+cancellation targets only the managed turn. An interrupt RPC acknowledgment is
+not completion: the manager waits for the terminal turn event. Results and
+per-round statistics exclude independent native turns.
+
+The adapter uses the fixed `workspace-write` sandbox and `never` approval
+policy. These are not agent configuration fields. Unknown frontmatter fields,
+including a `codex` block, are ignored without validation or activation.
+Approval and user-input requests during headless managed execution are not
+automatically granted. Only supported runtime/model/thinking values are used;
+runtime names are resolved by the runtime registry at launch.
+
+Native Codex TUI views are created lazily after a managed task finishes, using
+`codex --remote … resume <thread-id>` against the same app-server. They are
+writable, not screen-scraped viewers. Because Codex can treat `turn/start` on an
+active turn as steering, managed execution and a live native TUI are mutually
+exclusive: finish the managed task before opening the TUI, and **exit the native
+TUI before resuming managed work**. Closing/detaching the Herdr view does not
+exit the native TUI and does not release this ownership guard. Native interaction
+must not overwrite the managed result or be canceled by `stop_subagent`.
+
+Parent shutdown/reload or deletion closes both the owned app-server and any
+owned native terminal. Session history remains in Codex's normal session store;
+there is no automatic restart, reconnect, or cross-process task recovery.
+
 ## User-defined agent types
 
 There are **no embedded agent definitions or installed templates**. Create your
@@ -211,8 +268,9 @@ Supported YAML frontmatter fields use the reference extension's snake_case names
 | --- | --- |
 | `description` | Filename; shown in the type catalogue. |
 | `display_name` | Type name; shown beside the task in widgets, views, and tool cards. |
-| `model` | Call parameter, then parent model. |
-| `thinking` | Call parameter, then parent thinking level. |
+| `runtime` | Call parameter, then `pi`; supports `pi` and `codex`. |
+| `model` | Call parameter, then parent model for Pi or Codex's own default. |
+| `thinking` | Call parameter, then parent thinking for Pi or Codex's own effort default. |
 | `tools` | Native Pi defaults; CSV or YAML array, `none`/empty disables all tools. Built-in and whitelisted extension tool names are accepted. |
 | `disallowed_tools` | No additional denylist; CSV or YAML array of tool names, applied after `tools`. |
 | `inherit_context` | Call parameter, then `false`; `true` clones the parent current branch into an independent Pi session. |
@@ -228,7 +286,7 @@ missing requested tools fail before a model turn instead of being silently
 ignored. Codemode cannot use tools outside the CLI allowlist/denylist. Tool
 selection is not a sandbox: `bash` can still change files.
 
-The Markdown body is always the named agent's full system prompt, and context-file
+For Pi, the Markdown body is the named agent's full system prompt, and context-file
 discovery is disabled for named workers. It is sent as bounded structured IPC,
 not substituted into shell commands or interpreted as a filename. The role
 remains active after completion for native terminal interaction and resume.
@@ -347,6 +405,22 @@ are not loaded. A source with no enabled extension resources fails before worker
 creation. The tool `tool_search` is provided by `builtin:tool-search`.
 Reload the parent after changing the whitelist. Extensions run with full process
 permissions, so this is a loading policy, not an OS sandbox.
+
+## Real Herdr verification
+
+The opt-in integration script invokes real authenticated Pi/Codex models and
+creates/cleans up only owned Herdr terminals and views. It is not part of CI:
+
+```sh
+PI_KITS_HERDR_LIVE=1 npm run test:herdr --workspace pi-subagent
+```
+
+If npm's augmented PATH resolves an older Codex installation, select the tested
+binary explicitly with `PI_KITS_CODEX_BIN=/absolute/path/to/codex`. The script
+checks Pi execution, Codex results, history-preserving continuation, live steer,
+confirmed interruption, native TUI interaction, detach/ownership protection,
+and managed continuation after exiting the TUI. Successful completion prints
+`HERDR_LIVE_OK`. This uses model quota; normal `npm test` uses isolated fakes.
 
 ## Configuration compatibility and source references
 
