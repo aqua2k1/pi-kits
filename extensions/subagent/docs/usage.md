@@ -202,14 +202,20 @@ Approval and user-input requests during headless managed execution are not
 automatically granted. Only supported runtime/model/thinking values are used;
 runtime names are resolved by the runtime registry at launch.
 
-Native Codex TUI views are created lazily after a managed task finishes, using
-`codex --remote … resume <thread-id>` against the same app-server. They are
-writable, not screen-scraped viewers. Because Codex can treat `turn/start` on an
-active turn as steering, managed execution and a live native TUI are mutually
-exclusive: finish the managed task before opening the TUI, and **exit the native
-TUI before resuming managed work**. Closing/detaching the Herdr view does not
-exit the native TUI and does not release this ownership guard. Native interaction
-must not overwrite the managed result or be canceled by `stop_subagent`.
+Native Codex TUI views are created lazily on demand, including while a managed
+task is running, using `codex --remote … resume <thread-id>` against the same
+app-server. They are writable, not screen-scraped viewers. Attachment waits for
+the managed `turn/start` to settle; opening/focusing/detaching a pane never
+cancels or relinquishes that managed turn. Native input may steer or interrupt
+it, and its terminal event still determines the managed result. Independent
+native turns never overwrite the managed result or get canceled by
+`stop_subagent`. Interactive requests are left to a live native TUI rather than
+being rejected by the headless client.
+
+Because Codex can treat `turn/start` on an active turn as steering, **exit the
+native TUI before submitting a new managed round**. Closing/detaching the Herdr
+view does not exit the native TUI and does not release this submission guard.
+This guard does not restrict opening a pane for an already-running task.
 
 Parent shutdown/reload or deletion closes both the owned app-server and any
 owned native terminal. Session history remains in Codex's normal session store;

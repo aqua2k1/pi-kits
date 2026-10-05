@@ -108,17 +108,53 @@ try {
 
   manager.resume(codex.id, {
     prompt:
-      "Use a shell tool to run sleep 15. After the command finishes, reply exactly BEFORE_STEER. Do not modify files.",
+      "Use a shell tool to run sleep 60. After the command finishes, reply exactly BEFORE_STEER. Do not modify files.",
   });
   await until(
     codex.id,
     (snapshot) => snapshot.status === "running" && (snapshot.toolUses ?? 0) > 0,
   );
-  await manager.steer(
-    codex.id,
-    "Replace the final response: reply exactly AFTER_STEER instead of BEFORE_STEER.",
+  const runningView = await manager.openView(codex.id);
+  assert.ok(runningView);
+  const runningPane = rootPanes.get(codex.id);
+  assert.ok(runningPane);
+  await new Promise((resolve) => setTimeout(resolve, 2000));
+  assert.equal(
+    manager.get(codex.id).status,
+    "running",
+    JSON.stringify(manager.get(codex.id)),
   );
+  assert.match(
+    await herdr([
+      "pane",
+      "read",
+      runningPane,
+      "--source",
+      "recent-unwrapped",
+      "--lines",
+      "100",
+    ]),
+    /Codex|codex|sleep/,
+  );
+  // Native input steers the same managed turn; its result remains managed.
+  await herdr([
+    "agent",
+    "prompt",
+    runningPane,
+    "Replace the final response: reply exactly AFTER_STEER instead of BEFORE_STEER.",
+    "--wait",
+    "--timeout",
+    "120000",
+  ]);
   assert.match((await completed(codex.id)).result ?? "", /AFTER_STEER/);
+  console.log(
+    JSON.stringify({ check: "running-native-view", viewId: runningView.id }),
+  );
+  await manager.closeView(codex.id);
+  await herdr(["pane", "send-keys", runningPane, "ctrl+c"]);
+  await new Promise((resolve) => setTimeout(resolve, 300));
+  await herdr(["pane", "send-keys", runningPane, "ctrl+c"]);
+  await new Promise((resolve) => setTimeout(resolve, 1200));
 
   manager.resume(codex.id, {
     prompt:

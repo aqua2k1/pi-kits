@@ -5,7 +5,7 @@
 通过 Pi 或 Codex runtime 执行独立任务，默认后台运行，Herdr 提供原生终端视图。
 支持自定义 Markdown agent、引导、取消及保留会话续跑；父上下文克隆仅支持 Pi → Pi。
 Codex 使用独立 app-server，默认 workspace-write sandbox、never 审批策略。
-Codex 原生视图只在任务结束后开放；退出原生 TUI 后才能继续受管任务，关闭视图仅脱离。
+Codex 运行中也可打开可交互原生视图；新一轮受管任务仍需先退出原生 TUI，关闭视图仅脱离。
 提供六个工具：`subagent`、`resume_subagent`、`list_subagent_types`、
 `get_subagent_result`、`steer_subagent`、`stop_subagent`。
 TUI 使用 `/subagent:views` 管理终端视图，编辑器上方显示实时任务状态。

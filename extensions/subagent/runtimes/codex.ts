@@ -24,7 +24,7 @@ const capabilities: RuntimeCapabilities = Object.freeze({
   nativeClone: false,
   steer: true,
   retainedSession: true,
-  concurrentNativeInput: false,
+  concurrentNativeInput: true,
 });
 const RESULT_LIMIT = 64 * 1024;
 const efforts: Record<string, string> = {
@@ -115,7 +115,7 @@ export interface CodexDependencies {
     disconnected: (error: Error) => void,
     connectTimeoutMs: number,
     requestTimeoutMs: number,
-    shouldRejectServerRequest: () => boolean,
+    shouldRejectServerRequest: () => boolean | Promise<boolean>,
   ): Promise<CodexRpc>;
 }
 const defaults: CodexDependencies = {
@@ -229,6 +229,8 @@ export class CodexRuntime implements AgentRuntime {
 type ManagedTurn = {
   round: number;
   id?: string;
+  submitted: Promise<void>;
+  releaseSubmission(): void;
   cancel: boolean;
   interruptSent: boolean;
   dispatched: boolean;
@@ -263,6 +265,7 @@ class CodexSession implements RuntimeSession {
   private attaching = false;
   private attachmentPromise?: Promise<TerminalHandle>;
   private managed?: ManagedTurn;
+  private nativeTurnId?: string;
   private round = 0;
   private latestUsage?: NativeUsage;
   private systemPrompt: string;
@@ -350,9 +353,7 @@ class CodexSession implements RuntimeSession {
             (error) => this.disconnect(error),
             Math.min(1000, remaining()),
             CODEX_REQUEST_TIMEOUT_MS,
-            () =>
-              this.connected &&
-              Boolean(this.managed?.dispatched && !this.managed.finishing),
+            () => this.shouldRejectServerRequest(),
           );
         } catch {
           remaining();
@@ -491,6 +492,16 @@ class CodexSession implements RuntimeSession {
     }
     return alive;
   }
+  private shouldRejectServerRequest(): boolean | Promise<boolean> {
+    const headless = () =>
+      this.connected &&
+      Boolean(this.managed?.dispatched && !this.managed.finishing);
+    if (!headless()) return false;
+    if (!this.nativeTerminal && !this.attaching) return true;
+    // App-server broadcasts requests to native clients too. Never race their
+    // answer, but resume headless rejection if the native terminal has exited.
+    return this.nativeAlive().then((alive) => headless() && !alive);
+  }
   private async preflightNativeAlive(): Promise<boolean> {
     try {
       return await this.nativeAlive();
@@ -563,15 +574,21 @@ class CodexSession implements RuntimeSession {
       );
     if (Buffer.byteLength(command.prompt) > RESULT_LIMIT)
       throw new RuntimeTaskRejectedError("Codex task exceeds 64 KiB");
-    if (this.managed || this.attaching)
+    if (this.managed || this.attachmentPromise)
       throw new RuntimeTaskRejectedError(
         "Codex managed task or native attachment already in progress",
       );
     const round = command.round ?? this.round + 1;
     if (!Number.isSafeInteger(round) || round <= this.round)
       throw new RuntimeTaskRejectedError("Invalid Codex managed round");
+    let releaseSubmission!: () => void;
+    const submitted = new Promise<void>((resolve) => {
+      releaseSubmission = resolve;
+    });
     const managed: ManagedTurn = {
       round,
+      submitted,
+      releaseSubmission,
       cancel: false,
       interruptSent: false,
       dispatched: false,
@@ -585,7 +602,7 @@ class CodexSession implements RuntimeSession {
       compactions: 0,
       baseline: { ...this.latestUsage?.total },
     };
-    this.managed = managed; // Reserve before any await: attachments cannot race the final send.
+    this.managed = managed; // Attachments wait until turn/start has settled.
     try {
       await this.exclusiveCheck();
       managed.baseline = { ...this.latestUsage?.total };
@@ -629,6 +646,8 @@ class CodexSession implements RuntimeSession {
       if (this.managed === managed && !managed.finishing)
         this.managed = undefined;
       throw error;
+    } finally {
+      managed.releaseSubmission();
     }
   }
   private async interrupt(managed: ManagedTurn): Promise<void> {
@@ -653,6 +672,13 @@ class CodexSession implements RuntimeSession {
       this.latestUsage = params.tokenUsage;
     const managed = this.managed;
     const turnId = params.turnId ?? params.turn?.id;
+    if (managed?.id && turnId && turnId !== managed.id) {
+      if (method === "turn/started") this.nativeTurnId = turnId;
+      if (method === "turn/completed" && this.nativeTurnId === turnId)
+        this.nativeTurnId = undefined;
+    }
+    if (method === "thread/status/changed" && params.status?.type === "idle")
+      this.nativeTurnId = undefined;
     if (!managed) {
       if (method === "thread/status/changed")
         this.emit("session_state", {
@@ -808,7 +834,8 @@ class CodexSession implements RuntimeSession {
     this.stats(managed);
     this.managed = undefined;
     this.emit("session_state", {
-      state: "idle",
+      state: this.nativeTurnId ? "interactive" : "idle",
+      activity: this.nativeTurnId ? "Native Codex turn" : undefined,
       round: managed.round,
       turnId: managed.id,
     });
@@ -837,19 +864,27 @@ class CodexSession implements RuntimeSession {
     }
   }
   attachment(): Promise<TerminalHandle> {
+    if (this.attachmentPromise) return this.attachmentPromise;
     try {
       this.requireConnected();
-      if (this.managed || this.attaching)
-        throw new Error("Native Codex attachment requires no managed task");
     } catch (error) {
       return Promise.reject(error);
     }
-    this.attaching = true;
-    const pending = this.openAttachment().finally(() => {
-      this.attaching = false;
-      if (this.attachmentPromise === pending)
-        this.attachmentPromise = undefined;
-    });
+    // A remote TUI may interact with an accepted managed turn, but must not
+    // create a native turn before the managed turn/start dispatch is settled.
+    const submitted = this.managed?.submitted;
+    const launch = () => {
+      this.requireConnected();
+      this.attaching = true;
+      return this.openAttachment();
+    };
+    const pending = (submitted ? submitted.then(launch) : launch()).finally(
+      () => {
+        this.attaching = false;
+        if (this.attachmentPromise === pending)
+          this.attachmentPromise = undefined;
+      },
+    );
     this.attachmentPromise = pending;
     return pending;
   }

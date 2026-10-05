@@ -108,7 +108,7 @@ function harness(id: RuntimeId = "codex") {
     }
     async attachment() {
       this.attachmentCalls++;
-      if (this.managed)
+      if (this.managed && !this.capabilities.concurrentNativeInput)
         throw new Error("Native attachment requires no managed task");
       this.terminal ??= { id: this.options.id };
       return this.terminal;
@@ -213,6 +213,25 @@ test("runtime injection waits for ready, forwards options and resumes without an
   assert.equal(h.sessions[0].commands[1].round, 2);
   h.sessions[0].complete(2);
   assert.equal((await manager.result(first.id)).result, "Result 2");
+});
+
+test("concurrent native attachment opens a running headless runtime without changing managed ownership", async (t) => {
+  const h = harness();
+  h.runtime.capabilities.concurrentNativeInput = true;
+  const manager = new SubagentManager(h.mux, { runtimes: [h.runtime] });
+  t.after(() => manager.close());
+  const agent = manager.spawn({ ...task, runtime: h.runtime.id });
+  await until(() => h.sessions[0]?.commands.length === 1);
+  assert.equal(manager.get(agent.id).terminalId, undefined);
+  const view = await manager.openView(agent.id);
+  assert.deepEqual(h.opened, [agent.id]);
+  assert.equal(manager.get(agent.id).status, "running");
+  assert.equal(manager.get(agent.id).viewId, view.id);
+  await manager.closeView(agent.id);
+  assert.equal(h.sessions[0].closeCalls, 0);
+  assert.equal(h.sessions[0].managed, true);
+  h.sessions[0].complete();
+  assert.equal(manager.get(agent.id).result, "Result 1");
 });
 
 test("lazy native attachment errors leave queued/running tasks intact and view closure never closes execution", async (t) => {

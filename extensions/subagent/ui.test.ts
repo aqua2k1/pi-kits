@@ -64,6 +64,21 @@ function agent(
   };
 }
 
+function headlessAgent(): AgentSnapshot {
+  return {
+    ...agent("headless"),
+    runtime: "custom-runtime",
+    terminalId: undefined,
+    sessionState: "running",
+    capabilities: {
+      nativeClone: false,
+      steer: false,
+      retainedSession: true,
+      concurrentNativeInput: true,
+    },
+  };
+}
+
 function panel(source: Source, initialId?: string, rows = 24) {
   let result: ViewChoice | undefined;
   let completions = 0;
@@ -168,31 +183,128 @@ test("queued terminal actions are unavailable, cancel never stops a worker", () 
   assert.equal(h.completions, 1);
 });
 
-test("finished Codex sessions can lazily open a native view without a terminal", () => {
-  for (const status of [
-    "completed",
-    "stopped",
-    "error",
-    "running",
-    "queued",
-  ] as const) {
-    const source = new Source();
-    source.agents = [
+test("Enter opens a native view for a running headless Codex task", () => {
+  const source = new Source();
+  source.agents = [{ ...headlessAgent(), runtime: "codex" }];
+  const h = panel(source);
+  const rendered = h.component.render(80).join("\n");
+  assert.match(rendered, /Native view available; Enter to open/);
+  assert.doesNotMatch(rendered, /after completion|Native Codex/);
+  h.component.handleInput("\r");
+  assert.deepEqual(h.result, { agentId: "headless", action: "open" });
+  h.component.dispose();
+});
+
+test("click opens a native view for a running headless Codex task only once", () => {
+  const source = new Source();
+  source.agents = [{ ...headlessAgent(), runtime: "codex" }];
+  const h = panel(source);
+  const lines = h.component.render(80);
+  const y = lines.findLastIndex((line) => line.includes("任务 headless"));
+  assert.ok(y >= 0);
+  const event = { type: "click", button: "left", x: 4, y } as TuiMouseEvent;
+  h.component.handleMouse(event);
+  h.component.handleMouse(event);
+  h.component.handleInput("\r");
+  assert.deepEqual(h.result, { agentId: "headless", action: "open" });
+  assert.equal(h.completions, 1);
+  h.component.dispose();
+});
+
+test("native view eligibility uses capabilities and live session state, not runtime names", () => {
+  const base = headlessAgent();
+  assert.ok(base.capabilities);
+  const cases: [Partial<AgentSnapshot>, boolean][] = [
+    [{}, true],
+    [{ runtime: undefined }, true],
+    [{ sessionState: "idle" }, true],
+    [{ sessionState: "interactive" }, true],
+    [{ status: "completed", sessionState: "idle" }, true],
+    [{ status: "completed", sessionState: "interactive" }, true],
+    [{ status: "stopped", sessionState: "idle" }, true],
+    [{ status: "error", sessionState: "idle" }, true],
+    [{ status: "stopping" }, true],
+    [{ viewId: "existing" }, true],
+    [{ status: "queued", sessionState: "idle" }, false],
+    [{ status: "starting", sessionState: "idle" }, false],
+    [{ status: "disconnected", sessionState: "idle" }, false],
+    [{ sessionState: "disconnected" }, false],
+    [{ sessionState: "closed" }, false],
+    [{ sessionState: undefined }, false],
+    [{ status: "completed", sessionState: "disconnected" }, false],
+    [{ status: "completed", sessionState: "closed" }, false],
+    [{ status: "error", sessionState: "running" }, false],
+    [{ status: "error", sessionState: "interactive" }, false],
+    [{ capabilities: undefined }, false],
+    [{ runtime: "codex", capabilities: undefined }, false],
+    [
       {
-        ...agent("codex", status),
         runtime: "codex",
+        status: "completed",
         sessionState: "idle",
-        terminalId: undefined,
+        capabilities: undefined,
       },
-    ];
-    const h = panel(source);
-    h.component.handleInput("\r");
-    if (["completed", "stopped", "error"].includes(status)) {
-      assert.deepEqual(h.result, { agentId: "codex", action: "open" });
-    } else {
-      assert.equal(h.completions, 0);
+      false,
+    ],
+  ];
+  for (const retainedSession of [false, true]) {
+    for (const concurrentNativeInput of [false, true]) {
+      const capabilities = {
+        ...base.capabilities,
+        retainedSession,
+        concurrentNativeInput,
+      };
+      for (const sessionState of ["running", "idle", "interactive"] as const) {
+        cases.push([
+          { capabilities, sessionState },
+          retainedSession && concurrentNativeInput,
+        ]);
+      }
+      for (const status of ["completed", "stopped", "error"] as const) {
+        cases.push([
+          { capabilities, status, sessionState: "idle" },
+          retainedSession,
+        ]);
+      }
+      cases.push([
+        { capabilities, status: "stopping" },
+        retainedSession && concurrentNativeInput,
+      ]);
+      cases.push([{ capabilities, terminalId: "existing-terminal" }, true]);
     }
-    h.component.dispose();
+  }
+  for (const [patch, available] of cases) {
+    for (const input of ["enter", "click"]) {
+      const source = new Source();
+      const snapshot = { ...base, ...patch };
+      source.agents = [snapshot];
+      const h = panel(source);
+      const lines = h.component.render(80);
+      assert.equal(
+        lines.join("\n").includes("Terminal not ready"),
+        !available,
+        JSON.stringify(patch),
+      );
+      if (input === "enter") h.component.handleInput("\r");
+      else {
+        const y = lines.findLastIndex((line) => line.includes("任务 headless"));
+        assert.ok(y >= 0);
+        h.component.handleMouse({
+          type: "click",
+          button: "left",
+          x: 4,
+          y,
+        } as TuiMouseEvent);
+      }
+      assert.equal(h.completions, available ? 1 : 0, JSON.stringify(patch));
+      if (available) {
+        assert.deepEqual(h.result, {
+          agentId: snapshot.id,
+          action: snapshot.viewId ? "focus" : "open",
+        });
+      }
+      h.component.dispose();
+    }
   }
 });
 

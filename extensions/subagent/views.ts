@@ -17,6 +17,7 @@ import {
   dockedPanelLayout,
   runDockedPanel,
 } from "../../shared/ui/docked-panel/index.ts";
+import type { AgentSnapshot } from "./manager.ts";
 import {
   type AgentSource,
   agentDisplayStatus,
@@ -28,6 +29,18 @@ export type ViewAction = "open" | "focus" | "close" | "copy" | "delete";
 export interface ViewChoice {
   agentId: string;
   action: ViewAction;
+}
+
+function nativeViewAvailable(agent: AgentSnapshot): boolean {
+  if (agent.terminalId) return true;
+  return (
+    agent.capabilities?.retainedSession === true &&
+    ["running", "idle", "interactive"].includes(agent.sessionState ?? "") &&
+    !["queued", "starting", "disconnected"].includes(agent.status) &&
+    (agent.status !== "error" || agent.sessionState === "idle") &&
+    (!["running", "stopping"].includes(agent.status) ||
+      agent.capabilities.concurrentNativeInput)
+  );
 }
 
 export class SubagentViewsPanel {
@@ -79,16 +92,7 @@ export class SubagentViewsPanel {
 
   private confirm(): void {
     const { agent } = this.selected();
-    if (
-      !agent ||
-      (!agent.terminalId &&
-        !(
-          agent.runtime === "codex" &&
-          agent.sessionState === "idle" &&
-          ["completed", "stopped", "error"].includes(agent.status)
-        ))
-    )
-      return;
+    if (!agent || !nativeViewAvailable(agent)) return;
     this.finished = true;
     this.done({ agentId: agent.id, action: agent.viewId ? "focus" : "open" });
   }
@@ -192,8 +196,8 @@ export class SubagentViewsPanel {
             "muted",
             agent.terminalId
               ? `${agent.id.slice(0, 8)} · ${agentDisplayStatus(agent)} · ${agent.sessionState === "interactive" ? "User interaction" : agentStats(agent)}`
-              : agent.runtime === "codex" && agent.sessionState === "idle"
-                ? "Native Codex view available after completion; Enter to open"
+              : nativeViewAvailable(agent)
+                ? "Native view available; Enter to open"
                 : "Terminal not ready; waiting…",
           ),
           width,

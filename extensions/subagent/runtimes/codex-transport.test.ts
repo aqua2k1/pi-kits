@@ -21,7 +21,10 @@ class FakeSocket extends EventEmitter implements CodexSocket {
     this.emit("message", JSON.stringify(value));
   }
 }
-async function fixture(timeoutMs = 1000) {
+async function fixture(
+  timeoutMs = 1000,
+  shouldRejectServerRequest: () => boolean | Promise<boolean> = () => true,
+) {
   const socket = new FakeSocket();
   const notifications: Array<{
     method: string;
@@ -36,6 +39,7 @@ async function fixture(timeoutMs = 1000) {
     timeoutMs,
     () => socket,
     timeoutMs,
+    shouldRejectServerRequest,
   );
   socket.emit("open");
   const transport = await connecting;
@@ -117,6 +121,112 @@ test("approval, user-input and unknown server requests always receive error and 
     assert.equal(f.notifications.at(-1)?.method, "runtime/blocked");
   }
   f.transport.close();
+});
+
+test("async false policy leaves server requests to native TUI without blocking RPCs", async () => {
+  const decision = Promise.withResolvers<boolean>();
+  const f = await fixture(1000, () => decision.promise);
+  try {
+    f.socket.message({
+      id: "native-approval",
+      method: "item/commandExecution/requestApproval",
+      params: { threadId: "thread" },
+    });
+    assert.equal(f.socket.sent.length, 0);
+    assert.deepEqual(f.notifications, []);
+    const request = f.transport.request("thread/read", {});
+    f.socket.message({ id: f.socket.sent[0].id, result: { ok: true } });
+    assert.deepEqual(await request, { ok: true });
+    decision.resolve(false);
+    await decision.promise;
+    assert.equal(f.socket.sent.length, 1);
+    assert.deepEqual(f.notifications, []);
+    assert.deepEqual(f.failures, []);
+  } finally {
+    f.transport.close();
+  }
+});
+
+test("async true policy waits before denying and emitting runtime/blocked", async () => {
+  const decision = Promise.withResolvers<boolean>();
+  const f = await fixture(1000, () => decision.promise);
+  try {
+    f.socket.message({
+      id: "managed-approval",
+      method: "item/fileChange/requestApproval",
+      params: { threadId: "thread", turnId: "turn" },
+    });
+    assert.deepEqual(f.socket.sent, []);
+    assert.deepEqual(f.notifications, []);
+    decision.resolve(true);
+    await decision.promise;
+    assert.deepEqual(f.socket.sent, [
+      {
+        id: "managed-approval",
+        error: {
+          code: -32601,
+          message:
+            "Interactive server requests are unsupported by managed Codex runtime",
+        },
+      },
+    ]);
+    assert.deepEqual(f.notifications, [
+      {
+        method: "runtime/blocked",
+        params: {
+          threadId: "thread",
+          turnId: "turn",
+          requestMethod: "item/fileChange/requestApproval",
+        },
+      },
+    ]);
+    assert.deepEqual(f.failures, []);
+  } finally {
+    f.transport.close();
+  }
+});
+
+test("async policy resolution after close sends no denial or blocked notification", async () => {
+  const decision = Promise.withResolvers<boolean>();
+  const f = await fixture(1000, () => decision.promise);
+  f.socket.message({
+    id: "approval",
+    method: "item/commandExecution/requestApproval",
+    params: {},
+  });
+  assert.deepEqual(f.socket.sent, []);
+  f.transport.close();
+  decision.resolve(true);
+  await decision.promise;
+  assert.deepEqual(f.socket.sent, []);
+  assert.deepEqual(f.notifications, []);
+  assert.equal(f.socket.terminated, true);
+  assert.equal(f.failures.length, 1);
+});
+
+test("async policy failure disconnects and rejects pending RPCs without denying approvals", async () => {
+  const decision = Promise.withResolvers<boolean>();
+  const f = await fixture(1000, () => decision.promise);
+  try {
+    const request = f.transport.request("thread/read", {});
+    const rejected = assert.rejects(request, /server request handling failed/);
+    f.socket.message({
+      id: "approval",
+      method: "item/commandExecution/requestApproval",
+      params: {},
+    });
+    assert.equal(f.socket.sent.length, 1);
+    assert.deepEqual(f.notifications, []);
+    decision.reject(new Error("native liveness unavailable"));
+    await rejected;
+    assert.equal(f.socket.sent.length, 1);
+    assert.deepEqual(f.notifications, []);
+    assert.equal(f.socket.terminated, true);
+    assert.equal(f.failures.length, 1);
+    await assert.rejects(f.transport.request("after", {}), /disconnected/);
+  } finally {
+    f.transport.close();
+  }
 });
 
 test("malformed and oversized protocol frames disconnect instead of leaking pending work", async () => {

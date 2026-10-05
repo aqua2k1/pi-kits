@@ -63,7 +63,7 @@ function fixture(
   let closes = 0;
   let connectTimeoutMs = 0;
   let requestTimeoutMs = 0;
-  let rejectServerRequest = () => true;
+  let rejectServerRequest: () => boolean | Promise<boolean> = () => true;
   let alive = true;
   const starts: StartOptions[] = [];
   const destroyed: TerminalHandle[] = [];
@@ -624,11 +624,97 @@ test("native attachment retains backend on detach, blocks managed sends until te
   f.setAlive(false);
   await f.session.send({ type: "task", prompt: "allowed" });
   assert.deepEqual(f.destroyed, [terminal]);
-  await assert.rejects(f.session.attachment(), /no managed task/);
+  f.setAlive(true);
+  const next = await f.session.attachment();
+  assert.equal(f.session.capabilities.concurrentNativeInput, true);
   finished(f);
   await tick();
-  const next = await f.session.attachment();
+  assert.equal(await f.session.attachment(), next);
   assert.notEqual(next.id, terminal.id);
+});
+
+test("running native attachment keeps managed steer/cancel and result ownership", async (t) => {
+  const f = fixture();
+  t.after(() => f.session.close());
+  await f.session.start();
+  await f.session.send({ type: "task", prompt: "go", round: 1 });
+  const terminal = await f.session.attachment();
+  assert.equal(await f.session.attachment(), terminal);
+  assert.equal(await f.shouldRejectServerRequest(), false);
+  await f.session.send({
+    type: "steer",
+    message: "native and managed input",
+    round: 1,
+  });
+  await f.session.send({ type: "cancel", round: 1 });
+  assert.deepEqual(
+    f.calls
+      .filter((call) => ["turn/steer", "turn/interrupt"].includes(call.method))
+      .map((call) => [
+        call.method,
+        call.params.expectedTurnId ?? call.params.turnId,
+      ]),
+    [
+      ["turn/steer", "turn-1"],
+      ["turn/interrupt", "turn-1"],
+    ],
+  );
+  finished(f, "turn-1", { status: "interrupted" });
+  await tick();
+  const completed = must(f.events.find((event) => event.type === "completed"));
+  assert.equal(completed.canceled, true);
+  finished(f, "native-followup");
+  await tick();
+  assert.equal(
+    f.events.filter((event) => event.type === "completed").length,
+    1,
+  );
+  assert.equal(f.session.terminal, terminal);
+});
+
+test("attachment waits for turn/start acknowledgment and shares concurrent requests", async (t) => {
+  const f = fixture();
+  t.after(() => f.session.close());
+  await f.session.start();
+  const response = deferred<unknown>();
+  f.handlers.set("turn/start", () => response.promise);
+  const sending = f.session.send({ type: "task", prompt: "go" });
+  await tick();
+  const attaching = f.session.attachment();
+  assert.equal(f.session.attachment(), attaching);
+  await tick();
+  assert.equal(f.starts.length, 0);
+  response.resolve({ turn: { id: "turn-1" } });
+  await sending;
+  await attaching;
+  assert.equal(f.starts.length, 1);
+  f.setAlive(false);
+  assert.equal(await f.shouldRejectServerRequest(), true);
+});
+
+test("native turn started during result hydration remains interactive", async (t) => {
+  const f = fixture();
+  t.after(() => f.session.close());
+  await f.session.start();
+  await f.session.send({ type: "task", prompt: "go" });
+  await f.session.attachment();
+  const items = deferred<unknown>();
+  f.handlers.set("thread/items/list", () => items.promise);
+  finished(f, "turn-1", { itemsView: "notLoaded", items: [] });
+  f.event("turn/started", {
+    turn: { id: "native-turn", status: "inProgress" },
+  });
+  items.resolve({ data: [], nextCursor: null });
+  await tick();
+  assert.equal(
+    must(f.events.filter((event) => event.type === "session_state").at(-1))
+      .state,
+    "interactive",
+  );
+  assert.equal(
+    f.events.filter((event) => event.type === "completed").length,
+    1,
+  );
 });
 
 test("failed native destroy retains opaque handle and forbids submit", async (t) => {
@@ -664,15 +750,23 @@ test("attachment reservation and final terminal inspector prevent managed send r
     f.destroyed.push(terminal);
   };
   const read = f.handlers;
+  let waitingAttachment: Promise<TerminalHandle> | undefined;
   read.set("thread/read", async () => {
-    await assert.rejects(f.session.attachment(), /no managed task/);
+    waitingAttachment = f.session.attachment();
+    assert.equal(
+      f.starts.length,
+      1,
+      "Do not attach during submission preflight",
+    );
     return { thread: { status: { type: "idle" } } };
   });
   await f.session.send({ type: "task", prompt: "go" });
   // Handle has been destroyed, so no following/moved handle is inspected.
   assert.equal(inspections, 1);
+  await must(waitingAttachment);
   finished(f);
   await tick();
+  f.mux.inspect = async () => ({ alive: false });
   const pending = deferred<TerminalHandle>();
   f.mux.start = async () => pending.promise;
   const attaching = f.session.attachment();

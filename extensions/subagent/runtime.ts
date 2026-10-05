@@ -10,7 +10,7 @@ export interface RuntimeCapabilities {
   nativeClone: boolean;
   steer: boolean;
   retainedSession: boolean;
-  /** Whether writable native UI may coexist with managed submissions. */
+  /** Whether writable native UI may coexist with an active managed turn. */
   concurrentNativeInput: boolean;
 }
 

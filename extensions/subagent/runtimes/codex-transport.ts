@@ -49,7 +49,7 @@ export class CodexTransport implements CodexRpc {
     ) => void,
     private disconnected: (error: Error) => void,
     private requestTimeoutMs: number,
-    private shouldRejectServerRequest: () => boolean,
+    private shouldRejectServerRequest: () => boolean | Promise<boolean>,
   ) {
     socket.on("message", (data) => this.receive(data));
     socket.on("close", () =>
@@ -68,7 +68,7 @@ export class CodexTransport implements CodexRpc {
     connectTimeoutMs = 1000,
     factory: SocketFactory = createCodexSocket,
     requestTimeoutMs = CODEX_REQUEST_TIMEOUT_MS,
-    shouldRejectServerRequest: () => boolean = () => true,
+    shouldRejectServerRequest: () => boolean | Promise<boolean> = () => true,
   ): Promise<CodexTransport> {
     return new Promise((resolve, reject) => {
       const socket = factory(url, token);
@@ -153,22 +153,31 @@ export class CodexTransport implements CodexRpc {
       if (typeof message.method === "string") {
         if (message.id !== undefined) {
           // Native clients may receive the same request; never race their answer.
-          if (!this.shouldRejectServerRequest()) return;
-          // Headless adapter cannot safely answer interactive approval/tool/input requests.
-          this.socket.send(
-            JSON.stringify({
-              id: message.id,
-              error: {
-                code: -32601,
-                message:
-                  "Interactive server requests are unsupported by managed Codex runtime",
-              },
-            }),
-          );
-          this.notification("runtime/blocked", {
-            ...message.params,
-            requestMethod: message.method,
-          });
+          const rejectIfNeeded = (shouldReject: boolean) => {
+            if (this.ended || !shouldReject) return;
+            // Headless adapter cannot safely answer interactive approval/tool/input requests.
+            this.socket.send(
+              JSON.stringify({
+                id: message.id,
+                error: {
+                  code: -32601,
+                  message:
+                    "Interactive server requests are unsupported by managed Codex runtime",
+                },
+              }),
+            );
+            this.notification("runtime/blocked", {
+              ...message.params,
+              requestMethod: message.method,
+            });
+          };
+          const shouldReject = this.shouldRejectServerRequest();
+          if (typeof shouldReject === "boolean") rejectIfNeeded(shouldReject);
+          else
+            void shouldReject.then(rejectIfNeeded).catch(() => {
+              // Unknown native liveness must disconnect, never deny an approval.
+              this.fail(new Error("Codex server request handling failed"));
+            });
         } else {
           this.notification(message.method, message.params);
         }
