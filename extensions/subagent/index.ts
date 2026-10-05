@@ -20,8 +20,6 @@ import { loadAgentDefinitions, resolveAgentDefinition } from "./agents.ts";
 import { type AgentSnapshot, SubagentManager } from "./manager.ts";
 import { HerdrAdapter } from "./mux/herdr.ts";
 import type { MuxAdapter } from "./mux/index.ts";
-import { codexReviewTargetSchema } from "./runtime/codex/schema.ts";
-import { captureParentSession } from "./runtime/pi/clone.ts";
 import {
   renderSubagentNotification,
   renderSubagentResult,
@@ -33,6 +31,12 @@ import { SubagentStatusWidget } from "./ui/status-widget.ts";
 import { showSubagentViews } from "./ui/views.ts";
 
 const agentId = Type.String({ minLength: 1, description: "Subagent ID" });
+const runtimeConfig = Type.Optional(
+  Type.Record(Type.String(), Type.Unknown(), {
+    description:
+      "Options interpreted by the selected runtime. Session settings are fixed at launch; supply fresh task-specific options on each resume. Discover supported options in agent configuration and runtime documentation.",
+  }),
+);
 
 function toolResult(snapshot: AgentSnapshot) {
   const text = JSON.stringify(snapshot, null, 2);
@@ -118,23 +122,16 @@ export function registerSubagents(
             description: "Execution runtime; omit to use the default.",
           }),
         ),
-        inherit_context: Type.Optional(
-          Type.Boolean({
-            default: false,
-            description:
-              "Inherit the parent conversation; requires runtime support. False starts fresh.",
-          }),
-        ),
         prompt: Type.Optional(
           Type.String({
             minLength: 1,
             maxLength: 100_000,
             pattern: "\\S",
             description:
-              "Task instructions, relevant context, and expected output; not a system prompt. Required for ordinary tasks; omit for structured native review targets.",
+              "Task instructions, relevant context, and expected output; not a system prompt. Required unless the selected runtime accepts instructions through runtime_config.",
           }),
         ),
-        review_target: codexReviewTargetSchema(),
+        runtime_config: runtimeConfig,
         description: Type.String({
           minLength: 1,
           maxLength: 200,
@@ -167,27 +164,13 @@ export function registerSubagents(
           ? resolveAgentDefinition(ctx.cwd, params.subagent_type)
           : undefined;
         const runtime = agent?.runtime ?? params.runtime ?? "pi";
-        const inheritContext =
-          agent?.inheritContext ?? params.inherit_context ?? false;
         const current = getManager(ctx);
-        if (
-          inheritContext &&
-          !current.runtimeCapabilities(runtime).nativeClone
-        ) {
-          throw new Error(
-            "Cross-runtime context cloning is unsupported by this runtime.",
-          );
-        }
         const snapshot = current.spawn({
           runtime,
-          parentSession: inheritContext
-            ? captureParentSession(ctx.sessionManager)
-            : undefined,
+          context: ctx.sessionManager,
           agent,
           prompt: params.prompt ?? "",
-          ...(params.review_target
-            ? { runtimeParams: { review_target: params.review_target } }
-            : {}),
+          runtimeParams: params.runtime_config,
           description: params.description,
           cwd: ctx.cwd,
           model:
@@ -225,10 +208,10 @@ export function registerSubagents(
             maxLength: 100_000,
             pattern: "\\S",
             description:
-              "Follow-up task instructions. Required for ordinary tasks; omit for structured native review targets.",
+              "Follow-up task instructions. Required unless the selected runtime accepts instructions through runtime_config.",
           }),
         ),
-        review_target: codexReviewTargetSchema(),
+        runtime_config: runtimeConfig,
         description: Type.Optional(
           Type.String({
             minLength: 1,
@@ -250,9 +233,7 @@ export function registerSubagents(
         const current = getManager(ctx);
         const snapshot = current.resume(params.agent_id, {
           prompt: params.prompt ?? "",
-          ...(params.review_target
-            ? { runtimeParams: { review_target: params.review_target } }
-            : {}),
+          runtimeParams: params.runtime_config,
           description: params.description,
         });
         if (

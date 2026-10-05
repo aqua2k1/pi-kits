@@ -15,11 +15,7 @@ export interface AgentDefinition {
   runtimeConfig?: Record<string, unknown>;
   model?: string;
   thinking?: string;
-  tools?: string[];
-  disallowedTools?: string[];
   systemPrompt: string;
-  promptMode?: "replace" | "append";
-  inheritContext?: boolean;
   enabled: boolean;
   runInBackground?: boolean;
   source: "global" | "project";
@@ -55,6 +51,17 @@ export function parseAgentDefinition(
   if (!fields || typeof fields !== "object" || Array.isArray(fields)) {
     fail("YAML frontmatter must be an object");
   }
+  const runtimeConfig = fields.runtime_config;
+  if (
+    runtimeConfig !== undefined &&
+    (runtimeConfig === null ||
+      typeof runtimeConfig !== "object" ||
+      Array.isArray(runtimeConfig) ||
+      (Object.getPrototypeOf(runtimeConfig) !== Object.prototype &&
+        Object.getPrototypeOf(runtimeConfig) !== null))
+  ) {
+    fail("runtime_config must be a non-null plain object");
+  }
   const string = (field: string): string | undefined => {
     const value = fields[field];
     if (value === undefined) return undefined;
@@ -69,54 +76,18 @@ export function parseAgentDefinition(
     if (typeof value !== "boolean") fail(`${field} must be a boolean`);
     return value;
   };
-  const tools = (field: string): string[] | undefined => {
-    const value = fields[field];
-    if (value === undefined) return undefined;
-    if (typeof value !== "string" && !Array.isArray(value)) {
-      fail(`${field} must be a CSV string or string array`);
-    }
-    const items: unknown[] =
-      typeof value === "string"
-        ? value.trim() === "none"
-          ? []
-          : value.split(",")
-        : value;
-    const names = items
-      .map((item) => {
-        if (typeof item !== "string") fail(`${field} must contain tool names`);
-        return item.trim();
-      })
-      .filter(Boolean);
-    // CLI lists are comma-delimited; leave naming rules and availability to Pi.
-    if (names.some((tool) => /[,\p{Cc}]/u.test(tool))) {
-      fail(`${field} contains an invalid tool name`);
-    }
-    return [...new Set(names)];
-  };
   const runtime = string("runtime");
-  const promptMode = string("prompt_mode");
-  if (
-    promptMode !== undefined &&
-    promptMode !== "replace" &&
-    promptMode !== "append"
-  ) {
-    fail("prompt_mode must be replace or append");
-  }
   return {
     name,
     ...(runtime ? { runtime } : {}),
-    ...(fields.runtime_args !== undefined
-      ? { runtimeConfig: { runtime_args: fields.runtime_args } }
+    ...(runtimeConfig !== undefined
+      ? { runtimeConfig: runtimeConfig as Record<string, unknown> }
       : {}),
     description: string("description") ?? name,
     displayName: string("display_name"),
     model: string("model"),
     thinking: string("thinking"),
-    tools: tools("tools"),
-    disallowedTools: tools("disallowed_tools"),
     systemPrompt: body.trim(),
-    promptMode,
-    inheritContext: boolean("inherit_context"),
     enabled: boolean("enabled") ?? true,
     runInBackground: boolean("run_in_background"),
     source,

@@ -3,6 +3,7 @@
 See the [package overview](../README.md) for architecture and minimal configuration.
 
 - [Herdr subagents](#herdr-subagents)
+- [Runtime configuration](#runtime-configuration)
 - [User-defined agent types](#user-defined-agent-types)
 - [Parent context cloning](#parent-context-cloning)
 - [Worker extension allowlist](#worker-extension-allowlist)
@@ -53,7 +54,7 @@ environment, the entry registers no tools, hooks, or commands.
 | Tool | Purpose |
 | --- | --- |
 | `subagent` | Start an ad-hoc task or select a user-defined agent type. |
-| `resume_subagent` | Continue a finished task in its retained Pi session/history. |
+| `resume_subagent` | Continue a finished task in its retained runtime session/history. |
 | `list_subagent_types` | Discover user-defined agents and their source/configuration. |
 | `get_subagent_result` | Retrieve the current managed round's status/result and live session state. |
 | `steer_subagent` | Send guidance to a running task. |
@@ -114,13 +115,19 @@ the widget until Pi settles, including retries and continuations. They do not
 overwrite the managed result/statistics, emit another completion notification,
 or acquire a managed concurrency slot. An IPC task cannot take over native work.
 Use `resume_subagent` with `agent_id`, a new `prompt` (or an explicit
-`review_target` for native review), optional `description`, and optional
-`run_in_background`. It keeps the same ID, process, terminal, view,
-session file/history (including native conversations), and original agent
-instructions. Agent files are not re-read. The worker's current model/thinking/
-tool settings are not reset, so native user changes remain in effect; requested
-agent tools must still be available as with spawn. Omitted description retains
-the current task name.
+`runtime_config.review_target` for native review), optional `description`,
+`runtime_config`, and `run_in_background`. It keeps the same ID, process,
+terminal, view, session file/history (including native conversations), and
+original agent instructions. Agent files are not re-read. Runtime task settings
+reset on every round; no review target is inherited. The retained runtime's own
+session settings cannot change on resume, although redundant values that
+normalize identically to the retained configuration are allowed. Unknown and
+foreign extras are ignored, even when their values are malformed. Pi tool and
+prompt-mode configuration is applied once at session creation, not reapplied or
+mutated per round. The
+worker's current model/thinking/tool settings are not reset, so native user
+changes remain in effect; requested agent tools must still be available as with
+spawn. Omitted description retains the current task name.
 The original agent's `run_in_background` setting takes precedence; otherwise
 resume defaults to background, just like spawn.
 
@@ -176,6 +183,74 @@ and [subagent](../package.json) Pi manifests. The background Pi loads
 [runtime/pi/worker.ts](../runtime/pi/worker.ts) via an explicit `-e`; the worker is never auto-loaded
 as a package resource.
 
+## Runtime configuration
+
+All runtime-exclusive fields belong inside `runtime_config`. The generic agent
+parser reads only supported generic metadata and ignores unknown top-level
+fields. Legacy top-level runtime-exclusive fields have no effect: move them into
+`runtime_config`; there are no compatibility aliases. `model`, `thinking` and
+the Markdown body remain generic.
+
+The selected runtime adapter reads only its own fields, validates their types
+and values, and partitions session settings from call-only task settings. Unknown
+and foreign runtime fields are ignored, including malformed values; they are
+never interpreted or checked against an unsupported-key whitelist. Agent
+frontmatter supplies session settings; calls can supply both session and task
+settings in the same record. `review_target` in agent/session configuration is
+ignored, not inherited.
+
+The shared tools allow unknown extras but read only known generic fields and
+forward raw `runtime_config` to the runtime; their schemas have no Codex schema
+import. `inherit_context` is a Pi-only session field inside `runtime_config`.
+Pi's `runtime.prepareSpawn` handles it using opaque host context before queueing;
+resume never recaptures parent context.
+
+| Runtime | `runtime_config` key | Scope and default |
+| --- | --- | --- |
+| Pi | `tools` | Session; native Pi defaults. CSV or YAML array; `none`/empty disables all tools. Built-in and whitelisted extension tool names are accepted. |
+| Pi | `disallowed_tools` | Session; no additional denylist. CSV or YAML array, applied after `tools`. |
+| Pi | `inherit_context` | Session; `false` by default. Strict boolean; `true` snapshots the parent Pi branch before queueing. Resume never captures it again. |
+| Pi | `prompt_mode` | Named-agent session only; `replace` by default, or `append`. Controls the agent body's system-prompt role. |
+| Codex | `runtime_args` | Session; no additional options. CSV or YAML array; `review`/`search` are mapped by the adapter, other options go to its native CLI. |
+| Codex | `review_target` | Call-only task setting; no default. Required on each native-review round; ignored in agent/session configuration, rejected for ordinary Codex turns. |
+
+Named-agent session settings take precedence over spawn-call settings **per
+key**, not by replacing the entire record. Call settings supply session keys
+absent from the definition. This precedence applies only to the selected runtime's
+own session fields. Task settings come only from the call: an agent's
+`runtime_config.review_target` is ignored, even if malformed, and never supplies
+a target for a call.
+
+For example, Pi tool configuration can be supplied to an unnamed `subagent`:
+
+```json
+{
+  "runtime": "pi",
+  "prompt": "Inspect the authentication code without editing files.",
+  "runtime_config": {
+    "tools": "read, grep, find, bash",
+    "disallowed_tools": "edit, write"
+  }
+}
+```
+
+Session settings are applied once at spawn and remain on resume. A
+`resume_subagent` call may omit the retained runtime's own session fields or
+redundantly repeat values that normalize identically to the retained
+configuration, but cannot change them. In particular, there is no per-round
+mutation of Pi tools/denylist/prompt mode/inheritance or Codex `runtime_args`.
+Unknown and foreign extras are ignored on resume, including malformed values.
+Runtime task parameters reset on every round; omission never inherits a previous
+`review_target`. The adapter validates its own resume fields using the retained
+runtime and session settings.
+
+Top-level runtime-exclusive frontmatter fields are ignored, not migrated or
+aliased. Pi ignores Codex fields, and Codex ignores Pi fields, without
+interpreting or validating their values. Tool calls also use `runtime_config`;
+top-level runtime-exclusive extras such as `review_target` have no effect.
+Internal trusted `ManagerOptions` launch/deployment injection is unaffected by
+this public configuration contract.
+
 ## Codex runtime
 
 Select `runtime: "codex"` in a tool call, or define a named agent:
@@ -194,9 +269,11 @@ Implement the task and verify the result. Report relevant files and tests.
 Codex model/effort defaults come from Codex, never the parent Pi model/thinking.
 The Markdown body is a developer instruction, not a replacement for Codex's
 base instructions. Codex still discovers its own project instructions/config.
-Pi `tools`/`disallowed_tools` do not apply to Codex and are ignored by its
-adapter. Context cloning is unsupported: `inherit_context: true` never converts
-or copies a Pi transcript into Codex. The extension allowlist applies only to Pi.
+Codex ignores Pi-only `runtime_config` fields (`tools`, `disallowed_tools`,
+`prompt_mode`, and `inherit_context`), including explicit `inherit_context: false`
+and malformed values. It never interprets them. Context cloning is unsupported:
+no Pi transcript is converted or copied into Codex. The extension allowlist applies
+only to Pi.
 
 Codex currently requires CLI 0.160.0 (other versions are rejected until their
 protocol is verified) and existing Codex authentication. Each subagent owns a private app-server, with an
@@ -209,10 +286,15 @@ per-round statistics exclude independent native turns.
 
 The adapter uses the fixed `workspace-write` sandbox and `never` approval
 policy. These are not agent configuration fields. Unknown frontmatter fields,
-including a `codex` block, are ignored without validation or activation.
+including a `codex` block or top-level `runtime_args`, `tools`,
+`disallowed_tools`, `prompt_mode`, or `inherit_context`, are ignored by the generic
+parser, even if their values are malformed. Each runtime reads and validates
+only its own `runtime_config` fields; unknown and foreign fields are ignored.
+Internal trusted `ManagerOptions` launch/deployment injection is unchanged;
+it is not exposed as agent frontmatter or tool-call configuration.
 Approval and user-input requests during headless managed execution are not
-automatically granted. Only supported runtime/model/thinking values are used;
-runtime names are resolved by the runtime registry at launch.
+automatically granted. Runtime names are resolved by the runtime registry at
+launch.
 
 Native Codex TUI views are created lazily on demand, including while a managed
 task is running, using `codex --remote … resume <thread-id>` against the same
@@ -243,12 +325,14 @@ store; there is no automatic restart, reconnect, or cross-process task recovery.
 
 ### Native review and search
 
-Codex agents can declare runtime-specific options as CSV or a YAML array:
+A named `.pi/agent/agents/reviewer.md` can declare Codex session options as CSV
+or a YAML array under `runtime_config.runtime_args`:
 
 ```markdown
 ---
 runtime: codex
-runtime_args: review, search
+runtime_config:
+  runtime_args: review, search
 model: gpt-6.1-sol
 thinking: medium
 description: Critical code review subagent
@@ -256,9 +340,13 @@ description: Critical code review subagent
 Review correctness, necessity, and better alternatives.
 ```
 
-`runtime_args: [review, search]` is equivalent. The common agent parser retains
-these fields; the selected runtime's pure parser interprets them. Pi rejects
-`runtime_args`. The Codex adapter interprets `review` and `search` and forwards
+`runtime_args: [review, search]` inside `runtime_config` is equivalent. The
+common agent parser retains the generic configuration record; the selected
+runtime's pure parser interprets only its own fields. Pi ignores
+`runtime_config.runtime_args`, even if malformed; top-level `runtime_args` is
+ignored by the generic parser and must be moved into `runtime_config` to take
+effect for Codex.
+The Codex adapter interprets `review` and `search` and forwards
 other options to its native app-server CLI without an option-name whitelist.
 Bare switch names gain a `--` prefix; options already starting with `-` are
 preserved. Use `--option=value` for options with values. This is a switch-list
@@ -272,17 +360,44 @@ selects native `review/start` with inline delivery instead of ordinary
 Codex's native review delegate disables web search, so declaring both options
 **does not enable web search inside the review itself**.
 
-Specify the review scope on every `subagent` or `resume_subagent` call:
+For an unnamed Codex reviewer, pass both session and task settings to `subagent`:
+
+```json
+{
+  "runtime": "codex",
+  "description": "Review changes against main",
+  "runtime_config": {
+    "runtime_args": "review",
+    "review_target": { "type": "baseBranch", "branch": "main" }
+  }
+}
+```
+
+For the named `reviewer` above, its Markdown supplies the session's
+`runtime_config.runtime_args`; the call supplies only the task's target:
 
 ```json
 {
   "subagent_type": "reviewer",
   "description": "Review changes against main",
-  "review_target": { "type": "baseBranch", "branch": "main" }
+  "runtime_config": {
+    "review_target": { "type": "baseBranch", "branch": "main" }
+  }
 }
 ```
 
-`review_target` supports:
+Specify the review scope again on every `resume_subagent` call:
+
+```json
+{
+  "agent_id": "<agent-id>",
+  "runtime_config": {
+    "review_target": { "type": "uncommittedChanges" }
+  }
+}
+```
+
+`runtime_config.review_target` supports:
 
 - `{ "type": "uncommittedChanges" }`: staged, unstaged and untracked changes.
 - `{ "type": "baseBranch", "branch": "main" }`: changes against a base branch.
@@ -290,10 +405,15 @@ Specify the review scope on every `subagent` or `resume_subagent` call:
 - `{ "type": "custom", "instructions": "Review authentication for security issues" }`.
 
 Review mode requires an explicit target; it is never guessed or reused from a
-previous round. Non-review Codex tasks and Pi tasks reject `review_target`.
+previous round. It is a call-only task setting: agent frontmatter and session
+configuration ignore `runtime_config.review_target`, even if malformed, and never
+supply or inherit a target. Every native-review call requires a fresh target.
+Codex validates the call's target and rejects it for non-review tasks. Pi ignores
+this foreign field, including malformed values. Top-level `review_target` is
+ignored; it is not a supported tool parameter or compatibility alias.
 Omit `prompt` for structured targets: the native review protocol cannot carry
-an additional task prompt. A custom target can include `prompt`, which is
-appended to its instructions. Ordinary tasks still require a nonempty prompt.
+an additional task prompt. For a custom target, an optional call-level `prompt`
+is appended to its instructions. Ordinary tasks still require a nonempty prompt.
 Native review uses Codex's own review rubric and clears the thread's developer
 instructions; the agent Markdown body is not automatically copied into a custom
 review target. Put explicit review requirements in the custom target's
@@ -327,9 +447,10 @@ description: Review code for security issues
 display_name: Auditor
 model: anthropic/claude-sonnet-4-6
 thinking: high
-tools: read, grep, find, bash
-disallowed_tools: edit, write
-inherit_context: false
+runtime_config:
+  tools: read, grep, find, bash
+  disallowed_tools: edit, write
+  inherit_context: false
 ---
 You are a security reviewer. Report issues with file paths and evidence.
 Do not modify files.
@@ -356,31 +477,33 @@ Supported YAML frontmatter fields use the reference extension's snake_case names
 | `description` | Filename; shown in the type catalogue. |
 | `display_name` | Type name; shown beside the task in widgets, views, and tool cards. |
 | `runtime` | Call parameter, then `pi`; supports `pi` and `codex`. |
-| `runtime_args` | No additional runtime options. Codex-only CSV or YAML array; `review`/`search` are mapped by its adapter, other options go to its native CLI. |
+| `runtime_config` | Call session settings, then runtime defaults; generic record of session-only configuration interpreted by the selected runtime (see [Runtime configuration](#runtime-configuration)). |
 | `model` | Call parameter, then parent model for Pi or Codex's own default. |
 | `thinking` | Call parameter, then parent thinking for Pi or Codex's own effort default. |
-| `prompt_mode` | `replace` for Pi; accepts `replace` or `append`. Support is validated by the selected runtime at launch; Codex rejects explicit configuration. |
-| `tools` | Native Pi defaults; CSV or YAML array, `none`/empty disables all tools. Built-in and whitelisted extension tool names are accepted. |
-| `disallowed_tools` | No additional denylist; CSV or YAML array of tool names, applied after `tools`. |
-| `inherit_context` | Call parameter, then `false`; `true` clones the parent current branch into an independent Pi session. |
 | `enabled` | `true`; `false` disables selection. |
 | `run_in_background` | Call parameter, then `true`. |
 
-Configured model, thinking, background mode, and `inherit_context` take
-precedence over call parameters, including explicit `false`. Thinking is a
+Configured model, thinking, and background mode take precedence over call
+parameters, including explicit `false`. Runtime session settings, including Pi's
+`runtime_config.inherit_context`, take precedence per key as described above. Thinking is a
 non-empty string interpreted by the selected runtime. For Pi, it is passed
 directly to Pi, which owns the supported levels. The Codex adapter accepts
 `off`, `none`, `minimal`, `low`, `medium`, `high`, and `xhigh`; `off` maps to
 `none`. It also checks that the selected model supports the mapped effort.
-Pi's `max` is not accepted by the Codex adapter.
-Tool names include Pi built-ins (`read`, `bash`, `edit`, `write`,
+Pi's `max` is not accepted by the Codex adapter. The Markdown body remains a
+generic agent instruction; its interpretation belongs to the runtime. Runtime
+session fields belong under `runtime_config`, never at the frontmatter top level.
+
+Pi `runtime_config.tools` names include Pi built-ins (`read`, `bash`, `edit`, `write`,
 `grep`, `find`, `ls`, `powershell`), `codemode`, `tool_search`, and tools registered
 by explicitly whitelisted extensions. A denylist is applied after the allowlist;
 missing requested tools fail before a model turn instead of being silently
 ignored. Codemode cannot use tools outside the CLI allowlist/denylist. Tool
 selection is not a sandbox: `bash` can still change files.
 
-For Pi, `prompt_mode` controls how the named agent's Markdown body is applied:
+For Pi, `runtime_config.prompt_mode` controls how the named agent's Markdown
+body is applied. Explicit prompt mode on an unnamed session is rejected because
+there is no agent body to apply:
 
 - `replace` (default): pass the body in a file via CLI `--system-prompt`, plus an
   empty file via `--append-system-prompt` to suppress discovered `APPEND_SYSTEM.md`.
@@ -395,18 +518,22 @@ use `--no-approve`, so untrusted project resources are not automatically approve
 The body is file content, never interpolated into shell commands. The role remains
 active after completion for native terminal interaction and resume.
 
-Of the built-in runtimes, only Pi supports `prompt_mode`. Both explicit
-`replace` and `append` are rejected at launch when the effective runtime is
-Codex, whether selected by frontmatter or a call parameter. Omission is preserved as
-`undefined` in the parsed definition so runtime validation can distinguish an
-explicit setting; the effective default for Pi is still `replace`.
+Of the built-in runtimes, only Pi supports `runtime_config.prompt_mode`.
+Codex ignores this foreign field, including `replace`, `append`, and malformed
+values, whether supplied by frontmatter or a call. Omitting the key leaves
+runtime defaults in effect; Pi's default is `replace`. Pi validates its own prompt
+mode. Tool selection and prompt mode are session settings, not per-round controls.
 
 ## Parent context cloning
 
-Set `inherit_context: true` in frontmatter or pass `inherit_context: true` to
-`subagent`. Frontmatter takes precedence; `false` starts a fresh child session.
-The parent current branch is frozen at invocation, before queueing. An independent
-SessionManager uses Pi's native branch-cloning logic, then the child CLI opens
+For Pi only, set `runtime_config.inherit_context: true` in frontmatter or pass
+`"runtime_config": { "inherit_context": true }` to `subagent`. The Pi adapter owns
+validation and context capture through `runtime.prepareSpawn`; the tool entry
+point only forwards opaque host context. Frontmatter takes precedence; `false`
+starts a fresh child session. Codex ignores this foreign field, even if malformed,
+without interpreting it or capturing context. Pi freezes the parent's current
+branch before queueing. An independent SessionManager uses Pi's native
+branch-cloning logic, then the child CLI opens
 the private cloned JSONL with `--session`. The parent session, branch and file
 are never switched or modified. No SDK AgentSession or text transcript injection
 is used. Empty parent history falls back to a fresh session.
@@ -427,11 +554,18 @@ They may contain sensitive parent conversation data and add model context cost;
 enable inheritance only when needed. History is local-file data, not task IPC,
 so it is not subject to the 64 KiB command limit.
 
-Only supported frontmatter fields are read. Unknown fields, including reference
-fields such as `extensions`, `skills`, `max_turns`, `memory`, and `isolation`, are
-ignored and cannot activate those capabilities. Values of supported fields and
-YAML syntax are still validated. Agent files and complete task IPC frames each
-have a 64 KiB limit.
+The generic parser reads only supported frontmatter metadata. Unknown fields,
+including reference fields such as `extensions`, `skills`, `max_turns`, `memory`,
+and `isolation`, are ignored, even if their values are malformed. Top-level
+`tools`, `disallowed_tools`, `prompt_mode`, `inherit_context`, `runtime_args`, and
+`review_target` are also ignored, not migrated or aliased; runtime-exclusive
+settings must be moved into `runtime_config` to take effect. Supported generic
+fields and YAML syntax remain validated. Pi reads only `tools`, `disallowed_tools`,
+`prompt_mode`, and `inherit_context`; Codex reads only `runtime_args` and call-only
+`review_target`. Each runtime validates its own fields and ignores unknown or
+foreign fields, including malformed values, without an unsupported-key whitelist.
+Agent/session `review_target` is ignored and never inherited. Agent files and
+complete task IPC frames each have a 64 KiB limit.
 
 ## Worker extension allowlist
 
@@ -448,8 +582,8 @@ Configure `subagent.extensionAllowlist` in agent-dir `pi-kits.json`:
 
 Every worker explicitly loads this shared list alongside its bridge. The list
 replaces the defaults as a whole: `[]` loads only the bridge. It controls **which
-extension code is loaded**, while each agent's `tools` selects **which tools are
-enabled**; loading codemode does not automatically activate it. Agent Markdown
+extension code is loaded**, while Pi's session `runtime_config.tools` selects
+**which tools are enabled**; loading codemode does not automatically activate it. Agent Markdown
 cannot add extensions. Entries are native Pi extension sources, resolved by Pi's
 package manager rather than a kit-specific prefix table. For example:
 
@@ -535,6 +669,16 @@ Legacy `workflow.enabled: false` disables subagents unless top-level
 `subagent.enabled` explicitly overrides it. Prefer the independent top-level settings.
 Configuration is validated by [the shared schema](../../../shared/config/schema.ts)
 and resolved by [the shared config reader](../../../shared/config/index.ts).
+
+The [shared tool parameter schemas](../index.ts) expose `runtime_config` only
+as a generic record for `subagent` and `resume_subagent`; they allow unknown
+extras but read only known generic fields and forward raw `runtime_config`.
+They do not import Codex schemas or expose top-level `review_target` as a supported
+parameter. Runtime validation covers only the selected adapter's own fields;
+unknown and foreign fields are ignored, including malformed values. See
+[Pi configuration](../runtime/pi/config.ts),
+[Codex configuration](../runtime/codex/config.ts), and the
+[Codex review target schema](../runtime/codex/schema.ts).
 
 Implementation references: [tools and lifecycle](../index.ts),
 [task/session management](../manager.ts), [worker bridge](../runtime/pi/worker.ts),

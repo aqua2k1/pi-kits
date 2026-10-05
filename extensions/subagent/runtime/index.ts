@@ -24,6 +24,8 @@ export interface RuntimeOptions {
   thinking?: string;
   agent?: AgentDefinition;
   runtimeConfig?: Record<string, unknown>;
+  /** Opaque host context; only the selected runtime may consume it at spawn. */
+  context?: unknown;
   parentSession?: ParentSessionSnapshot;
   extensionAllowlist?: readonly WorkerExtensionSource[];
   executable?: string;
@@ -64,13 +66,26 @@ export interface RuntimeSession {
   close(): Promise<void>;
 }
 
+/** Runtime-owned partition of call options into session and per-round settings. */
+export interface RuntimeCallConfig {
+  runtimeConfig: Record<string, unknown>;
+  runtimeParams: Record<string, unknown>;
+}
+
 export interface AgentRuntime {
   readonly id: RuntimeId;
   readonly displayName?: string;
   readonly capabilities: RuntimeCapabilities;
   /** Pure parsers: no processes, transports or lifecycle registration. */
   parseConfig?(config: Record<string, unknown>): Record<string, unknown>;
+  parseCallConfig?(
+    config: Record<string, unknown>,
+    sessionConfig: Record<string, unknown>,
+    phase: "spawn" | "resume",
+  ): RuntimeCallConfig;
   parseTask?(command: RuntimeCommand, options: RuntimeOptions): RuntimeCommand;
+  /** Synchronously freeze runtime-owned host inputs before queueing. */
+  prepareSpawn?(options: RuntimeOptions): RuntimeOptions;
   validate(options: RuntimeOptions): void;
   create(options: RuntimeOptions, host: RuntimeHost): RuntimeSession;
 }

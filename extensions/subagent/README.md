@@ -11,11 +11,29 @@ Codex 运行中也可打开可交互原生视图；新一轮受管任务仍需�
 TUI 使用 `/subagent:views` 管理终端视图，编辑器上方显示实时任务状态。
 不支持调度、worktree、跨进程恢复或自动重连；worker 不是沙箱。
 
-Markdown agent 的 `prompt_mode` 仅支持 Pi，默认 `replace`：通过 CLI 正文文件替换
+Markdown agent 的 runtime 专属字段全部放在 `runtime_config` 下：Pi 使用
+`tools`、`disallowed_tools`、`prompt_mode`、`inherit_context`，Codex 使用 `runtime_args`。
+通用 parser 仅读取支持的通用元数据，忽略未知顶层字段；`model`、`thinking`、
+Markdown 正文仍为通用配置。旧顶层 runtime 专属字段没有效果，须移入 `runtime_config`，
+不提供兼容别名。各 runtime 仅读取并校验自己的字段；未知或其他 runtime 的字段一律忽略，
+即使其值格式错误也不解释或校验。Pi 的 `inherit_context` 由 `runtime.prepareSpawn`
+在入队前从 host 提供的不透明上下文捕获父会话分支；续跑不会再次捕获。
+
+`subagent` 和 `resume_subagent` 的共享工具允许未知额外字段，但仅读取已知通用字段，
+原样转发 `runtime_config`；顶层 `review_target` 被忽略。首次调用可同时提供会话和任务配置，
+由 adapter 拆分；agent 定义的自有会话配置逐键优先。Codex 仅读取 `runtime_args` 和
+调用中的 `review_target`。agent/会话中的 `review_target` 被忽略，即使值格式错误也不校验，
+不会被继承；原生 review 每轮必须在调用中提供新的 target。续跑不可更改所选 runtime 的
+自有会话字段，仅允许重复传入归一化后相同的值；未知及外来额外字段仍被忽略。
+Pi 工具配置可在首次调用提供，只应用一次并在续跑时保留，不能逐轮修改工具或 prompt 模式。
+内部可信 `ManagerOptions` 启动/部署注入不受影响。
+
+Markdown agent 的 `runtime_config.prompt_mode` 仅支持 Pi，默认 `replace`：通过 CLI 正文文件替换
 system prompt，并传入空 append 文件屏蔽发现的 `APPEND_SYSTEM.md`。
 `append` 保留 Pi 自身基础提示词，以 agent 正文替换发现的 `APPEND_SYSTEM.md`。
-两种模式均按 Pi 原生信任规则保留项目 `AGENTS.md`/`CLAUDE.md`；所选 runtime
-在启动时校验此字段，内置 Codex runtime 不支持显式配置。详见[使用文档](docs/usage.md#user-defined-agent-types)。
+两种模式均按 Pi 原生信任规则保留项目 `AGENTS.md`/`CLAUDE.md`；Pi
+在启动时校验此自有字段；Codex 忽略所有 Pi 专属字段，包括格式错误的值，不解释工具配置。
+原生 review 的调用示例与限制详见[使用文档](docs/usage.md#native-review-and-search)。
 
 ## 架构
 

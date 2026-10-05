@@ -58,7 +58,7 @@ test("project agents replace same-name global files as a whole, case-insensitive
   f.file(
     "global",
     "Reviewer.md",
-    "---\nmodel: global-model\ntools: read\nthinking: high\nprompt_mode: append\n---\nGlobal prompt",
+    "---\nmodel: global-model\nthinking: high\nruntime_config:\n  tools: read\n  prompt_mode: append\n---\nGlobal prompt",
   );
   f.file("global", "other.md", "Other prompt");
   f.file(
@@ -72,9 +72,8 @@ test("project agents replace same-name global files as a whole, case-insensitive
   assert.equal(reviewer.source, "project");
   assert.equal(reviewer.systemPrompt, "Project prompt");
   assert.equal(reviewer.model, undefined);
-  assert.equal(reviewer.tools, undefined);
+  assert.equal(reviewer.runtimeConfig, undefined);
   assert.equal(reviewer.thinking, undefined);
-  assert.equal(reviewer.promptMode, undefined);
   assert.equal(agents.get("other")?.source, "global");
   f.file("project", "reviewer.md", "Updated prompt");
   assert.equal(
@@ -85,15 +84,23 @@ test("project agents replace same-name global files as a whole, case-insensitive
 
 test("project replacements skip invalid or oversized global contents", (t) => {
   const f = fixture(t);
-  f.file("global", "review.md", "---\ntools: 123\n---\nGlobal prompt");
+  f.file("global", "review.md", "---\nruntime_config: 123\n---\nGlobal prompt");
   f.file("global", "large.md", "x".repeat(64 * 1024 + 1));
-  f.file("project", "review.md", "---\ntools: none\n---\nProject prompt");
+  f.file(
+    "project",
+    "review.md",
+    "---\nruntime_config:\n  tools: none\n---\nProject prompt",
+  );
   f.file("project", "large.md", "Project prompt");
   const agents = loadAgentDefinitions(f.cwd, f.agentDir);
   assert.equal(agents.get("review")?.source, "project");
-  assert.deepEqual(agents.get("review")?.tools, []);
+  assert.deepEqual(agents.get("review")?.runtimeConfig, { tools: "none" });
   assert.equal(agents.get("large")?.systemPrompt, "Project prompt");
-  f.file("project", "review.md", "---\ntools: 123\n---\nInvalid project");
+  f.file(
+    "project",
+    "review.md",
+    "---\nruntime_config: 123\n---\nInvalid project",
+  );
   assert.throws(() => loadAgentDefinitions(f.cwd, f.agentDir), /Invalid agent/);
 });
 
@@ -111,245 +118,263 @@ test("disabled project configuration shadows an enabled global type", (t) => {
   );
 });
 
-test("Markdown frontmatter supports model, thinking, tool lists, context inheritance and UI names", () => {
+test("Markdown frontmatter supports generic metadata and an opaque runtime config", () => {
   const agent = parseAgentDefinition(
     `---
+runtime: future-runtime
 description: Security reviewer
 display_name: Auditor
 model: provider/model
 thinking: max
-tools: [read, bash, read]
-disallowed_tools: edit, write
-inherit_context: true
+runtime_config:
+  tools: [read, bash, read]
+  disallowed_tools: edit, write
+  prompt_mode: append
+  inherit_context: true
+enabled: false
 run_in_background: false
 ---
-\nReview carefully.\n`,
+
+Review carefully.
+`,
     "/agents/auditor.md",
     "global",
   );
   assert.equal(agent.name, "auditor");
+  assert.equal(agent.description, "Security reviewer");
   assert.equal(agent.displayName, "Auditor");
+  assert.equal(agent.runtime, "future-runtime");
   assert.equal(agent.model, "provider/model");
   assert.equal(agent.thinking, "max");
-  assert.deepEqual(agent.tools, ["read", "bash"]);
-  assert.deepEqual(agent.disallowedTools, ["edit", "write"]);
-  assert.equal(agent.inheritContext, true);
+  assert.deepEqual(agent.runtimeConfig, {
+    tools: ["read", "bash", "read"],
+    disallowed_tools: "edit, write",
+    prompt_mode: "append",
+    inherit_context: true,
+  });
+  assert.equal(agent.enabled, false);
   assert.equal(agent.systemPrompt, "Review carefully.");
   assert.equal(agent.runInBackground, false);
-});
-
-test("inherit_context is optional, strictly boolean and independent of prompt mode", () => {
-  assert.equal(
-    parseAgentDefinition("Role", "/agents/plain.md", "global").inheritContext,
-    undefined,
-  );
-  for (const value of [true, false]) {
-    const agent = parseAgentDefinition(
-      `---\ninherit_context: ${value}\n---\nRole`,
-      "/agents/test.md",
-      "project",
-    );
-    assert.equal(agent.inheritContext, value);
-  }
-  for (const value of ["null", "yes", "1", "inherit"]) {
-    assert.throws(
-      () =>
-        parseAgentDefinition(
-          `---\ninherit_context: ${value}\n---\nRole`,
-          "/agents/test.md",
-          "project",
-        ),
-      /boolean/,
-    );
+  for (const field of [
+    "tools",
+    "disallowedTools",
+    "promptMode",
+    "inheritContext",
+  ]) {
+    assert.equal(Object.hasOwn(agent, field), false);
   }
 });
 
-test("prompt_mode preserves omission while defaulting effectively to replace", () => {
-  assert.equal(
-    parseAgentDefinition("Role", "/agents/plain.md", "global").promptMode,
-    undefined,
-  );
-  for (const runtime of ["", "runtime: pi\n", "runtime: codex\n"]) {
+test("plain Markdown uses generic defaults and omits runtime config", () => {
+  const agent = parseAgentDefinition("Role", "/agents/plain.md", "global");
+  assert.equal(agent.name, "plain");
+  assert.equal(agent.description, "plain");
+  assert.equal(agent.systemPrompt, "Role");
+  assert.equal(agent.enabled, true);
+  assert.equal(agent.runtime, undefined);
+  assert.equal(agent.runtimeConfig, undefined);
+  assert.equal(Object.hasOwn(agent, "runtimeConfig"), false);
+});
+
+test("runtime_config preserves opaque values without runtime-specific validation", () => {
+  const config = {
+    runtime_args: ["review", "search", 123],
+    tools: ["read", "read", "a,b", false],
+    disallowed_tools: null,
+    prompt_mode: { arbitrary: "future-mode" },
+    future_field: {
+      nested: [1, true, null, { value: "  unchanged  " }],
+    },
+  };
+  for (const runtime of [
+    "",
+    "runtime: pi\n",
+    "runtime: codex\n",
+    "runtime: future-runtime\n",
+  ]) {
     const agent = parseAgentDefinition(
-      `---\n${runtime}description: Test\n---\nRole`,
+      `---\n${runtime}runtime_config: ${JSON.stringify(config)}\n---\nRole`,
       "/agents/test.md",
       "project",
     );
-    assert.equal(agent.promptMode, undefined);
-    assert.equal(agent.promptMode ?? "replace", "replace");
+    assert.deepEqual(agent.runtimeConfig, config);
     assert.equal(agent.systemPrompt, "Role");
   }
-});
-
-test("prompt_mode accepts replace and append for explicit or omitted Pi runtime", () => {
-  for (const runtime of ["", "runtime: pi\n"]) {
-    for (const mode of ["replace", "append"] as const) {
-      const agent = parseAgentDefinition(
-        `---\n${runtime}prompt_mode: ${mode}\n---\nRole`,
+  for (const value of ["review, search", ["review", "search"], 123, null]) {
+    const config = { runtime_args: value, tools: value, prompt_mode: value };
+    assert.deepEqual(
+      parseAgentDefinition(
+        `---\nruntime_config: ${JSON.stringify(config)}\n---\nRole`,
         "/agents/test.md",
         "project",
-      );
-      assert.equal(agent.promptMode, mode);
-      assert.equal(agent.systemPrompt, "Role");
-    }
+      ).runtimeConfig,
+      config,
+    );
   }
 });
 
-test("prompt_mode rejects invalid values with the source path", () => {
+test("runtime_config accepts empty and custom-only maps", () => {
+  for (const config of [{}, { custom_future_field: { nested: [1, 2] } }]) {
+    assert.deepEqual(
+      parseAgentDefinition(
+        `---\nruntime_config: ${JSON.stringify(config)}\n---\nRole`,
+        "/agents/test.md",
+        "project",
+      ).runtimeConfig,
+      config,
+    );
+  }
+});
+
+test("runtime_config rejects non-object values with the source path", () => {
   for (const value of [
-    "typo",
-    "Replace",
-    "APPEND",
+    "",
     "null",
+    "~",
     "false",
+    "true",
     "123",
+    '"text"',
     '""',
-    '" "',
     "[]",
-    "[append]",
-    "{}",
+    "[{}]",
   ]) {
     assert.throws(
       () =>
         parseAgentDefinition(
-          `---\nprompt_mode: ${value}\n---\nRole`,
+          `---\nruntime_config: ${value}\n---\nRole`,
           "/agents/test.md",
           "project",
         ),
-      /Invalid agent \/agents\/test\.md: prompt_mode/,
+      /Invalid agent \/agents\/test\.md: runtime_config must be a non-null plain object/,
     );
   }
 });
 
-test("prompt_mode syntax is parsed independently of runtime support", () => {
-  for (const runtime of ["codex", "future-runtime"]) {
-    for (const mode of ["replace", "append"]) {
-      const agent = parseAgentDefinition(
-        `---\nruntime: ${runtime}\nprompt_mode: ${mode}\n---\nRole`,
-        "/agents/test.md",
-        "project",
-      );
-      assert.equal(agent.runtime, runtime);
-      assert.equal(agent.promptMode, mode);
-    }
-    assert.equal(
-      parseAgentDefinition(
-        `---\nruntime: ${runtime}\n---\nRole`,
-        "/agents/test.md",
-        "project",
-      ).runtime,
-      runtime,
-    );
-  }
-});
-
-test("runtime-specific frontmatter is retained without interpreting it in the common parser", () => {
-  for (const args of ["review, search", "[review, search]", "123"]) {
-    const agent = parseAgentDefinition(
-      `---\nruntime: codex\nruntime_args: ${args}\n---\nReviewer`,
-      "/agents/reviewer.md",
-      "global",
-    );
-    assert.deepEqual(agent.runtimeConfig, {
-      runtime_args:
-        args === "123"
-          ? 123
-          : args.startsWith("[")
-            ? ["review", "search"]
-            : args,
-    });
-  }
-  assert.equal(
-    parseAgentDefinition("Role", "/agents/plain.md", "global").runtimeConfig,
-    undefined,
-  );
-});
-
-test("unknown fields are ignored without activating unsupported capabilities", () => {
+test("foreign and unknown top-level fields are ignored regardless of value", () => {
   const baseline = parseAgentDefinition("Role", "/agents/test.md", "project");
-  for (const fields of [
-    "extensions: [untrusted.ts]",
-    "skills: true",
-    "max_turns: 30",
-    "memory: project",
-    "isolation: worktree",
-    "future_field: { nested: [1, 2] }",
+  for (const field of [
+    "runtime_args",
+    "tools",
+    "disallowed_tools",
+    "prompt_mode",
+    "inherit_context",
+    "extensions",
+    "skills",
+    "max_turns",
+    "memory",
+    "isolation",
+    "future_field",
+    "name",
+    "system_prompt",
+    "runtimeConfig",
+    "constructor",
+    "__proto__",
   ]) {
-    assert.deepEqual(
-      parseAgentDefinition(
-        `---\n${fields}\n---\nRole`,
-        "/agents/test.md",
-        "project",
-      ),
-      baseline,
-    );
+    for (const value of [
+      null,
+      true,
+      false,
+      123,
+      "",
+      "foreign",
+      [],
+      { nested: [1, 2] },
+    ]) {
+      assert.deepEqual(
+        parseAgentDefinition(
+          `---\n${field}: ${JSON.stringify(value)}\n---\nRole`,
+          "/agents/test.md",
+          "project",
+        ),
+        baseline,
+      );
+    }
   }
 });
 
-test("tool names can select native CLI and whitelisted extension tools", () => {
-  const agent = parseAgentDefinition(
-    "---\ntools: read, codemode, tool_search, web_search\n---\nPrompt",
-    "/agents/explorer.md",
-    "global",
+test("legacy top-level runtime fields do not override or merge into runtime_config", () => {
+  const config = {
+    runtime_args: ["nested"],
+    tools: ["read"],
+    disallowed_tools: ["write"],
+    prompt_mode: "append",
+    inherit_context: false,
+    future_field: { nested: [null, 123] },
+  };
+  const metadata = `runtime: future-runtime
+description: Reviewer
+model: provider/model
+thinking: high
+runtime_config: ${JSON.stringify(config)}`;
+  const baseline = parseAgentDefinition(
+    `---\n${metadata}\n---\nRole`,
+    "/agents/test.md",
+    "project",
   );
-  assert.deepEqual(agent.tools, [
-    "read",
-    "codemode",
-    "tool_search",
-    "web_search",
-  ]);
+  const agent = parseAgentDefinition(
+    `---
+${metadata}
+runtime_args: [top-level]
+tools: false
+disallowed_tools: { invalid: true }
+prompt_mode: [invalid]
+inherit_context: true
+future_field: { top_level: true }
+---
+Role`,
+    "/agents/test.md",
+    "project",
+  );
+  assert.deepEqual(agent, baseline);
+  assert.deepEqual(agent.runtimeConfig, config);
 });
 
-test("thinking levels and tool naming conventions are owned by Pi, not the agent parser", () => {
+test("thinking levels are not restricted by the agent parser", () => {
   const agent = parseAgentDefinition(
-    '---\nthinking: future-level\ntools: ["123tool", "native/tool"]\n---\nRole',
+    "---\nthinking: future-level\n---\nRole",
     "/agents/test.md",
     "project",
   );
   assert.equal(agent.thinking, "future-level");
-  assert.deepEqual(agent.tools, ["123tool", "native/tool"]);
 });
 
-test("explicit empty/none tools never fall back to unrestricted tools", () => {
-  for (const value of ["none", "[]", '""']) {
-    const agent = parseAgentDefinition(
-      `---\ntools: ${value}\n---\nPrompt`,
-      "/agents/empty.md",
-      "project",
-    );
-    assert.deepEqual(agent.tools, []);
-  }
-  assert.equal(
-    parseAgentDefinition("Prompt", "/agents/plain.md", "global").tools,
-    undefined,
-  );
-});
-
-test("invalid values for supported fields and malformed YAML still fail closed", () => {
-  for (const fields of [
-    'tools: ["a,b"]',
-    'tools: ["a\\nb"]',
-    "tools: null",
-    "tools: 123",
-    "tools: [false]",
-    "thinking: false",
-    "model: false",
-    "enabled: yes",
-    "run_in_background: nope",
+test("invalid generic values and malformed YAML still fail closed", () => {
+  for (const field of [
+    "runtime",
+    "description",
+    "display_name",
+    "model",
+    "thinking",
   ]) {
-    assert.throws(
-      () =>
-        parseAgentDefinition(
-          `---\n${fields}\n---\nPrompt`,
-          "/agents/bad.md",
-          "project",
-        ),
-      /Invalid agent/,
-    );
+    for (const value of ["null", "false", "123", '""', '" "', "[]", "{}"]) {
+      assert.throws(
+        () =>
+          parseAgentDefinition(
+            `---\n${field}: ${value}\n---\nPrompt`,
+            "/agents/bad.md",
+            "project",
+          ),
+        /Invalid agent \/agents\/bad\.md: .* must be a non-empty string/,
+      );
+    }
+  }
+  for (const field of ["enabled", "run_in_background"]) {
+    for (const value of ["null", "yes", "1", '""', "[]", "{}"]) {
+      assert.throws(
+        () =>
+          parseAgentDefinition(
+            `---\n${field}: ${value}\n---\nPrompt`,
+            "/agents/bad.md",
+            "project",
+          ),
+        /Invalid agent \/agents\/bad\.md: .* must be a boolean/,
+      );
+    }
   }
   for (const invalid of [
-    "---\ntools: [\n---\nPrompt",
-    "---\ntools: none",
+    "---\nruntime_config: [\n---\nPrompt",
+    "---\ndescription: unfinished",
     "---\nfalse\n---\nPrompt",
     "---\n[read]\n---\nPrompt",
   ]) {
@@ -376,7 +401,7 @@ test("discovery ignores non-markdown files and directories; rejects duplicate na
 test("malformed project overrides are errors, not fallback to the global definition", (t) => {
   const f = fixture(t);
   f.file("global", "review.md", "Global prompt");
-  f.file("project", "review.md", "---\ntools: 123\n---\nProject");
+  f.file("project", "review.md", "---\nruntime_config: 123\n---\nProject");
   assert.throws(() => loadAgentDefinitions(f.cwd, f.agentDir), /Invalid agent/);
   f.file("project", "review.md", "x".repeat(65 * 1024));
   assert.throws(() => loadAgentDefinitions(f.cwd, f.agentDir), /limit 64 KiB/);

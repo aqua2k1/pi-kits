@@ -454,7 +454,7 @@ test("named agent configuration controls worker argv and launch-time system inst
   const manager = new SubagentManager(mux);
   t.after(() => manager.close());
   const definition = parseAgentDefinition(
-    `---\nmodel: agent-model\nthinking: high\ntools: read, grep\ndisallowed_tools: write\ndisplay_name: Reviewer\n---\nSystem instructions`,
+    `---\nmodel: agent-model\nthinking: high\nruntime_config:\n  tools: read, grep\n  disallowed_tools: write\ndisplay_name: Reviewer\n---\nSystem instructions`,
     "/project/.pi/agent/agents/review.md",
     "project",
   );
@@ -508,7 +508,7 @@ test("empty agent tools disable all tools without disabling project constraints"
   const agent = manager.spawn({
     ...task,
     agent: parseAgentDefinition(
-      "---\ntools: none\n---\nInstructions",
+      "---\nruntime_config:\n  tools: none\n---\nInstructions",
       "/agents/empty.md",
       "global",
     ),
@@ -536,7 +536,7 @@ test("Pi prompt modes use native resource loading and preserve project constrain
         ...task,
         cwd,
         agent: parseAgentDefinition(
-          `---\n${mode ? `prompt_mode: ${mode}\n` : ""}---\n${body}`,
+          `---\n${mode ? `runtime_config:\n  prompt_mode: ${mode}\n` : ""}---\n${body}`,
           "/agents/role.md",
           "global",
         ),
@@ -572,7 +572,7 @@ test("Pi prompt modes use native resource loading and preserve project constrain
           .getAgentsFiles()
           .agentsFiles.some((file) => file.content === "Project constraint"),
       );
-      assert.deepEqual(mux.commands.get(agent.id)?.[0].instructions, {});
+      assert.equal(mux.commands.get(agent.id)?.[0].instructions, undefined);
       mux.emit(agent.id, { type: "completed", result: "Done" });
       await until(() => manager.get(agent.id).status === "completed");
     }
@@ -583,7 +583,7 @@ test("Pi rejects empty replacement roles instead of restoring its default preamb
   const mux = new FakeMux();
   const manager = new SubagentManager(mux);
   t.after(() => manager.close());
-  for (const fields of ["", "prompt_mode: replace\n"]) {
+  for (const fields of ["", "runtime_config:\n  prompt_mode: replace\n"]) {
     assert.throws(
       () =>
         manager.spawn({
@@ -947,7 +947,7 @@ test("resume reuses identity, terminal, view and agent configuration with fresh 
   });
   t.after(() => manager.close());
   const agent = parseAgentDefinition(
-    "---\nmodel: agent/model\ntools: []\nrun_in_background: false\n---\nKeep original role",
+    "---\nmodel: agent/model\nruntime_config:\n  tools: []\nrun_in_background: false\n---\nKeep original role",
     "/agents/review.md",
     "global",
   );

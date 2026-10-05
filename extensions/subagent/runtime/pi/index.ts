@@ -4,10 +4,12 @@ import { createServer, type Server, type Socket } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { SUBAGENT_DEFAULT_EXTENSIONS } from "@pi-kits/config";
 import { type TerminalHandle, TerminalStartError } from "../../mux/index.ts";
 import type {
   AgentRuntime,
+  RuntimeCallConfig,
   RuntimeCapabilities,
   RuntimeCommand,
   RuntimeEvent,
@@ -15,8 +17,13 @@ import type {
   RuntimeOptions,
   RuntimeSession,
 } from "../index.ts";
-import { createClonedSession } from "./clone.ts";
-import { parsePiConfig, parsePiTask } from "./config.ts";
+import { captureParentSession, createClonedSession } from "./clone.ts";
+import {
+  parsePiCallConfig,
+  parsePiConfig,
+  parsePiTask,
+  piConfig,
+} from "./config.ts";
 import { resolveWorkerExtensions } from "./extensions.ts";
 import { MAX_COMMAND_BYTES } from "./protocol.ts";
 
@@ -38,26 +45,64 @@ export class PiRuntime implements AgentRuntime {
     return parsePiConfig(config);
   }
 
-  parseTask(command: RuntimeCommand): RuntimeCommand {
-    return parsePiTask(command);
+  parseCallConfig(
+    config: Record<string, unknown>,
+    sessionConfig: Record<string, unknown>,
+    phase: "spawn" | "resume",
+  ): RuntimeCallConfig {
+    return parsePiCallConfig(config, sessionConfig, phase);
+  }
+
+  parseTask(command: RuntimeCommand, options: RuntimeOptions): RuntimeCommand {
+    return parsePiTask(command, options);
   }
 
   validate(options: RuntimeOptions): void {
-    this.parseConfig(
-      options.runtimeConfig ?? options.agent?.runtimeConfig ?? {},
-    );
+    const config = piConfig(options);
+    if (config.prompt_mode !== undefined && !options.agent) {
+      throw new Error("Pi prompt_mode requires a named agent body");
+    }
     if (
       options.agent &&
-      (options.agent.promptMode ?? "replace") === "replace" &&
+      (config.prompt_mode ?? "replace") === "replace" &&
       !options.agent.systemPrompt.trim()
     ) {
       throw new Error("Pi replace prompt_mode requires a non-empty agent body");
     }
   }
 
+  prepareSpawn(options: RuntimeOptions): RuntimeOptions {
+    if (!piConfig(options).inherit_context || options.parentSession) {
+      return { ...options, context: undefined };
+    }
+    const context = options.context;
+    if (
+      !context ||
+      typeof context !== "object" ||
+      !["getBranch", "getHeader", "getSessionFile", "getSessionDir"].every(
+        (method) =>
+          typeof (context as Record<string, unknown>)[method] === "function",
+      )
+    ) {
+      throw new Error(
+        "Pi inherit_context requires a valid host session context (sessionManager)",
+      );
+    }
+    return {
+      ...options,
+      parentSession: captureParentSession(
+        context as ExtensionContext["sessionManager"],
+      ),
+      context: undefined,
+    };
+  }
+
   create(options: RuntimeOptions, host: RuntimeHost): RuntimeSession {
     this.validate(options);
-    return new PiSession(options, host);
+    return new PiSession(
+      { ...options, runtimeConfig: piConfig(options) },
+      host,
+    );
   }
 }
 
@@ -135,18 +180,19 @@ class PiSession implements RuntimeSession {
       const thinking = agent?.thinking ?? this.options.thinking;
       if (model) argv.push("--model", model);
       if (thinking) argv.push("--thinking", thinking);
-      if (agent?.tools !== undefined) {
-        if (agent.tools.length) argv.push("--tools", agent.tools.join(","));
+      const config = piConfig(this.options);
+      if (config.tools !== undefined) {
+        if (config.tools.length) argv.push("--tools", config.tools.join(","));
         else argv.push("--no-tools");
       }
-      if (agent?.disallowedTools?.length) {
-        argv.push("--exclude-tools", agent.disallowedTools.join(","));
+      if (config.disallowed_tools?.length) {
+        argv.push("--exclude-tools", config.disallowed_tools.join(","));
       }
       if (agent) {
         this.promptDirectory = mkdtempSync(join(tmpdir(), "pi-kits-prompt-"));
         const promptPath = join(this.promptDirectory, "system.md");
         writeFileSync(promptPath, agent.systemPrompt, { mode: 0o600 });
-        if (agent.promptMode === "append") {
+        if (config.prompt_mode === "append") {
           argv.push("--append-system-prompt", promptPath);
         } else {
           const emptyPath = join(this.promptDirectory, "append.md");
@@ -184,7 +230,7 @@ class PiSession implements RuntimeSession {
   }
 
   send(command: RuntimeCommand): void {
-    parsePiTask(command);
+    command = parsePiTask(command, this.options);
     if (!this.connected) throw new Error("Pi worker is not connected.");
     const frame = JSON.stringify(command);
     if (Buffer.byteLength(frame) > MAX_COMMAND_BYTES) {

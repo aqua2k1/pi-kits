@@ -6,26 +6,14 @@ export function codexReviewTargetSchema() {
   return Type.Optional(
     Type.Union(
       [
-        Type.Object(
-          { type: Type.Literal("uncommittedChanges") },
-          { additionalProperties: false },
-        ),
-        Type.Object(
-          { type: Type.Literal("baseBranch"), branch: text() },
-          { additionalProperties: false },
-        ),
-        Type.Object(
-          {
-            type: Type.Literal("commit"),
-            sha: text(),
-            title: Type.Optional(Type.Union([Type.String(), Type.Null()])),
-          },
-          { additionalProperties: false },
-        ),
-        Type.Object(
-          { type: Type.Literal("custom"), instructions: text() },
-          { additionalProperties: false },
-        ),
+        Type.Object({ type: Type.Literal("uncommittedChanges") }),
+        Type.Object({ type: Type.Literal("baseBranch"), branch: text() }),
+        Type.Object({
+          type: Type.Literal("commit"),
+          sha: text(),
+          title: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+        }),
+        Type.Object({ type: Type.Literal("custom"), instructions: text() }),
       ],
       {
         description:

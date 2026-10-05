@@ -8,6 +8,7 @@ import { type TerminalHandle, TerminalStartError } from "../../mux/index.ts";
 import { RuntimeTaskRejectedError } from "../errors.ts";
 import type {
   AgentRuntime,
+  RuntimeCallConfig,
   RuntimeCapabilities,
   RuntimeCommand,
   RuntimeHost,
@@ -17,6 +18,7 @@ import type {
 import {
   codexConfig,
   codexNativeArgs,
+  parseCodexCallConfig,
   parseCodexConfig,
   parseCodexTask,
 } from "./config.ts";
@@ -214,17 +216,21 @@ export class CodexRuntime implements AgentRuntime {
   parseConfig(config: Record<string, unknown>): Record<string, unknown> {
     return parseCodexConfig(config);
   }
+  parseCallConfig(
+    config: Record<string, unknown>,
+    sessionConfig: Record<string, unknown>,
+    phase: "spawn" | "resume",
+  ): RuntimeCallConfig {
+    return parseCodexCallConfig(config, sessionConfig, phase);
+  }
   parseTask(command: RuntimeCommand, options: RuntimeOptions): RuntimeCommand {
     return parseCodexTask(command, options);
   }
   validate(options: RuntimeOptions): void {
     codexConfig(options);
-    if (options.agent?.promptMode !== undefined) {
-      throw new Error("prompt_mode is only supported by the Pi runtime");
-    }
-    if (options.parentSession || options.agent?.inheritContext === true) {
+    if (options.parentSession) {
       throw new Error(
-        "Codex cannot clone a Pi parentSession or inheritContext; use an explicit prompt",
+        "Codex cannot clone a Pi parentSession; use an explicit prompt",
       );
     }
     const thinking = options.agent?.thinking ?? options.thinking;

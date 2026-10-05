@@ -17,6 +17,13 @@ test("review target tool schema exposes all native scopes and rejects malformed 
     { type: "custom", instructions: "Review security" },
   ]) {
     assert.equal(Value.Check(parameters, { review_target }), true);
+    assert.equal(
+      Value.Check(parameters, {
+        review_target: { ...review_target, foreign: null, tools: 12 },
+        typo: false,
+      }),
+      true,
+    );
   }
   for (const review_target of [
     null,
@@ -26,7 +33,6 @@ test("review target tool schema exposes all native scopes and rejects malformed 
     { type: "baseBranch", branch: " " },
     { type: "commit", sha: 123 },
     { type: "custom", instructions: "" },
-    { type: "uncommittedChanges", instructions: "Ignored?" },
   ]) {
     assert.equal(Value.Check(parameters, { review_target }), false);
   }

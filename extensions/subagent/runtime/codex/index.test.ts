@@ -635,36 +635,42 @@ test("native review preserves steer, cancel before acknowledgment, and attachmen
 test("validate rejects cross-runtime clones and invalid supported thinking", () => {
   const runtime = new CodexRuntime();
   const base = { id: "test", cwd: "/tmp" };
-  for (const extra of [
-    { parentSession: {} },
-    { agent: agent({ inheritContext: true }) },
-    { thinking: "ultra" },
-  ])
+  for (const extra of [{ parentSession: {} }, { thinking: "ultra" }])
     assert.throws(() =>
       runtime.validate({ ...base, ...extra } as RuntimeOptions),
     );
   runtime.validate({
     ...base,
     thinking: "off",
-    agent: agent({ inheritContext: false }),
+    agent: agent(),
   });
 });
 
-test("Codex validates explicit prompt modes while allowing omission", () => {
+test("Codex ignores Pi runtime config fields regardless of their values", () => {
   const runtime = new CodexRuntime();
   const base = { id: "test", cwd: "/tmp" };
-  for (const promptMode of ["replace", "append"] as const) {
-    assert.throws(
-      () => runtime.validate({ ...base, agent: agent({ promptMode }) }),
-      /prompt_mode.*Pi runtime/,
-    );
-  }
+  for (const field of [
+    "prompt_mode",
+    "inherit_context",
+    "tools",
+    "disallowed_tools",
+  ])
+    for (const value of ["replace", "append", true, false, null, [], 12]) {
+      const runtimeConfig = { [field]: value };
+      runtime.validate({ ...base, agent: agent({ runtimeConfig }) });
+      runtime.validate({ ...base, runtimeConfig });
+      for (const phase of ["spawn", "resume"] as const)
+        assert.deepEqual(runtime.parseCallConfig(runtimeConfig, {}, phase), {
+          runtimeConfig: { runtime_args: [] },
+          runtimeParams: {},
+        });
+    }
   runtime.validate({ ...base, agent: agent() });
 });
 
 test("unsupported options are ignored without changing Codex policy or task tools", async (t) => {
   const rawAgent = {
-    ...agent({ tools: [], disallowedTools: ["edit"] }),
+    ...agent(),
     codex: { sandbox: "danger-full-access", approvalPolicy: "always" },
   };
   const f = fixture({

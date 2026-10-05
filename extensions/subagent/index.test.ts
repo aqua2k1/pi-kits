@@ -9,6 +9,7 @@ import {
   SessionManager,
   type ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
+import { Value } from "typebox/value";
 import { useAgentDir } from "../../tests/helpers/agent-dir.ts";
 import subagentExtension, { registerSubagents } from "./index.ts";
 import {
@@ -209,7 +210,7 @@ for (const failures of [1, 3]) {
   });
 }
 
-test("tool prompts stay runtime-neutral except explicitly runtime-specific parameters", () => {
+test("tool prompts and configuration schemas stay runtime-neutral", () => {
   const capture = registrations();
   registerSubagents(capture.pi, {} as MuxAdapter);
   const properties = (tool: ToolDefinition) =>
@@ -221,11 +222,7 @@ test("tool prompts stay runtime-neutral except explicitly runtime-specific param
   for (const tool of capture.definitions.values()) {
     assert.doesNotMatch(tool.description, /\b(?:Pi|Codex|Herdr)\b/i);
     for (const [name, schema] of Object.entries(properties(tool))) {
-      if (name === "review_target") {
-        assert.match(schema.description, /Codex-only/);
-      } else {
-        assert.doesNotMatch(schema.description, /\b(?:Pi|Codex|Herdr)\b/i);
-      }
+      assert.doesNotMatch(schema.description, /\b(?:Pi|Codex|Herdr)\b/i);
       assert.ok(
         schema.description?.trim(),
         `${tool.name}.${name} needs guidance`,
@@ -243,7 +240,7 @@ test("tool prompts stay runtime-neutral except explicitly runtime-specific param
   assert.ok(!steer.description.includes("after its current tools"));
 });
 
-test("review targets are passed as runtime task parameters on spawn and resume", async (t) => {
+test("opaque runtime configuration is forwarded on spawn and resume", async (t) => {
   const cwd = useAgentDir(t);
   const capture = registrations();
   const spawned: SpawnOptions[] = [];
@@ -271,22 +268,64 @@ test("review targets are passed as runtime task parameters on spawn and resume",
   const spawn = capture.definitions.get("subagent");
   const resume = capture.definitions.get("resume_subagent");
   assert.ok(spawn && resume);
+  for (const tool of [spawn, resume]) {
+    const properties = (
+      tool.parameters as unknown as {
+        properties: Record<string, object>;
+      }
+    ).properties;
+    assert.equal(properties.review_target, undefined);
+    const required =
+      tool.name === "subagent"
+        ? { description: "Future task" }
+        : { agent_id: "future-id" };
+    assert.equal(
+      Value.Check(tool.parameters, {
+        ...required,
+        runtime_config: { future_option: { native: true } },
+      }),
+      true,
+    );
+    assert.equal(
+      Value.Check(tool.parameters, {
+        ...required,
+        review_target: target,
+      }),
+      true,
+    );
+    assert.equal(
+      Value.Check(properties.runtime_config, {
+        future_option: { native: true },
+      }),
+      true,
+    );
+    for (const value of [null, [], "native", false]) {
+      assert.equal(Value.Check(properties.runtime_config, value), false);
+    }
+  }
   await spawn.execute(
     "call",
-    { runtime: "codex", description: "Review", review_target: target },
+    {
+      runtime: "codex",
+      description: "Review",
+      runtime_config: { runtime_args: "review", review_target: target },
+    },
     undefined,
     undefined,
     context,
   );
   await resume.execute(
     "call",
-    { agent_id: "review-id", review_target: target },
+    { agent_id: "review-id", runtime_config: { review_target: target } },
     undefined,
     undefined,
     context,
   );
   assert.equal(spawned[0].prompt, "");
-  assert.deepEqual(spawned[0].runtimeParams, { review_target: target });
+  assert.deepEqual(spawned[0].runtimeParams, {
+    runtime_args: "review",
+    review_target: target,
+  });
   assert.equal(resumed[0].prompt, "");
   assert.deepEqual(resumed[0].runtimeParams, { review_target: target });
   await capture.hookHandlers.get("session_shutdown")?.();
@@ -341,31 +380,23 @@ test("agent catalogue uses project overrides and unknown/disabled names never la
   }
 });
 
-test("inherit_context frontmatter is authoritative and false never reads parent history", async (t) => {
+test("context and inheritance options remain opaque to the tool entry point", async (t) => {
   const agentDir = useAgentDir(t);
   const cwd = join(agentDir, "project");
   const agents = join(cwd, ".pi", "agent", "agents");
   mkdirSync(agents, { recursive: true });
-  writeFileSync(
-    join(agents, "inherit.md"),
-    "---\ninherit_context: true\n---\nRole",
-  );
-  writeFileSync(
-    join(agents, "fresh.md"),
-    "---\ninherit_context: false\n---\nRole",
-  );
-  writeFileSync(join(agents, "default.md"), "Role");
+  for (const inherit_context of [true, false]) {
+    writeFileSync(
+      join(agents, `${inherit_context ? "inherit" : "fresh"}.md`),
+      `---\nruntime_config:\n  inherit_context: ${inherit_context}\n---\nRole`,
+    );
+  }
   const session = SessionManager.inMemory(cwd);
-  session.appendMessage({
-    role: "user",
-    content: "Parent secret",
-    timestamp: 1,
-  });
-  const branch = session.getBranch();
-  let reads = 0;
   t.mock.method(session, "getBranch", () => {
-    reads += 1;
-    return branch;
+    assert.fail("Only the selected runtime may read parent history");
+  });
+  t.mock.method(SubagentManager.prototype, "runtimeCapabilities", () => {
+    assert.fail("Tool entry must not decide how a runtime uses host context");
   });
   let latest: SpawnOptions | undefined;
   t.mock.method(SubagentManager.prototype, "spawn", (options: SpawnOptions) => {
@@ -382,90 +413,55 @@ test("inherit_context frontmatter is authoritative and false never reads parent 
     cwd,
     sessionManager: session,
   } as unknown as ExtensionToolContext;
-  for (const [subagent_type, inherit_context, expected] of [
-    ["inherit", false, true],
-    ["fresh", true, false],
-    ["default", true, true],
-    [undefined, true, true],
-    [undefined, undefined, false],
+  for (const [subagent_type, inherit_context] of [
+    ["inherit", false],
+    ["fresh", true],
+    [undefined, true],
+    [undefined, undefined],
   ] as const) {
-    const before = reads;
+    const runtime_config =
+      inherit_context === undefined ? undefined : { inherit_context };
     await spawn.execute(
       "call",
-      { subagent_type, inherit_context, prompt: "Task", description: "Test" },
+      { subagent_type, runtime_config, prompt: "Task", description: "Test" },
       undefined,
       undefined,
       ctx,
     );
-    assert.equal(Boolean(latest?.parentSession), expected);
-    assert.equal(reads - before, expected ? 1 : 0);
+    assert.equal(latest?.context, session);
+    assert.equal(latest?.parentSession, undefined);
+    assert.deepEqual(latest?.runtimeParams, runtime_config);
+    if (subagent_type) {
+      assert.equal(
+        latest?.agent?.runtimeConfig?.inherit_context,
+        subagent_type === "inherit",
+      );
+    }
   }
-});
-
-test("context capture follows selected runtime capabilities rather than its name", async (t) => {
-  const cwd = useAgentDir(t);
-  const session = SessionManager.inMemory(cwd);
-  session.appendMessage({ role: "user", content: "Parent", timestamp: 1 });
-  const branch = session.getBranch();
-  let reads = 0;
-  t.mock.method(session, "getBranch", () => {
-    reads += 1;
-    return branch;
-  });
-  let nativeClone = true;
-  const queried: string[] = [];
-  t.mock.method(
-    SubagentManager.prototype,
-    "runtimeCapabilities",
-    (id: string) => {
-      queried.push(id);
-      return {
-        nativeClone,
-        steer: true,
-        retainedSession: true,
-        concurrentNativeInput: true,
-      };
-    },
-  );
-  const spawned: SpawnOptions[] = [];
-  t.mock.method(SubagentManager.prototype, "spawn", (options: SpawnOptions) => {
-    spawned.push(options);
-    return { id: "child", description: options.description, status: "queued" };
-  });
-  const capture = registrations();
-  capture.pi.getThinkingLevel = () => "low";
-  registerSubagents(capture.pi, {} as MuxAdapter);
-  const spawn = capture.definitions.get("subagent");
-  assert.ok(spawn);
-  const ctx = {
-    mode: "print",
-    cwd,
-    sessionManager: session,
-  } as unknown as ExtensionToolContext;
-  const params = { inherit_context: true, prompt: "Task", description: "Test" };
   await spawn.execute(
     "call",
-    { ...params, runtime: "native-pi" },
+    {
+      runtime: "future-runtime",
+      inherit_context: true,
+      tools: false,
+      runtime_config: { native_context: "custom-format" },
+      prompt: "Task",
+      description: "Test",
+    },
     undefined,
     undefined,
     ctx,
   );
-  assert.equal(reads, 1);
-  assert.ok(spawned[0].parentSession);
-  nativeClone = false;
-  await assert.rejects(
-    spawn.execute(
-      "call",
-      { ...params, runtime: "pi" },
-      undefined,
-      undefined,
-      ctx,
-    ),
-    /context cloning is unsupported/,
+  assert.equal(latest?.context, session);
+  assert.deepEqual(latest?.runtimeParams, { native_context: "custom-format" });
+  assert.equal(
+    Value.Check(spawn.parameters, {
+      inherit_context: true,
+      prompt: "Task",
+      description: "Legacy top-level option",
+    }),
+    true,
   );
-  assert.equal(reads, 1);
-  assert.equal(spawned.length, 1);
-  assert.deepEqual(queried, ["native-pi", "pi"]);
 });
 
 test("resume tool respects retained background preferences and aborted callers never enqueue work", async (t) => {

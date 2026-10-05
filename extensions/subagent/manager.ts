@@ -79,6 +79,7 @@ export interface SpawnOptions {
   agent?: AgentDefinition;
   runtimeConfig?: Record<string, unknown>;
   runtimeParams?: Record<string, unknown>;
+  context?: unknown;
   parentSession?: ParentSessionSnapshot;
 }
 
@@ -195,27 +196,29 @@ export class SubagentManager {
     const runtime = this.runtime(runtimeId);
     const rawConfig =
       options.agent?.runtimeConfig ?? options.runtimeConfig ?? {};
-    if (!runtime.parseConfig && Object.keys(rawConfig).length) {
-      throw new Error(
-        `Runtime ${runtime.id} does not support runtime configuration.`,
-      );
-    }
+    const callConfig = runtime.parseCallConfig?.(
+      options.runtimeParams ?? {},
+      rawConfig,
+      "spawn",
+    );
     options = {
       ...options,
-      ...(runtime.parseConfig
-        ? { runtimeConfig: runtime.parseConfig(rawConfig) }
-        : {}),
+      ...(callConfig ??
+        (runtime.parseConfig
+          ? { runtimeConfig: runtime.parseConfig(rawConfig) }
+          : { runtimeConfig: rawConfig })),
     };
     const id = randomUUID();
-    const runtimeOptions = this.runtimeOptions(id, options, runtime.id);
+    let runtimeOptions = this.runtimeOptions(id, options, runtime.id);
     runtime.validate(runtimeOptions);
+    if (runtime.prepareSpawn) {
+      runtimeOptions = runtime.prepareSpawn(runtimeOptions);
+      options = { ...options, ...runtimeOptions };
+    }
     validateCommand(
       this.parseTask(runtime, taskCommand(options), runtimeOptions),
     );
-    if (
-      (options.parentSession || options.agent?.inheritContext === true) &&
-      !runtime.capabilities.nativeClone
-    ) {
+    if (options.parentSession && !runtime.capabilities.nativeClone) {
       throw new Error(
         "Cross-runtime context cloning is unsupported by this runtime.",
       );
@@ -285,11 +288,17 @@ export class SubagentManager {
         "Resume requires an idle session; wait for native/user interaction to settle.",
       );
     }
+    const callConfig = record.runtime.parseCallConfig?.(
+      options.runtimeParams ?? {},
+      record.options.runtimeConfig ?? {},
+      "resume",
+    );
     const next = {
       ...record.options,
       ...options,
-      // Task-local runtime parameters must be supplied again on every round.
+      // The runtime partitions fresh call options; no per-round data is reused.
       runtimeParams: options.runtimeParams,
+      ...callConfig,
     };
     next.description = options.description ?? record.options.description;
     const round = record.execution.round + 1;
@@ -658,6 +667,7 @@ export class SubagentManager {
       thinking: options.agent?.thinking ?? options.thinking,
       agent: options.agent,
       runtimeConfig: options.runtimeConfig,
+      context: options.context,
       parentSession: options.parentSession,
       extensionAllowlist:
         runtimeId === "pi" ? this.options.extensionAllowlist : undefined,
@@ -958,11 +968,6 @@ export class SubagentManager {
   ): RuntimeCommand {
     if (runtime.parseTask) return runtime.parseTask(command, options);
     if (command.type === "task") {
-      if (Object.keys(command.runtimeParams ?? {}).length) {
-        throw new Error(
-          `Runtime ${runtime.id} does not support task parameters.`,
-        );
-      }
       if (!command.prompt.trim())
         throw new Error("Task prompt must not be blank.");
     }
@@ -1058,19 +1063,8 @@ function taskCommand(options: SpawnOptions): RuntimeCommand {
   return {
     type: "task" as const,
     prompt: options.prompt,
-    ...(options.runtimeParams ? { runtimeParams: options.runtimeParams } : {}),
-    ...(options.agent
-      ? {
-          instructions: {
-            ...(options.agent.tools !== undefined
-              ? {
-                  tools: options.agent.tools.filter(
-                    (name) => !options.agent?.disallowedTools?.includes(name),
-                  ),
-                }
-              : {}),
-          },
-        }
+    ...(Object.keys(options.runtimeParams ?? {}).length
+      ? { runtimeParams: options.runtimeParams }
       : {}),
   };
 }

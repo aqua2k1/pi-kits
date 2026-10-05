@@ -87,10 +87,26 @@ test("Codex rejects malformed, empty and control-character runtime_args", () => 
       () => parseCodexConfig({ runtime_args: raw }),
       /runtime_args/,
     );
-  assert.throws(
-    () => parseCodexConfig({ typo: "search" }),
-    /Unsupported.*config field/,
-  );
+  for (const config of [null, [], "review", 12])
+    assert.throws(
+      () => parseCodexConfig(config as unknown as Record<string, unknown>),
+      /Codex config must be an object/,
+    );
+});
+
+test("Codex config ignores foreign fields regardless of their values", () => {
+  for (const value of [null, false, 12, [], {}, "\u0000"])
+    for (const field of ["typo", "prompt_mode", "tools", "review_target"]) {
+      const config = { runtime_args: "review,search", [field]: value };
+      const before = structuredClone(config);
+      assert.deepEqual(parseCodexConfig(config), {
+        runtime_args: ["review", "search"],
+      });
+      assert.deepEqual(parseCodexConfig({ [field]: value }), {
+        runtime_args: [],
+      });
+      assert.deepEqual(config, before);
+    }
 });
 
 test("normalized runtime config takes precedence over raw agent config", () => {
@@ -115,7 +131,7 @@ test("normalized runtime config takes precedence over raw agent config", () => {
   );
 });
 
-test("normal Codex requires a prompt and rejects review_target and unknown parameters", () => {
+test("normal Codex requires a prompt, rejects review_target and drops foreign params", () => {
   const command: RuntimeCommand = { type: "task", prompt: "work" };
   assert.equal(parseCodexTask(command, normal), command);
   for (const prompt of ["", "  "])
@@ -127,10 +143,23 @@ test("normal Codex requires a prompt and rejects review_target and unknown param
     () => parseCodexTask(task({ type: "uncommittedChanges" }, "work"), normal),
     /requires runtime_args: review/,
   );
-  assert.throws(
-    () => parseCodexTask({ ...command, runtimeParams: { typo: true } }, normal),
-    /Unsupported.*runtimeParams/,
-  );
+  for (const value of [null, false, 12, [], {}, "\u0000"])
+    assert.deepEqual(
+      parseCodexTask({ ...command, runtimeParams: { typo: value } }, normal),
+      { ...command, runtimeParams: {} },
+    );
+  for (const params of [[], "review", 12])
+    assert.throws(
+      () =>
+        parseCodexTask(
+          {
+            ...command,
+            runtimeParams: params as unknown as Record<string, unknown>,
+          },
+          normal,
+        ),
+      /Codex runtimeParams must be an object/,
+    );
 });
 
 test("review requires a fresh, valid target on every task; structured targets reject prompts", () => {
@@ -165,10 +194,40 @@ test("review requires a fresh, valid target on every task; structured targets re
     { type: "commit", sha: 1 },
     { type: "commit", sha: "abc", title: 2 },
     { type: "custom", instructions: " " },
-    { type: "uncommittedChanges", branch: "main" },
-    { type: "custom", instructions: "review", typo: true },
   ])
     assert.throws(() => parseCodexTask(task(target), review), /Codex/);
+});
+
+test("review drops foreign task and target fields without mutating inputs", () => {
+  for (const target of [
+    { type: "uncommittedChanges" },
+    { type: "baseBranch", branch: "main" },
+    { type: "commit", sha: "abc", title: null },
+    { type: "custom", instructions: "Review" },
+  ]) {
+    const command: RuntimeCommand = {
+      type: "task",
+      prompt: "",
+      runtimeParams: {
+        typo: null,
+        runtime_args: false,
+        review_target: { ...target, foreign: [null], tools: 12 },
+      },
+    };
+    const before = structuredClone(command);
+    const parsed = parseCodexTask(command, review);
+    assert.deepEqual(parsed, task(target));
+    assert.deepEqual(parseCodexTask(parsed, review), parsed);
+    assert.deepEqual(command, before);
+  }
+  assert.throws(
+    () =>
+      parseCodexTask(
+        { type: "task", prompt: "", runtimeParams: { typo: null } },
+        review,
+      ),
+    /review_target on every task/,
+  );
 });
 
 test("custom review consumes prompt once without mutating caller inputs", () => {

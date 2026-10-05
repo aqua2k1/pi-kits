@@ -158,7 +158,7 @@ test("runtime parsers own configuration and per-round tasks without manager runt
   const manager = new SubagentManager(h.mux, { runtimes: [h.runtime] });
   t.after(() => manager.close());
   const agent = parseAgentDefinition(
-    "---\nruntime: custom-parser\nruntime_args: native\n---\nRole",
+    "---\nruntime: custom-parser\nruntime_config:\n  runtime_args: native\n---\nRole",
     "/agents/native.md",
     "global",
   );
@@ -179,7 +179,6 @@ test("runtime parsers own configuration and per-round tasks without manager runt
     type: "task",
     prompt: "Normalized native task round 1",
     runtimeParams: { target: "first" },
-    instructions: {},
   });
   h.sessions[0].complete();
   assert.throws(
@@ -196,39 +195,108 @@ test("runtime parsers own configuration and per-round tasks without manager runt
     type: "task",
     prompt: "Normalized native task round 2",
     runtimeParams: { target: "second" },
-    instructions: {},
     round: 2,
   });
 });
 
-test("runtimes without parsers reject unsupported parameters before creating workers", (t) => {
+test("runtimes partition opaque call configuration without shared key knowledge", async (t) => {
+  const h = harness("future-runtime");
+  const calls: { config: Record<string, unknown>; phase: string }[] = [];
+  h.runtime.parseCallConfig = (config, sessionConfig, phase) => {
+    calls.push({ config, phase });
+    const merged = { native: config.native, ...sessionConfig };
+    if (
+      phase === "resume" &&
+      config.native !== undefined &&
+      config.native !== sessionConfig.native
+    ) {
+      throw new Error("Retained session settings are fixed");
+    }
+    return {
+      runtimeConfig: merged,
+      runtimeParams: { target: config.target },
+    };
+  };
+  h.runtime.parseTask = (command, options) => {
+    if (command.type !== "task") return command;
+    assert.equal(options.runtimeConfig?.native, "agent-native");
+    if (!command.runtimeParams?.target)
+      throw new Error("Fresh target required");
+    return command;
+  };
+  const manager = new SubagentManager(h.mux, { runtimes: [h.runtime] });
+  t.after(() => manager.close());
+  const started = manager.spawn({
+    ...task,
+    runtime: h.runtime.id,
+    runtimeConfig: { native: "agent-native" },
+    runtimeParams: { native: "call-native", target: "first" },
+  });
+  await until(() => h.sessions[0]?.commands.length === 1);
+  assert.deepEqual(h.sessions[0].options.runtimeConfig, {
+    native: "agent-native",
+  });
+  const first = h.sessions[0].commands[0];
+  assert.equal(first.type, "task");
+  assert.deepEqual(first.runtimeParams, { target: "first" });
+  h.sessions[0].complete();
+  assert.throws(
+    () => manager.resume(started.id, { prompt: "Next" }),
+    /Fresh target required/,
+  );
+  assert.throws(
+    () =>
+      manager.resume(started.id, {
+        prompt: "Next",
+        runtimeParams: { native: "changed", target: "second" },
+      }),
+    /settings are fixed/,
+  );
+  assert.equal(manager.get(started.id).round, 1);
+  manager.resume(started.id, {
+    prompt: "Next",
+    runtimeParams: { target: "second" },
+  });
+  await until(() => h.sessions[0].commands.length === 2);
+  const second = h.sessions[0].commands[1];
+  assert.equal(second.type, "task");
+  assert.deepEqual(second.runtimeParams, { target: "second" });
+  assert.equal(h.sessions.length, 1);
+  assert.deepEqual(
+    calls.map(({ phase }) => phase),
+    ["spawn", "resume", "resume", "resume"],
+  );
+});
+
+test("runtimes without parsers receive opaque configuration without shared field validation", async (t) => {
   const h = harness("legacy");
   const manager = new SubagentManager(h.mux, { runtimes: [h.runtime] });
   t.after(() => manager.close());
-  assert.throws(
-    () =>
-      manager.spawn({
-        ...task,
-        runtime: "legacy",
-        runtimeConfig: { runtime_args: "review" },
-      }),
-    /does not support runtime configuration/,
-  );
-  assert.throws(
-    () =>
-      manager.spawn({
-        ...task,
-        runtime: "legacy",
-        runtimeParams: { review_target: {} },
-      }),
-    /does not support task parameters/,
-  );
   assert.throws(
     () => manager.spawn({ ...task, runtime: "legacy", prompt: "" }),
     /must not be blank/,
   );
   assert.equal(manager.list().length, 0);
-  assert.equal(h.sessions.length, 0);
+  const config = { future_session_option: { opaque: true } };
+  const params = { future_task_option: ["native"] };
+  const started = manager.spawn({
+    ...task,
+    runtime: "legacy",
+    runtimeConfig: config,
+    runtimeParams: params,
+  });
+  await until(() => h.sessions[0]?.commands.length === 1);
+  assert.deepEqual(h.sessions[0].options.runtimeConfig, config);
+  const first = h.sessions[0].commands[0];
+  assert.equal(first.type, "task");
+  assert.deepEqual(first.runtimeParams, params);
+  h.sessions[0].complete();
+  manager.resume(started.id, {
+    prompt: "Next",
+    runtimeParams: { future_task_option: "second" },
+  });
+  await until(() => h.sessions[0].commands.length === 2);
+  assert.equal(manager.get(started.id).round, 2);
 });
 
 test("shutdown retries failed runtimes without closing successful sessions again", async (t) => {
@@ -324,9 +392,10 @@ test("registered runtimes own prompt validation and accept native Pi snapshots b
     runtimes: [
       {
         ...h.runtime,
+        parseConfig: (config) => ({ ...config }),
         validate(options) {
           h.runtime.validate(options);
-          if (options.agent?.promptMode === "replace") {
+          if (options.runtimeConfig?.prompt_mode === "replace") {
             throw new Error("This runtime requires append mode");
           }
         },
@@ -335,13 +404,13 @@ test("registered runtimes own prompt validation and accept native Pi snapshots b
   });
   t.after(() => manager.close());
   const agent = parseAgentDefinition(
-    "---\nruntime: native-pi\nprompt_mode: append\ninherit_context: true\n---\nRole",
+    "---\nruntime: native-pi\nruntime_config:\n  prompt_mode: append\n  inherit_context: true\n---\nRole",
     "/agents/custom.md",
     "project",
   );
   const parentSession = { entries: [] };
   const spawned = manager.spawn({ ...task, agent, parentSession });
-  assert.equal(h.validated[0].agent?.promptMode, "append");
+  assert.equal(h.validated[0].runtimeConfig?.prompt_mode, "append");
   assert.equal(h.validated[0].parentSession, parentSession);
   await until(() => h.sessions[0]?.commands.length === 1);
   h.sessions[0].complete();
@@ -350,7 +419,7 @@ test("registered runtimes own prompt validation and accept native Pi snapshots b
     () =>
       manager.spawn({
         ...task,
-        agent: { ...agent, promptMode: "replace" },
+        agent: { ...agent, runtimeConfig: { prompt_mode: "replace" } },
         parentSession,
       }),
     /This runtime requires append mode/,
@@ -359,25 +428,62 @@ test("registered runtimes own prompt validation and accept native Pi snapshots b
   assert.equal(h.sessions.length, 1);
 });
 
+test("runtime preparation freezes opaque context before queueing and is not repeated on resume", async (t) => {
+  const h = harness("native-context-runtime");
+  h.runtime.capabilities.nativeClone = true;
+  h.runtime.parseConfig = (config) => ({ ...config });
+  let captures = 0;
+  h.runtime.prepareSpawn = (options) => {
+    if (!options.runtimeConfig?.native_clone) return options;
+    captures += 1;
+    const context = options.context as { file: string };
+    return {
+      ...options,
+      context: undefined,
+      parentSession: { entries: [], sourcePath: context.file },
+    };
+  };
+  const manager = new SubagentManager(h.mux, {
+    runtimes: [h.runtime],
+    maxConcurrent: 1,
+  });
+  t.after(() => manager.close());
+  const first = manager.spawn({ ...task, runtime: h.runtime.id });
+  await until(() => h.sessions[0]?.commands.length === 1);
+  const context = { file: "/parent/original.jsonl" };
+  const queued = manager.spawn({
+    ...task,
+    runtime: h.runtime.id,
+    runtimeConfig: { native_clone: true },
+    context,
+  });
+  assert.equal(queued.status, "queued");
+  assert.equal(queued.inheritedContext, true);
+  assert.equal(captures, 1);
+  context.file = "/parent/changed.jsonl";
+  h.sessions[0].complete();
+  await until(() => h.sessions[1]?.commands.length === 1);
+  assert.equal(h.sessions[1].options.context, undefined);
+  assert.equal(
+    h.sessions[1].options.parentSession?.sourcePath,
+    "/parent/original.jsonl",
+  );
+  h.sessions[1].complete();
+  manager.resume(queued.id, { prompt: "Next" });
+  await until(() => h.sessions[1].commands.length === 2);
+  assert.equal(captures, 1);
+  assert.equal(h.sessions.length, 2);
+  assert.equal(manager.get(first.id).status, "completed");
+});
+
 test("clone capability rejects unsupported inheritance even when runtime is named pi", async (t) => {
   const h = harness("pi");
   const manager = new SubagentManager(h.mux, { runtimes: [h.runtime] });
   t.after(() => manager.close());
-  for (const inheritance of [
-    { parentSession: { entries: [] } },
-    {
-      agent: parseAgentDefinition(
-        "---\ninherit_context: true\n---\nRole",
-        "/agents/custom.md",
-        "project",
-      ),
-    },
-  ]) {
-    assert.throws(
-      () => manager.spawn({ ...task, ...inheritance }),
-      /context cloning is unsupported/,
-    );
-  }
+  assert.throws(
+    () => manager.spawn({ ...task, parentSession: { entries: [] } }),
+    /context cloning is unsupported/,
+  );
   assert.equal(h.sessions.length, 0);
   assert.equal(manager.list().length, 0);
 });
@@ -398,7 +504,6 @@ test("long Codex roles do not consume task command budget on spawn or resume", a
   assert.deepEqual(h.sessions[0].commands[0], {
     type: "task",
     prompt,
-    instructions: {},
   });
   h.sessions[0].complete();
   manager.resume(spawned.id, { prompt });
@@ -406,7 +511,6 @@ test("long Codex roles do not consume task command budget on spawn or resume", a
   assert.deepEqual(h.sessions[0].commands[1], {
     type: "task",
     prompt,
-    instructions: {},
     round: 2,
   });
   h.sessions[0].complete(2);

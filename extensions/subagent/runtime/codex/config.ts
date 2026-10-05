@@ -14,12 +14,6 @@ function record(value: unknown, name: string): Record<string, unknown> {
     throw new Error(`Codex ${name} must be an object`);
   return value as Record<string, unknown>;
 }
-function keys(value: Record<string, unknown>, allowed: string[], name: string) {
-  for (const key of Object.keys(value)) {
-    if (!allowed.includes(key))
-      throw new Error(`Unsupported Codex ${name} field: ${key}`);
-  }
-}
 function text(value: unknown, name: string): string {
   if (typeof value !== "string" || !value.trim())
     throw new Error(`Codex ${name} must be a nonempty string`);
@@ -33,7 +27,7 @@ function text(value: unknown, name: string): string {
  * Values use --flag=value syntax. Codex CLI validates native switch names.
  */
 export function parseCodexConfig(config: Record<string, unknown>): CodexConfig {
-  keys(record(config, "config"), ["runtime_args"], "config");
+  record(config, "config");
   const raw = config.runtime_args;
   const values =
     raw === undefined ? [] : typeof raw === "string" ? raw.split(",") : raw;
@@ -53,6 +47,42 @@ export function parseCodexConfig(config: Record<string, unknown>): CodexConfig {
   return { runtime_args: args };
 }
 
+/** Public call config splits retained switches from a fresh task-local target. */
+export function parseCodexCallConfig(
+  config: Record<string, unknown>,
+  sessionConfig: Record<string, unknown>,
+  phase: "spawn" | "resume",
+): { runtimeConfig: CodexConfig; runtimeParams: Record<string, unknown> } {
+  record(config, "call config");
+  const retained = parseCodexConfig(sessionConfig);
+  const supplied = Object.hasOwn(config, "runtime_args");
+  const staticConfig = supplied ? { runtime_args: config.runtime_args } : {};
+  let runtimeConfig: CodexConfig;
+  if (phase === "spawn") {
+    runtimeConfig = Object.hasOwn(sessionConfig, "runtime_args")
+      ? retained
+      : parseCodexConfig(staticConfig);
+  } else {
+    if (supplied) {
+      const requested = parseCodexConfig(staticConfig);
+      if (
+        requested.runtime_args.length !== retained.runtime_args.length ||
+        requested.runtime_args.some(
+          (arg, i) => arg !== retained.runtime_args[i],
+        )
+      )
+        throw new Error("Codex resume cannot reconfigure session runtime_args");
+    }
+    runtimeConfig = retained;
+  }
+  return {
+    runtimeConfig,
+    runtimeParams: Object.hasOwn(config, "review_target")
+      ? { review_target: config.review_target }
+      : {},
+  };
+}
+
 /** Adapter-owned semantic entries are mapped via RPC, all others reach the CLI. */
 export function codexNativeArgs(config: CodexConfig): string[] {
   return config.runtime_args
@@ -70,13 +100,10 @@ function reviewTarget(value: unknown): CodexReviewTarget {
   const target = record(value, "review_target");
   switch (target.type) {
     case "uncommittedChanges":
-      keys(target, ["type"], "review_target");
       return { type: "uncommittedChanges" };
     case "baseBranch":
-      keys(target, ["type", "branch"], "review_target");
       return { type: "baseBranch", branch: text(target.branch, "branch") };
     case "commit":
-      keys(target, ["type", "sha", "title"], "review_target");
       if (target.title != null && typeof target.title !== "string")
         throw new Error("Codex commit title must be a string or null");
       return {
@@ -85,7 +112,6 @@ function reviewTarget(value: unknown): CodexReviewTarget {
         title: target.title ?? null,
       };
     case "custom":
-      keys(target, ["type", "instructions"], "review_target");
       return {
         type: "custom",
         instructions: text(target.instructions, "custom instructions"),
@@ -105,12 +131,13 @@ export function parseCodexTask(
   if (typeof command.prompt !== "string")
     throw new Error("Codex task prompt must be a string");
   const params = record(command.runtimeParams ?? {}, "runtimeParams");
-  keys(params, ["review_target"], "runtimeParams");
   if (!config.runtime_args.includes("review")) {
     if (Object.hasOwn(params, "review_target"))
       throw new Error("Codex review_target requires runtime_args: review");
     text(command.prompt, "task prompt");
-    return command;
+    return Object.keys(params).length
+      ? { ...command, runtimeParams: {} }
+      : command;
   }
   if (!Object.hasOwn(params, "review_target"))
     throw new Error("Codex review requires review_target on every task");

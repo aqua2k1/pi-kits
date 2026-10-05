@@ -12,6 +12,7 @@ import { parseAgentDefinition } from "./agents.ts";
 import { registerSubagents } from "./index.ts";
 import { type SpawnOptions, SubagentManager } from "./manager.ts";
 import type { MuxAdapter } from "./mux/index.ts";
+import { CodexRuntime } from "./runtime/codex/index.ts";
 
 function definition(fields: string) {
   return parseAgentDefinition(
@@ -21,13 +22,24 @@ function definition(fields: string) {
   );
 }
 
-test("agent parser reads runtime/model/thinking and ignores unsupported fields", () => {
+test("agent parser reads generic fields and retains nested runtime config without interpreting it", () => {
   assert.equal(definition("description: Test").runtime, undefined);
   const fields = "runtime: codex\nmodel: test-model\nthinking: high";
   const baseline = definition(fields);
   assert.equal(baseline.runtime, "codex");
   assert.equal(baseline.model, "test-model");
   assert.equal(baseline.thinking, "high");
+  assert.equal(baseline.runtimeConfig, undefined);
+  assert.deepEqual(
+    definition(
+      `${fields}\nruntime_config:\n  tools: [read, read]\n  disallowed_tools: write\n  prompt_mode: append`,
+    ).runtimeConfig,
+    {
+      tools: ["read", "read"],
+      disallowed_tools: "write",
+      prompt_mode: "append",
+    },
+  );
   for (const ignored of [
     "codex: false",
     "codex: {}",
@@ -40,10 +52,6 @@ test("agent parser reads runtime/model/thinking and ignores unsupported fields",
   ]) {
     assert.deepEqual(definition(`${fields}\n${ignored}`), baseline);
   }
-  assert.deepEqual(
-    definition("runtime: pi\ncodex: false"),
-    definition("runtime: pi"),
-  );
   assert.throws(() => definition("runtime: false"), /Invalid agent/);
 });
 
@@ -68,27 +76,26 @@ test("runtime names are validated by the registry, not hardcoded in the parser",
   }
 });
 
-test("Codex rejects explicit prompt modes before worker creation", async () => {
-  const manager = new SubagentManager({} as MuxAdapter);
-  try {
-    for (const runtime of ["", "runtime: codex\n"]) {
-      for (const mode of ["replace", "append"]) {
-        assert.throws(
-          () =>
-            manager.spawn({
-              agent: definition(`${runtime}prompt_mode: ${mode}`),
-              runtime: "codex",
-              cwd: "/tmp",
-              prompt: "Task",
-              description: "Test",
-            }),
-          /prompt_mode.*Pi runtime/,
-        );
-      }
+test("Codex ignores Pi-owned runtime fields, including values invalid for Pi", () => {
+  const runtime = new CodexRuntime();
+  for (const prefix of ["", "runtime: codex\n"]) {
+    for (const fields of [
+      "prompt_mode: replace",
+      "prompt_mode: append",
+      "prompt_mode: [false]",
+      "tools: false",
+      "disallowed_tools: null",
+      "inherit_context: invalid",
+      "future_option: { arbitrary: [false] }",
+    ]) {
+      const agent = definition(`${prefix}runtime_config:\n  ${fields}`);
+      assert.deepEqual(runtime.parseConfig(agent.runtimeConfig ?? {}), {
+        runtime_args: [],
+      });
+      assert.doesNotThrow(() =>
+        runtime.validate({ id: "test", cwd: "/tmp", agent }),
+      );
     }
-    assert.equal(manager.list().length, 0);
-  } finally {
-    await manager.close();
   }
 });
 
@@ -157,21 +164,21 @@ test("Codex does not inherit Pi model/thinking or read parent context, and front
   assert.equal(latest?.runtime, "codex");
   assert.equal(latest?.model, "codex-model");
   assert.equal(latest?.thinking, "high");
-  await assert.rejects(
-    tool.execute(
-      "call",
-      {
-        runtime: "codex",
-        inherit_context: true,
-        prompt: "Task",
-        description: "Test",
-      },
-      undefined,
-      undefined,
-      ctx,
-    ),
-    /Cross-runtime context cloning/,
+  await tool.execute(
+    "call",
+    {
+      runtime: "codex",
+      runtime_config: { inherit_context: true },
+      prompt: "Task",
+      description: "Test",
+    },
+    undefined,
+    undefined,
+    ctx,
   );
+  assert.deepEqual(latest?.runtimeParams, { inherit_context: true });
+  assert.equal(latest?.context, ctx.sessionManager);
+  assert.equal(latest?.parentSession, undefined);
   await tool.execute(
     "call",
     { prompt: "Task", description: "Test" },
