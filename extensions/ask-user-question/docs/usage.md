@@ -9,7 +9,7 @@ editor, its draft, and focus.
 Every row is filled to the panel width so underlying content cannot show through.
 Short questionnaires leave blank space; input and footer stay at the bottom.
 Long option lists scroll.
-Use Left/Right or Tab/Shift+Tab to switch questions and revisit answers. Each
+Use Tab/Shift+Tab to switch questions and revisit answers. Each
 question keeps its selected option and custom-answer draft. Confirm answers with
 Enter, then review from the Submit tab. It has separate Submit and Cancel
 buttons: Up/Down chooses a button, Enter activates it, and fullscreen mouse clicks
@@ -25,7 +25,7 @@ Enable fullscreen using Pi's `tuiMode: "fullscreen"` setting if needed; this is 
 setting, not a `pi-kits.json` option. RPC uses native select/input dialogs sequentially
 and does not support tabs or review. Shift+Up/Down scroll long question details;
 The panel owns keyboard input while open. While typing a
-custom answer, use Ctrl+B/F or Home/End to move the cursor.
+custom answer, use Left/Right, Ctrl+B/F or Home/End to move the cursor.
 
 There are no upper limits on question counts, option counts, or text lengths; each
 call needs at least one question and each question at least one option. A custom

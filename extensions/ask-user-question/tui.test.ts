@@ -129,11 +129,11 @@ test("cancel preserves confirmed answers in question order, not unconfirmed draf
   );
 });
 
-test("input maps arrows, Tab and Shift+Tab to tabs even while editing", () => {
-  for (const key of ["\t", "\x1b[C"]) {
+test("input maps only Tab and Shift+Tab to tabs even while editing", () => {
+  for (const key of ["\t"]) {
     assert.deepEqual(questionnaireKeyAction(key), { type: "switch", delta: 1 });
   }
-  for (const key of ["\x1b[Z", "\x1b[D"]) {
+  for (const key of ["\x1b[Z"]) {
     assert.deepEqual(questionnaireKeyAction(key), {
       type: "switch",
       delta: -1,
@@ -142,6 +142,8 @@ test("input maps arrows, Tab and Shift+Tab to tabs even while editing", () => {
   assert.deepEqual(questionnaireKeyAction("\r"), { type: "confirm" });
   assert.deepEqual(questionnaireKeyAction("\x1b"), { type: "cancel" });
   assert.equal(questionnaireKeyAction("draft"), undefined);
+  assert.equal(questionnaireKeyAction("\x1b[C"), undefined);
+  assert.equal(questionnaireKeyAction("\x1b[D"), undefined);
   assert.deepEqual(
     questionnaireKeyAction("configured", {
       matches: (data, action) =>
@@ -248,8 +250,8 @@ test("custom drafts, Input focus, review and fullscreen mouse tabs work together
     assert.ok(
       component.render(80).some((line) => line.includes(CURSOR_MARKER)),
     );
-    component.handleInput?.("\x1b[C");
-    component.handleInput?.("\x1b[D");
+    component.handleInput?.("\t");
+    component.handleInput?.("\x1b[Z");
     assert.ok(component.render(80).some((line) => line.includes("你好")));
     component.handleInput?.("\r"); // confirm custom, next question
     component.render(80);
@@ -262,7 +264,7 @@ test("custom drafts, Input focus, review and fullscreen mouse tabs work together
     assert.ok(
       component.render(80).some((line) => line.includes("Which approach?")),
     );
-    component.handleInput?.("\x1b[C");
+    component.handleInput?.("\t");
     component.handleInput?.("\r"); // second answer -> review, still open
     assert.ok(
       component.render(80).some((line) => line.includes("Ready to submit")),
@@ -275,6 +277,26 @@ test("custom drafts, Input focus, review and fullscreen mouse tabs work together
     result.answers.map((answer) => answer.answer),
     ["你好", "Local"],
   );
+});
+
+test("left and right move the custom-answer cursor without switching questions", async () => {
+  const host = testUI((component) => {
+    component.handleInput?.("\x1b[A"); // wraps to custom
+    component.handleInput?.("abc");
+    component.handleInput?.("\x1b[D");
+    component.handleInput?.("X");
+    component.handleInput?.("\x1b[C");
+    component.handleInput?.("Y");
+    assert.ok(
+      component.render(80).some((line) => line.includes("Which approach?")),
+    );
+    component.handleInput?.("\r"); // confirm custom
+    component.handleInput?.("\r"); // confirm second answer
+    component.handleInput?.("\r"); // submit
+  });
+  const result = await askTabbedQuestions(host.ui, params);
+  assert.equal(result.cancelled, false);
+  assert.equal(result.answers[0].answer, "abXcY");
 });
 
 test("large option lists and Unicode render within narrow widths", async () => {
@@ -412,7 +434,7 @@ test("review has separate Submit and Cancel buttons with independent focus", () 
 test("Cancel button preserves confirmed answers when activated by keyboard", async () => {
   const host = testUI((component) => {
     component.handleInput?.("\r");
-    component.handleInput?.("\u001b[C"); // review
+    component.handleInput?.("\t"); // review
     const lines = component.render(80);
     assert.ok(lines.some((line) => line.includes("[ Submit ]")));
     assert.ok(lines.some((line) => line.includes("[ Cancel ]")));
@@ -498,8 +520,8 @@ test("multi-select UI renders checks and returns mixed single/multi answers", as
     let lines = component.render(80);
     assert.ok(lines.some((line) => line.includes("[x] 1. A")));
     assert.ok(lines.some((line) => line.includes("[x] 2. B")));
-    component.handleInput?.("\u001b[C");
-    component.handleInput?.("\u001b[D");
+    component.handleInput?.("\t");
+    component.handleInput?.("\x1b[Z");
     lines = component.render(80);
     assert.ok(lines.some((line) => line.includes("[x] 2. B")));
     component.handleInput?.("\r");
@@ -590,7 +612,7 @@ test("abort before factory invocation and host errors also clean up", async () =
 
 test("wrapper permits partial cancellation, never partial successful submission", async () => {
   const host = testUI((component) => {
-    component.handleInput?.("\x1b[D"); // Submit
+    component.handleInput?.("\x1b[Z"); // Submit
     component.handleInput?.("\r"); // blocked
     assert.ok(
       component.render(80).some((line) => line.includes("0/2 confirmed")),
@@ -688,7 +710,7 @@ test("custom answer label and contextual footer stay consistent without confirmi
       ),
     );
     assert.ok(lines.some((line) => line.includes("0/2 confirmed")));
-    assert.ok(lines.at(-2)?.includes("Ctrl+B/F cursor"));
+    assert.ok(lines.at(-2)?.includes("←→ cursor"));
     assert.ok(!lines.at(-2)?.includes("↑↓ choose"));
     assert.equal(lines.at(-1), "─".repeat(80));
     assert.ok(!lines.some((line) => line.includes("Type something")));
@@ -718,7 +740,7 @@ test("custom answer label and contextual footer stay consistent without confirmi
 test("review exposes missing count and subdued Submit without widening mouse bounds", async () => {
   const host = testUI(
     (component) => {
-      component.handleInput?.("\x1b[D");
+      component.handleInput?.("\x1b[Z");
       let lines = component.render(80);
       assert.ok(
         lines
@@ -747,9 +769,9 @@ test("review exposes missing count and subdued Submit without widening mouse bou
           .map(plain)
           .some((line) => line.includes("2 missing")),
       );
-      component.handleInput?.("\x1b[C"); // first question
+      component.handleInput?.("\t"); // first question
       component.handleInput?.("\r");
-      component.handleInput?.("\x1b[C"); // review
+      component.handleInput?.("\t"); // review
       lines = component.render(80);
       assert.ok(
         lines
@@ -760,7 +782,7 @@ test("review exposes missing count and subdued Submit without widening mouse bou
       assert.ok(
         component.render(80).some((line) => line.includes("Not answered")),
       );
-      component.handleInput?.("\x1b[D"); // second question
+      component.handleInput?.("\x1b[Z"); // second question
       component.handleInput?.("\r");
       lines = component.render(80);
       assert.ok(lines.some((line) => line.includes("Ready to submit")));
@@ -909,7 +931,7 @@ test("short review keeps the selected answer above pinned mouse buttons", async 
   };
   const host = testUI((component) => {
     component.handleInput?.("\r");
-    component.handleInput?.("\x1b[C");
+    component.handleInput?.("\t");
     for (const rows of [12, 14, 16, 18]) {
       Object.assign(tui.terminal, { rows });
       const lines = component.render(80);
@@ -955,7 +977,7 @@ test("questionnaire boundaries use semantic theme paint at every dock size", asy
     (component) => {
       for (const mode of ["question", "custom", "review"]) {
         if (mode === "custom") component.handleInput?.("\x1b[A");
-        if (mode === "review") component.handleInput?.("\x1b[D");
+        if (mode === "review") component.handleInput?.("\x1b[Z");
         const active = mode === "review" ? 2 : 0;
         for (const rows of [
           ...Array.from({ length: 20 }, (_, i) => i + 1),
@@ -1115,7 +1137,7 @@ test("separate tabs keep layout offsets and row-one mouse targets, not rule/titl
 test("review mouse bounds follow pinned controls across the hint-row threshold", async () => {
   const previousRows = tui.terminal.rows;
   const host = testUI((component) => {
-    component.handleInput?.("\x1b[D"); // incomplete review
+    component.handleInput?.("\x1b[Z"); // incomplete review
     for (const height of [4, 5, 6, 7, 8, 9, 12, 30]) {
       Object.assign(tui.terminal, { rows: height * 2 });
       for (const width of [7, 15, 40, 80]) {
@@ -1186,7 +1208,7 @@ test("custom IME cursor stays above the rule and optional hint within panel boun
         if (height >= 3) assert.equal(lines.at(-1), "─".repeat(width));
         if (width === 80) {
           assert.equal(
-            lines.some((line) => line.includes("Ctrl+B/F cursor")),
+            lines.some((line) => line.includes("←→ cursor")),
             height >= 9,
           );
         }

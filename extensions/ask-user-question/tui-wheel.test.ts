@@ -261,7 +261,7 @@ test("native fullscreen wheel scrolls upper transcript without losing questionna
     assert.ok(cursorX >= 0 && cursorX < 80);
     assert.ok(panelY + cursorY < driver.terminal.rows);
     assert.match(before[panelY + cursorY], /draft/);
-    assert.ok(before[panelY + panel.length - 2].includes("Ctrl+B/F cursor"));
+    assert.ok(before[panelY + panel.length - 2].includes("←→ cursor"));
     assert.equal(before[panelY + panel.length - 1], "─".repeat(80));
     driver.terminal.emit(sgr(64, 80, driver.transcript.viewportHeight));
     assert.equal(driver.transcript.scrollTop, 37); // Host's configured 3 lines.
@@ -332,7 +332,7 @@ test("dock mouse coordinates remain local after resize; short terminals clip wit
         );
       }
     }
-    driver.terminal.emit("\x1b[D"); // review
+    driver.terminal.emit("\x1b[Z"); // review
     const screen = driver.screen();
     const cancelY = screen.findIndex((line) => line.includes("[ Cancel ]"));
     assert.ok(cancelY > driver.transcript.viewportHeight);

@@ -258,10 +258,10 @@ export class TabbedQuestionnaire implements Component {
     const footerLabel = !question
       ? "↑↓ buttons · Enter · PgUp/PgDn answers · Esc cancel"
       : custom
-        ? "←→/Tab steps · Enter confirm · Esc · Ctrl+B/F cursor"
+        ? "Tab/Shift+Tab steps · Enter confirm · Esc · ←→ cursor"
         : question.multiSelect
-          ? "←→/Tab steps · ↑↓ · Space toggle · Enter confirm · Esc"
-          : "←→/Tab steps · ↑↓ choose · Enter confirm · Esc";
+          ? "Tab/Shift+Tab steps · ↑↓ · Space toggle · Enter confirm · Esc"
+          : "Tab/Shift+Tab steps · ↑↓ choose · Enter confirm · Esc";
     const shortcut = `${footerLabel}${window.scrollable ? " · Shift+↑/↓ details" : ""}`;
     const finish = (content: string[]) => {
       if (!question)

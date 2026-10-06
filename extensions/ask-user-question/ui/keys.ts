@@ -5,10 +5,10 @@ export function questionnaireKeyAction(
   data: string,
   keybindings?: Pick<KeybindingsManager, "matches">,
 ): QuestionnaireAction | undefined {
-  if (matchesKey(data, "tab") || matchesKey(data, "right")) {
+  if (matchesKey(data, "tab")) {
     return { type: "switch", delta: 1 };
   }
-  if (matchesKey(data, "shift+tab") || matchesKey(data, "left")) {
+  if (matchesKey(data, "shift+tab")) {
     return { type: "switch", delta: -1 };
   }
   if (
