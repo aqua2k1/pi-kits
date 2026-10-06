@@ -1,6 +1,10 @@
 # Subagent usage
 
 See the [package overview](../README.md) for architecture and minimal configuration.
+See [Subagent configuration](configuration.md) for extension settings, agent fields,
+runtime options, precedence, and defaults.
+For layer interfaces, implementation contracts, and adapter integration, see
+[Architecture and implementation contracts](architecture.md).
 
 - [Herdr subagents](#herdr-subagents)
 - [Runtime configuration](#runtime-configuration)
@@ -47,10 +51,8 @@ honoring `PI_CODING_AGENT_DIR`, including `~` expansion) and `/reload`:
 }
 ```
 
-Configuration is validated and defaulted through `@pi-kits/config`. `mux` accepts
-only `"herdr"` and has no default; `enabled` defaults to `true`.
-`maxConcurrent` limits executing tasks, not retained idle Pi terminals; it is an
-integer from 1 to 32, defaulting to 4. Results and session files survive runtime
+Settings, defaults, activation requirements, and environment variables are detailed
+in [Extension settings](configuration.md#extension-settings). Results and session files survive runtime
 release; terminals remain inspectable only while retained by an open native view
 or `keep_alive: true` (see [Automatic runtime release](#automatic-runtime-release)). Activation requires
 `subagent.enabled`, explicit `mux: "herdr"`, and
@@ -229,72 +231,8 @@ as a package resource.
 
 ## Runtime configuration
 
-All runtime-exclusive fields belong inside `runtime_config`. The generic agent
-parser reads only supported generic metadata and ignores unknown top-level
-fields. Legacy top-level runtime-exclusive fields have no effect: move them into
-`runtime_config`; there are no compatibility aliases. `model`, `thinking` and
-the Markdown body remain generic.
-
-The selected runtime adapter reads only its own fields, validates their types
-and values, and partitions session settings from call-only task settings. Unknown
-and foreign runtime fields are ignored, including malformed values; they are
-never interpreted or checked against an unsupported-key whitelist. Agent
-frontmatter supplies session settings; calls can supply both session and task
-settings in the same record. `review_target` in agent/session configuration is
-ignored, not inherited.
-
-The shared tools allow unknown extras and forward raw `runtime_config` to the
-runtime. Their schemas describe the optional Codex `review_target`, while its
-conditional requirement is enforced by the Codex adapter. `inherit_context` is
-a Pi-only session field inside `runtime_config`.
-Pi's `runtime.prepareSpawn` handles it using opaque host context before queueing;
-resume never recaptures parent context.
-
-| Runtime | `runtime_config` key | Scope and default |
-| --- | --- | --- |
-| Pi | `tools` | Session; native Pi defaults. CSV or YAML array; `none`/empty disables all tools. Built-in and whitelisted extension tool names are accepted. |
-| Pi | `disallowed_tools` | Session; no additional denylist. CSV or YAML array, applied after `tools`. |
-| Pi | `inherit_context` | Session; `false` by default. Strict boolean; `true` snapshots the parent Pi branch before queueing. Resume never captures it again. |
-| Pi | `prompt_mode` | Named-agent session only; `replace` by default, or `append`. Controls the agent body's system-prompt role. |
-| Codex | `runtime_args` | Session; no additional options. CSV or YAML array; `review`/`search` are mapped by the adapter, other options go to its native CLI. |
-| Codex | `review_target` | Call-only task setting; no default. Required on each native-review round; ignored in agent/session configuration, rejected for ordinary Codex turns. |
-
-Named-agent session settings take precedence over spawn-call settings **per
-key**, not by replacing the entire record. Call settings supply session keys
-absent from the definition. This precedence applies only to the selected runtime's
-own session fields. Task settings come only from the call: an agent's
-`runtime_config.review_target` is ignored, even if malformed, and never supplies
-a target for a call.
-
-For example, Pi tool configuration can be supplied to an unnamed `subagent`:
-
-```json
-{
-  "runtime": "pi",
-  "prompt": "Inspect the authentication code without editing files.",
-  "runtime_config": {
-    "tools": "read, grep, find, bash",
-    "disallowed_tools": "edit, write"
-  }
-}
-```
-
-Session settings are applied once at spawn and remain on resume. A
-`resume_subagent` call may omit the retained runtime's own session fields or
-redundantly repeat values that normalize identically to the retained
-configuration, but cannot change them. In particular, there is no per-round
-mutation of Pi tools/denylist/prompt mode/inheritance or Codex `runtime_args`.
-Unknown and foreign extras are ignored on resume, including malformed values.
-Runtime task parameters reset on every round; omission never inherits a previous
-`review_target`. The adapter validates its own resume fields using the retained
-runtime and session settings.
-
-Top-level runtime-exclusive frontmatter fields are ignored, not migrated or
-aliased. Pi ignores Codex fields, and Codex ignores Pi fields, without
-interpreting or validating their values. Tool calls also use `runtime_config`;
-top-level runtime-exclusive extras such as `review_target` have no effect.
-Internal trusted `ManagerOptions` launch/deployment injection is unaffected by
-this public configuration contract.
+Runtime fields, defaults, precedence, and spawn/resume rules are documented in
+[Runtime configuration](configuration.md#runtime-configuration).
 
 ## Codex runtime
 
@@ -470,107 +408,11 @@ completion hydration.
 
 ## User-defined agent types
 
-There are **no embedded agent definitions or installed templates**. Create your
-own Markdown files in these directories:
-
-1. `<cwd>/.pi/agent/agents/*.md` — project, highest priority.
-2. `$PI_CODING_AGENT_DIR/agents/*.md` — global, normally `~/.pi/agent/agents/`.
-
-The filename without `.md` is the type name, matching `gotgenes/pi-subagents`.
-Names are resolved case-insensitively. A project file **replaces the entire**
-same-name global definition, not individual fields; `enabled: false` can hide a
-global type. Replaced global files are not read or validated. Duplicate names
-within one directory are errors. Definitions are
-read afresh when listing or spawning; editing a file affects new tasks, not
-already queued/running tasks. Invalid definitions fail explicitly rather than
-falling back to a less restricted global configuration.
-
-For example, a user-created `.pi/agent/agents/auditor.md` could contain:
-
-```markdown
----
-description: Review code for security issues
-display_name: Auditor
-model: anthropic/claude-sonnet-4-6
-thinking: high
-runtime_config:
-  tools: read, grep, find, bash
-  disallowed_tools: edit, write
-  inherit_context: false
----
-You are a security reviewer. Report issues with file paths and evidence.
-Do not modify files.
-```
-
-Call `list_subagent_types` to discover names, then:
-
-```json
-{
-  "subagent_type": "auditor",
-  "description": "Review authentication",
-  "prompt": "Review the authentication code for vulnerabilities."
-}
-```
-
-Pass this object to `subagent`. Omitting `subagent_type` retains the existing
-ad-hoc task behavior; it does not select an embedded or fallback named agent.
-Unknown and disabled names are rejected before creating a worker.
-
-Supported YAML frontmatter fields use the reference extension's snake_case names:
-
-| Field | Behavior when omitted |
-| --- | --- |
-| `description` | Filename; shown in the type catalogue. |
-| `display_name` | Type name; shown beside the task in widgets, views, and tool cards. |
-| `runtime` | Call parameter, then `pi`; supports `pi` and `codex`. |
-| `runtime_config` | Call session settings, then runtime defaults; generic record of session-only configuration interpreted by the selected runtime (see [Runtime configuration](#runtime-configuration)). |
-| `model` | Call parameter, then parent model for Pi or Codex's own default. |
-| `thinking` | Call parameter, then parent thinking for Pi or Codex's own effort default. |
-| `enabled` | `true`; `false` disables selection. |
-| `run_in_background` | Call parameter, then `true`. |
-| `keep_alive` | Call parameter, then `false`; retain the runtime after completion even without an open view. |
-
-Configured model, thinking, background mode, and keep-alive policy take precedence over call
-parameters, including explicit `false`. Runtime session settings, including Pi's
-`runtime_config.inherit_context`, take precedence per key as described above. Thinking is a
-non-empty string interpreted by the selected runtime. For Pi, it is passed
-directly to Pi, which owns the supported levels. The Codex adapter accepts
-`off`, `none`, `minimal`, `low`, `medium`, `high`, and `xhigh`; `off` maps to
-`none`. It also checks that the selected model supports the mapped effort.
-Pi's `max` is not accepted by the Codex adapter. The Markdown body remains a
-generic agent instruction; its interpretation belongs to the runtime. Runtime
-session fields belong under `runtime_config`, never at the frontmatter top level.
-
-Pi `runtime_config.tools` names include Pi built-ins (`read`, `bash`, `edit`, `write`,
-`grep`, `find`, `ls`, `powershell`), `codemode`, `tool_search`, and tools registered
-by explicitly whitelisted extensions. A denylist is applied after the allowlist;
-missing requested tools fail before a model turn instead of being silently
-ignored. Codemode cannot use tools outside the CLI allowlist/denylist. Tool
-selection is not a sandbox: `bash` can still change files.
-
-For Pi, `runtime_config.prompt_mode` controls how the named agent's Markdown
-body is applied. Explicit prompt mode on an unnamed session is rejected because
-there is no agent body to apply:
-
-- `replace` (default): pass the body in a file via CLI `--system-prompt`, plus an
-  empty file via `--append-system-prompt` to suppress discovered `APPEND_SYSTEM.md`.
-  The body must be non-empty; Pi treats empty custom prompts as its default role.
-- `append`: retain Pi's own base system prompt and pass the body in a file via
-  `--append-system-prompt`, replacing discovered `APPEND_SYSTEM.md` rather than
-  adding to it.
-
-Both modes retain project `AGENTS.md`/`CLAUDE.md` context according to Pi's native
-trust rules; they do not disable context-file discovery or bypass trust. Workers
-use `--no-approve`, so untrusted project resources are not automatically approved.
-The body is file content, never interpolated into shell commands. The role remains
-active after completion for native terminal interaction and resume while the runtime
-is retained.
-
-Of the built-in runtimes, only Pi supports `runtime_config.prompt_mode`.
-Codex ignores this foreign field, including `replace`, `append`, and malformed
-values, whether supplied by frontmatter or a call. Omitting the key leaves
-runtime defaults in effect; Pi's default is `replace`. Pi validates its own prompt
-mode. Tool selection and prompt mode are session settings, not per-round controls.
+Agent directories, discovery/override rules, frontmatter fields, Pi prompt modes,
+and examples are documented in
+[User-defined agent types](configuration.md#user-defined-agent-types).
+Use `list_subagent_types` to discover enabled types, then pass `subagent_type` to
+`subagent`; omitting it creates an ad-hoc task.
 
 ## Parent context cloning
 
@@ -610,81 +452,11 @@ Agent files and complete task IPC frames each have a 64 KiB limit.
 
 ## Worker extension allowlist
 
-Configure `subagent.extensionAllowlist` in agent-dir `pi-kits.json`:
-
-```json
-{
-  "subagent": {
-    "mux": "herdr",
-    "extensionAllowlist": ["builtin:codemode", "builtin:tool-search"]
-  }
-}
-```
-
-Every worker explicitly loads this shared list alongside its bridge. The list
-replaces the defaults as a whole: `[]` loads only the bridge. It controls **which
-extension code is loaded**, while Pi's session `runtime_config.tools` selects
-**which tools are enabled**; loading codemode does not automatically activate it. Agent Markdown
-cannot add extensions. Entries are native Pi extension sources, resolved by Pi's
-package manager rather than a kit-specific prefix table. For example:
-
-```json
-"extensionAllowlist": [
-  "builtin:codemode",
-  "builtin:tool-search",
-  "npm:@narumitw/pi-chrome-devtools"
-]
-```
-
-To select only named resources from an installed package, use an object:
-
-```json
-"extensionAllowlist": [
-  "builtin:codemode",
-  "builtin:tool-search",
-  {
-    "source": "git:github.com/aqua2k1/pi-kits",
-    "extensions": ["web-kits"]
-  },
-  "npm:@narumitw/pi-chrome-devtools"
-]
-```
-
-Pi locates the package, then the resolver reads its `package.json`
-`extensionResources` declaration. The repository exposes each independent
-extension name (for example `stats`, `subagent`, and `web-kits`). Each individual
-extension package also declares its own name. Only independent resource names
-are exposed; there are no group names or compatibility aliases.
-For example, the repository declares:
-
-```json
-"extensionResources": {
-  "web-kits": "./extensions/web-kits/index.ts"
-}
-```
-
-A resource maps to a package-relative entrypoint or an array of entrypoints.
-Selected entries must already be enabled resources in the package's explicit
-Pi manifest. Unknown names, absent declarations, and undeclared/escaping paths
-fail before worker creation; there is no name-to-path guess or whole-package
-fallback. `extensions: []` loads nothing from that source and does not resolve
-or install it. The [repository configuration example](../../../pi-kits.example.json)
-uses this empty selection deliberately; change it to `["web-kits"]` to opt in.
-Defaults still load only codemode and tool-search. Packages without named
-declarations (such as Chrome DevTools) can
-still be loaded using their plain source string.
-
-Pi resolves installed npm/git packages and reads their declared extension
-resources. Plain package source strings load all their declared extensions,
-not just one tool.
-Missing packages follow Pi's native installation behavior; only list trusted
-sources. Files/directories remain supported: absolute paths, `~/...`, and paths
-relative to the agent directory (never the task/project cwd). Resolved enabled
-extension paths are explicitly passed to the child CLI; unrelated parent packages
-are not loaded. A source with no enabled extension resources fails before worker
-creation. The tool `tool_search` is provided by `builtin:tool-search`.
-Reload the parent after changing the whitelist. Extensions run with full process
-permissions, so this is a loading policy, not an OS sandbox.
+Extension source syntax, named package selections, path resolution, and loading
+policy are documented in
+[Worker extension allowlist](configuration.md#worker-extension-allowlist).
+The list selects loaded Pi extension code; `runtime_config.tools` separately
+selects enabled tools. Neither policy is an OS sandbox.
 
 ## Real Herdr verification
 
@@ -704,23 +476,10 @@ and managed continuation after exiting the TUI. Successful completion prints
 
 ## Configuration compatibility and source references
 
-Top-level `subagent` settings override the same legacy `workflow.subagent`
-fields; unspecified fields retain legacy values before defaults are applied.
-Legacy `workflow.enabled: false` disables subagents unless top-level
-`subagent.enabled` explicitly overrides it. Prefer the independent top-level settings.
-Configuration is validated by [the shared schema](../../../shared/config/schema.ts)
-and resolved by [the shared config reader](../../../shared/config/index.ts).
+Legacy settings precedence, validation, and configuration implementation references
+are documented in [Configuration compatibility](configuration.md#configuration-compatibility-and-source-references).
 
-The [shared tool parameter schemas](../index.ts) expose an optional Codex
-`runtime_config.review_target` for `subagent` and `resume_subagent`, while
-allowing other runtime options and forwarding raw `runtime_config`. Top-level
-`review_target` is not a supported parameter. Runtime validation covers only
-the selected adapter's own fields;
-unknown and foreign fields are ignored, including malformed values. See
-[Pi configuration](../runtime/pi/config.ts),
-[Codex configuration](../runtime/codex/config.ts), and the
-[Codex review target schema](../runtime/codex/schema.ts).
-
+Developer contracts: [architecture and implementation guide](architecture.md).
 Implementation references: [tools and lifecycle](../index.ts),
 [task/session management](../manager.ts), [worker bridge](../runtime/pi/worker.ts),
 [agent definitions](../agents.ts), [context cloning](../runtime/pi/clone.ts), and

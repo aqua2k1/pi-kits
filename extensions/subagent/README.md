@@ -13,7 +13,7 @@ TUI 使用 `/subagent:views` 管理终端视图，编辑器上方显示实时任
 
 Runtime 专属字段统一放在 `runtime_config` 下；`model`、`thinking`、Markdown 正文仍为通用配置。
 字段作用域、未知/外来字段忽略、agent 与调用的逐键优先级及续跑继承规则，
-统一见[Runtime configuration](docs/usage.md#runtime-configuration)。
+统一见[配置文档](docs/configuration.md#runtime-configuration)。
 父上下文捕获与续跑行为见[Parent context cloning](docs/usage.md#parent-context-cloning)。
 
 Markdown agent 的 `runtime_config.prompt_mode` 仅支持 Pi，默认 `replace`：通过 CLI 正文文件替换
@@ -23,6 +23,10 @@ system prompt，并传入空 append 文件屏蔽发现的 `APPEND_SYSTEM.md`。
 原生 review 的调用示例与限制详见[使用文档](docs/usage.md#native-review-and-search)。
 
 ## 架构
+
+逐层接口、必选/可选成员、生命周期与资源所有权、扩展接入和测试要求，见
+[架构与实现契约](docs/architecture.md)。操作流程见 [usage.md](docs/usage.md)，
+配置字段与优先级见 [configuration.md](docs/configuration.md)。
 
 ```mermaid
 flowchart LR
@@ -51,7 +55,10 @@ flowchart LR
 
 ## 配置
 
-在 agent 目录的 `pi-kits.json` 中配置，修改后执行 `/reload`：
+完整的扩展设置、Markdown agent 字段、Pi/Codex runtime 参数、默认值、优先级及续跑规则，
+见[Subagent 配置文档](docs/configuration.md)。
+
+最小启用配置写入 agent 目录的 `pi-kits.json`，修改后执行 `/reload`：
 
 ```json
 {
@@ -66,4 +73,4 @@ flowchart LR
 
 须显式设置 `mux: "herdr"` 且 `HERDR_ENV === "1"`；否则不注册工具、命令或钩子。
 `enabled` 默认 `true`；`maxConcurrent` 为 1–32 的整数，默认 4，仅限制执行任务。
-allowlist 整体替换默认值，`[]` 只加载 worker 桥；详见[使用文档](docs/usage.md)与[配置示例](../../pi-kits.example.json)。
+allowlist 整体替换默认值，`[]` 只加载 worker 桥；详见[扩展加载配置](docs/configuration.md#worker-extension-allowlist)与[配置示例](../../pi-kits.example.json)。
