@@ -66,8 +66,20 @@ test("fetch runtimes own GitHub handler caches explicitly", () => {
   new WebFetchRouter(config, first);
   new WebFetchRouter(config, first);
   new WebFetchRouter(config, second);
-  const key = JSON.stringify(config.github);
+  const key = JSON.stringify({
+    github: config.github,
+    apiTimeoutMs: config.timeoutMs,
+  });
   assert.ok(first.githubHandlerCache?.get(key));
   assert.ok(second.githubHandlerCache?.get(key));
   assert.notEqual(first.githubHandlerCache, second.githubHandlerCache);
+  const original = first.githubHandlerCache?.get(key);
+  const changed = { ...config, timeoutMs: config.timeoutMs + 1_000 };
+  new WebFetchRouter(changed, first);
+  const changedKey = JSON.stringify({
+    github: changed.github,
+    apiTimeoutMs: changed.timeoutMs,
+  });
+  assert.ok(first.githubHandlerCache?.get(changedKey));
+  assert.notEqual(first.githubHandlerCache?.get(changedKey), original);
 });

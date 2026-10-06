@@ -1245,12 +1245,12 @@ test("sessions have distinct backend children and authentication tokens", async 
   assert.notEqual(a.children[0], b.children[0]);
 });
 
-test("startup failures kill child and delete token; version mismatch fails before spawn", async () => {
+test("startup failures kill child and delete token and report CLI version", async () => {
   const f = fixture();
   f.handlers.set("initialize", () => {
     throw new Error("bad handshake");
   });
-  await assert.rejects(f.session.start(), /bad handshake/);
+  await assert.rejects(f.session.start(), /codex-cli 0\.160\.0.*bad handshake/);
   assert.equal(f.session.connected, false);
   assert.equal(f.children[0].killed, true);
   await assert.rejects(access(must(f.argv.at(-1))));
@@ -1259,17 +1259,50 @@ test("startup failures kill child and delete token; version mismatch fails befor
     true,
   );
   await f.session.close();
-  const old = fixture(
+});
+
+for (const version of [
+  "codex-cli 0.159.0",
+  "codex-cli 0.160.1",
+  "codex-cli 1.0.0",
+  "codex-cli development",
+]) {
+  test(`startup accepts compatible protocol regardless of version: ${version}`, async (t) => {
+    const f = fixture(
+      {},
+      {
+        async probe() {
+          return version;
+        },
+      },
+    );
+    t.after(() => f.session.close());
+    await f.session.start();
+    assert.equal(f.session.connected, true);
+    assert.equal(f.children.length, 1);
+    assert.ok(f.calls.some((call) => call.method === "initialize"));
+    assert.ok(f.calls.some((call) => call.method === "thread/start"));
+  });
+}
+
+test("startup rejects incompatible initialize response regardless of version", async (t) => {
+  const f = fixture(
     {},
     {
       async probe() {
-        return "codex-cli 0.159.0";
+        return "codex-cli 0.160.1";
       },
     },
   );
-  await assert.rejects(old.session.start(), /0.160.0/);
-  assert.equal(old.children.length, 0);
-  await old.session.close();
+  t.after(() => f.session.close());
+  f.handlers.set("initialize", () => ({}));
+  await assert.rejects(
+    f.session.start(),
+    /codex-cli 0\.160\.1.*Incompatible Codex initialize response/,
+  );
+  assert.equal(f.session.connected, false);
+  assert.equal(f.children[0].killed, true);
+  await assert.rejects(access(must(f.argv.at(-1))));
 });
 
 test("startup RPC deadline cleans resources", async () => {

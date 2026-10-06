@@ -54,11 +54,18 @@ test("GhClient returns null when gh is unavailable", async () => {
   assert.equal(await client.apiJson("repos/acme/project"), null);
 });
 
-test("GhClient uses gh repo clone before the public git fallback", async () => {
+test("GhClient uses public gh clone even with an enterprise GH_HOST", async (t) => {
+  const previousHost = process.env.GH_HOST;
+  process.env.GH_HOST = "enterprise.example";
+  t.after(() => {
+    if (previousHost === undefined) delete process.env.GH_HOST;
+    else process.env.GH_HOST = previousHost;
+  });
   const calls: { command: string; args: readonly string[] }[] = [];
   const command: CommandRunner = {
-    async run(commandName, args) {
+    async run(commandName, args, options) {
       calls.push({ command: commandName, args });
+      assert.equal(options.env?.GH_HOST, "enterprise.example");
       if (commandName === "gh" && args[0] === "--version") {
         return result({ stdout: "gh version 2\n" });
       }
@@ -81,7 +88,7 @@ test("GhClient uses gh repo clone before the public git fallback", async () => {
     args: [
       "repo",
       "clone",
-      "acme/project",
+      "https://github.com/acme/project.git",
       "/tmp/clone",
       "--",
       "--depth",

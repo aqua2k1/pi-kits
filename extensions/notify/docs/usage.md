@@ -58,6 +58,14 @@ interop. The Windows script selects a registered terminal AppUserModelID;
 native Linux and macOS do not depend on a terminal emulator. All adapters use
 stable replacement identifiers.
 
+The macOS adapter stores private generation and lock state in
+`$HOME/.pi-kits-notifications`. Sending and cleanup share a lock, so an older
+60-second timer cannot remove a replacement notification. Lock contention is
+bounded and notification failures remain best-effort. An untrappable termination
+(such as `SIGKILL`) can leave an abandoned lock; after confirming no notification
+adapter or `terminal-notifier` process is active, remove it with
+`rmdir "$HOME/.pi-kits-notifications/lock"`.
+
 ```sh
 brew install terminal-notifier  # macOS
 sudo apt install libnotify-bin # Linux

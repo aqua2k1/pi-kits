@@ -1,6 +1,13 @@
-import { createHash, randomUUID } from "node:crypto";
-import { chmod, mkdir, readdir, rename, rm, stat } from "node:fs/promises";
-import { join } from "node:path";
+import {
+  chmod,
+  mkdir,
+  mkdtemp,
+  readdir,
+  rm,
+  stat,
+  utimes,
+} from "node:fs/promises";
+import { dirname, join } from "node:path";
 import type { ResolvedGitHubFetchConfig } from "../config.ts";
 import {
   MAX_GITHUB_SESSION_CLONES,
@@ -45,11 +52,6 @@ interface CloneOperation {
 
 function cacheKey(info: GitHubUrlInfo, ref?: string): string {
   return `${info.owner}/${info.repo}@${ref ?? "default"}`;
-}
-
-function cloneDirectory(basePath: string, key: string): string {
-  const digest = createHash("sha256").update(key).digest("hex").slice(0, 24);
-  return join(basePath, `${CLONE_CACHE_PREFIX}${digest}`);
 }
 
 async function cleanupExpiredClones(
@@ -127,6 +129,7 @@ function decideFetchPlan(
 
 export interface GitHubHandlerOptions {
   config: ResolvedGitHubFetchConfig;
+  apiTimeoutMs: number;
   runtime?: FetchRuntime;
 }
 
@@ -134,7 +137,6 @@ export class GitHubHandler implements FetchHandler {
   private readonly config: ResolvedGitHubFetchConfig;
   private readonly gh: GhClient;
   private readonly now: () => number;
-  private readonly uuid: () => string;
   private readonly clones = new Map<string, CloneOperation>();
   private cloneCount = 0;
   private cloneReservations = 0;
@@ -142,10 +144,9 @@ export class GitHubHandler implements FetchHandler {
   constructor(options: GitHubHandlerOptions) {
     this.config = { ...options.config };
     this.now = options.runtime?.now ?? Date.now;
-    this.uuid = options.runtime?.uuid ?? randomUUID;
     this.gh = new GhClient({
       command: options.runtime?.command,
-      timeoutMs: options.config.cloneTimeoutSeconds * 1_000,
+      timeoutMs: options.apiTimeoutMs,
     });
   }
 
@@ -229,6 +230,8 @@ export class GitHubHandler implements FetchHandler {
       if (existing) {
         try {
           await stat(existing);
+          const renewedAt = new Date(this.now());
+          await utimes(dirname(existing), renewedAt, renewedAt);
           return existing;
         } catch {
           if (this.clones.get(key) === cached) this.clones.delete(key);
@@ -242,10 +245,9 @@ export class GitHubHandler implements FetchHandler {
       return null;
     this.cloneReservations++;
 
-    const path = cloneDirectory(this.config.clonePath, key);
     const controller = new AbortController();
     let operation: CloneOperation;
-    const promise = this.clone(info, ref, path, controller.signal).then(
+    const promise = this.clone(info, ref, controller.signal).then(
       (result) => {
         operation.settled = true;
         this.cloneReservations--;
@@ -320,33 +322,33 @@ export class GitHubHandler implements FetchHandler {
   private async clone(
     info: GitHubUrlInfo,
     ref: string | undefined,
-    finalPath: string,
     signal: AbortSignal,
   ): Promise<string | null> {
     const parent = this.config.clonePath;
     await mkdir(parent, { recursive: true, mode: 0o700 });
     await chmod(parent, 0o700).catch(() => {});
-    const temporaryPath = join(parent, `${CLONE_TEMP_PREFIX}${this.uuid()}`);
-    await rm(finalPath, { recursive: true, force: true });
-    await rm(temporaryPath, { recursive: true, force: true });
+    // Each operation owns its directory; other handlers never replace it.
+    const directory = await mkdtemp(join(parent, CLONE_CACHE_PREFIX));
+    const repositoryPath = join(directory, "repository");
     try {
       const cloned = await this.gh.clone({
         owner: info.owner,
         repo: info.repo,
         ref,
-        destination: temporaryPath,
+        destination: repositoryPath,
         timeoutMs: this.config.cloneTimeoutSeconds * 1_000,
         signal,
       });
       if (!cloned) {
-        await rm(temporaryPath, { recursive: true, force: true });
+        await rm(directory, { recursive: true, force: true });
         return null;
       }
-      await chmod(temporaryPath, 0o700).catch(() => {});
-      await rename(temporaryPath, finalPath);
-      return finalPath;
+      await chmod(repositoryPath, 0o700).catch(() => {});
+      const completedAt = new Date(this.now());
+      await utimes(directory, completedAt, completedAt);
+      return repositoryPath;
     } catch (error) {
-      await rm(temporaryPath, { recursive: true, force: true }).catch(() => {});
+      await rm(directory, { recursive: true, force: true }).catch(() => {});
       throw error;
     }
   }

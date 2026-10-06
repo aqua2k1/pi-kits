@@ -349,14 +349,15 @@ class CodexSession implements RuntimeSession {
       if (ms <= 0) throw new Error("Codex startup timed out");
       return ms;
     };
+    let version: string | undefined;
     try {
-      const version = await this.deps.probe(
+      // Version is diagnostic only. Compatibility is established by starting
+      // the authenticated server and validating the required RPC responses.
+      version = await this.deps.probe(
         this.options.executable ?? "codex",
         this.options.cwd,
         remaining(),
       );
-      if (!/\bcodex-cli 0\.160\.0\b/.test(version))
-        throw new Error("Codex runtime requires tested CLI/protocol 0.160.0");
       remaining();
       this.dir = await mkdtemp(join(tmpdir(), "pi-kits-codex-"));
       await chmod(this.dir, 0o700);
@@ -494,11 +495,14 @@ class CodexSession implements RuntimeSession {
         sessionPath: started.thread.path ?? undefined,
       });
     } catch (error) {
-      this.disconnect(
-        error instanceof Error ? error : new Error("Codex startup failed"),
+      const detail = error instanceof Error ? error.message : "Unknown error";
+      const failure = new Error(
+        `Codex startup failed${version?.trim() ? ` (${version.trim()})` : ""}: ${detail}`,
+        { cause: error },
       );
+      this.disconnect(failure);
       await this.cleanup();
-      throw error;
+      throw failure;
     }
   }
   private async startupRequest(

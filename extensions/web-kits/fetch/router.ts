@@ -24,12 +24,20 @@ function githubHandlerFor(
 ): GitHubHandler {
   if (runtime.github) return runtime.github;
   const cache = runtime.githubHandlerCache;
-  if (!cache) return new GitHubHandler({ config: config.github, runtime });
+  const options = {
+    config: config.github,
+    apiTimeoutMs: config.timeoutMs,
+    runtime,
+  };
+  if (!cache) return new GitHubHandler(options);
 
-  const key = JSON.stringify(config.github);
+  const key = JSON.stringify({
+    github: config.github,
+    apiTimeoutMs: config.timeoutMs,
+  });
   const existing = cache.get(key);
   if (existing) return existing;
-  const handler = new GitHubHandler({ config: config.github, runtime });
+  const handler = new GitHubHandler(options);
   cache.set(key, handler);
   return handler;
 }

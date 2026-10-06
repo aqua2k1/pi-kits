@@ -144,7 +144,7 @@ export class GhClient {
       const args = [
         "repo",
         "clone",
-        `${options.owner}/${options.repo}`,
+        `https://github.com/${options.owner}/${options.repo}.git`,
         options.destination,
         "--",
         "--depth",

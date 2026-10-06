@@ -266,8 +266,12 @@ and malformed values. It never interprets them. Context cloning is unsupported:
 no Pi transcript is converted or copied into Codex. The extension allowlist applies
 only to Pi.
 
-Codex currently requires CLI 0.160.0 (other versions are rejected until their
-protocol is verified) and existing Codex authentication. Each subagent owns a private app-server, with an
+Codex requires existing authentication and a CLI supporting the authenticated
+app-server WebSocket flags and the RPC methods used by the adapter. No exact
+CLI version is required: startup validates the initialize response, model catalog
+when an effort is requested, and thread creation. Version output is used only
+for startup error diagnostics; passing startup does not guarantee that every
+optional operation is supported. Each subagent owns a private app-server, with an
 authenticated loopback WebSocket endpoint and a private temporary token file.
 It does not use the user's shared daemon. `thread/start` creates the session;
 each managed round maps to a Codex turn. Steering uses `expectedTurnId` and

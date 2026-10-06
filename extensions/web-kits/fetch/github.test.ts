@@ -46,12 +46,15 @@ test("GitHubHandler shallow-clones a small repository and saves content locally"
   const clonePath = `/tmp/pi-web-tools-github-test-${Date.now()}-clone`;
   let cloneCalls = 0;
   const apiEndpoints: string[] = [];
+  const apiTimeouts: number[] = [];
+  const cloneTimeouts: number[] = [];
   const command: CommandRunner = {
-    async run(commandName, args) {
+    async run(commandName, args, options) {
       if (commandName === "gh" && args[0] === "--version") {
         return result({ stdout: "gh version 2\n" });
       }
       if (commandName === "gh" && args[0] === "api") {
+        apiTimeouts.push(options.timeoutMs);
         apiEndpoints.push(String(args.at(-1)));
         return result({
           stdout: JSON.stringify({ default_branch: "main", size: 12 }),
@@ -59,6 +62,7 @@ test("GitHubHandler shallow-clones a small repository and saves content locally"
       }
       if (commandName === "gh" && args[0] === "repo") {
         cloneCalls++;
+        cloneTimeouts.push(options.timeoutMs);
         const destination = args[3] as string;
         await mkdir(`${destination}/src`, { recursive: true });
         await writeFile(`${destination}/README.md`, "# Example\n");
@@ -70,6 +74,7 @@ test("GitHubHandler shallow-clones a small repository and saves content locally"
   };
   const handler = new GitHubHandler({
     config: config(clonePath),
+    apiTimeoutMs: 1_000,
     runtime: { command },
   });
 
@@ -97,6 +102,9 @@ test("GitHubHandler shallow-clones a small repository and saves content locally"
   assert.ok(second);
   assert.equal(cloneCalls, 1);
   assert.deepEqual(apiEndpoints, ["repos/acme/project", "repos/acme/project"]);
+  assert.deepEqual(apiTimeouts, [1_000, 1_000]);
+  assert.deepEqual(cloneTimeouts, [30_000]);
+  assert.equal(second.repositoryPath, first.repositoryPath);
   await cleanupResult(first.fullOutputPath);
   await cleanupResult(second.fullOutputPath);
   await rm(clonePath, { recursive: true, force: true });
@@ -131,6 +139,7 @@ test("GitHubHandler uses gh api in api mode", async () => {
   };
   const handler = new GitHubHandler({
     config: config("/tmp/pi-web-tools-api-test", { mode: "api" }),
+    apiTimeoutMs: 1_000,
     runtime: { command },
   });
   const response = await handler.fetch({
@@ -179,6 +188,7 @@ test("GitHubHandler does not clone a known oversized repository when API returns
   };
   const handler = new GitHubHandler({
     config: config(clonePath, { maxRepoSizeMB: 10 }),
+    apiTimeoutMs: 1_000,
     runtime: { command },
   });
 
@@ -229,6 +239,7 @@ test("GitHubHandler lets each in-flight clone waiter cancel independently", asyn
   };
   const handler = new GitHubHandler({
     config: config(clonePath, { mode: "clone" }),
+    apiTimeoutMs: 1_000,
     runtime: { command },
   });
   const request = {
@@ -300,6 +311,7 @@ test("GitHubHandler aborts cloning when its final waiter cancels", async () => {
   };
   const handler = new GitHubHandler({
     config: config(clonePath),
+    apiTimeoutMs: 1_000,
     runtime: { command },
   });
   const controller = new AbortController();
@@ -352,6 +364,7 @@ test("GitHubHandler reserves clone capacity before starting distinct clones", as
   };
   const handler = new GitHubHandler({
     config: config(clonePath),
+    apiTimeoutMs: 1_000,
     runtime: { command },
   });
   const requests = Array.from(
@@ -394,6 +407,7 @@ test("GitHubHandler falls back to public git when gh is unavailable", async () =
   };
   const handler = new GitHubHandler({
     config: config(clonePath),
+    apiTimeoutMs: 1_000,
     runtime: { command },
   });
   const response = await handler.fetch({
