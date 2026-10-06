@@ -15,7 +15,6 @@ import { fileURLToPath } from "node:url";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
 const extensions = [
-  "terminal",
   "open",
   "preview",
   "context-preview",
@@ -65,7 +64,7 @@ function smoke(paths: readonly string[], agentDir: string): string {
   return child.stdout;
 }
 
-test("eleven flat extensions explicitly declare their independent runtime entries", () => {
+test("ten flat extensions explicitly declare their independent runtime entries", () => {
   const entries: string[] = [];
   for (const name of extensions) {
     const dir = join(root, "extensions", name);
@@ -106,8 +105,8 @@ test("eleven flat extensions explicitly declare their independent runtime entrie
     }
     assert.equal(manifest.dependencies["@pi-kits/config"], "0.1.0");
   }
-  assert.equal(entries.length, 11);
-  assert.equal(new Set(entries).size, 11);
+  assert.equal(entries.length, 10);
+  assert.equal(new Set(entries).size, 10);
   const repository = JSON.parse(
     readFileSync(join(root, "package.json"), "utf8"),
   );

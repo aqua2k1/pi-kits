@@ -1,10 +1,7 @@
 {
   "$schema": "https://raw.githubusercontent.com/aqua2k1/pi-kits/main/pi-kits.schema.json",
   "terminal": {
-    "enabled": true,
-    "editor": "nvim",
-    "gitUI": "lazygit",
-    "fileManager": "yazi"
+    "editor": "nvim"
   },
   "open": {
     "enabled": true

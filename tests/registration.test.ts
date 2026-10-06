@@ -11,7 +11,6 @@ import type {
 import contextPreview from "../extensions/context-preview/index.ts";
 import open from "../extensions/open/index.ts";
 import preview from "../extensions/preview/index.ts";
-import terminal from "../extensions/terminal/index.ts";
 
 let agentDir: string;
 const originalAgentDir = process.env.PI_CODING_AGENT_DIR;
@@ -45,7 +44,6 @@ function host() {
 
 test("workspace entries keep public names without implicit sibling registration", () => {
   const expected = [
-    [terminal, ["vim", "lg", "fm"]],
     [open, ["open"]],
     [preview, ["preview"]],
     [contextPreview, ["context-preview"]],
@@ -95,7 +93,7 @@ test("disabled workspace registers no commands, tools, shortcuts or hooks", () =
     join(agentDir, "pi-kits.json"),
     '{"workspace":{"enabled":false}}',
   );
-  for (const entry of [terminal, open, preview, contextPreview]) {
+  for (const entry of [open, preview, contextPreview]) {
     const h = host();
     entry(h.pi);
     assert.equal(h.commands.size, 0);
@@ -107,7 +105,6 @@ test("disabled workspace registers no commands, tools, shortcuts or hooks", () =
 
 test("workspace feature switches disable only their own entry", () => {
   const cases = [
-    [terminal, "terminal"],
     [open, "open"],
     [preview, "preview"],
     [contextPreview, "contextPreview"],
@@ -126,39 +123,4 @@ test("workspace feature switches disable only their own entry", () => {
     assert.deepEqual(h.tools, []);
     assert.deepEqual(h.shortcuts, []);
   }
-});
-
-test("terminal commands use configured executables", async () => {
-  writeFileSync(
-    join(agentDir, "pi-kits.json"),
-    JSON.stringify({
-      workspace: {
-        terminal: {
-          editor: "configured-editor",
-          gitUI: "configured-git",
-          fileManager: "configured-manager",
-        },
-      },
-    }),
-  );
-  const h = host();
-  terminal(h.pi);
-  const messages: string[] = [];
-  const ctx = {
-    mode: "tui",
-    ui: {
-      custom: async () => {
-        throw new Error("fixture UI");
-      },
-      notify: (message: string) => messages.push(message),
-    },
-  } as unknown as ExtensionCommandContext;
-  for (const command of ["vim", "lg", "fm"]) {
-    await h.commands.get(command)?.handler("", ctx);
-  }
-  assert.deepEqual(messages, [
-    "Failed to launch configured-editor: fixture UI",
-    "Failed to launch configured-git: fixture UI",
-    "Failed to launch configured-manager: fixture UI",
-  ]);
 });

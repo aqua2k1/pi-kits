@@ -7,7 +7,6 @@
     "pi-package"
   ],
   "extensionResources": {
-    "terminal": "./extensions/terminal/index.ts",
     "open": "./extensions/open/index.ts",
     "preview": "./extensions/preview/index.ts",
     "context-preview": "./extensions/context-preview/index.ts",
@@ -21,7 +20,6 @@
   },
   "pi": {
     "extensions": [
-      "./extensions/terminal/index.ts",
       "./extensions/open/index.ts",
       "./extensions/preview/index.ts",
       "./extensions/context-preview/index.ts",

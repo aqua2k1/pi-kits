@@ -14,7 +14,6 @@ pi install https://github.com/aqua2k1/pi-kits.git
 
 | 扩展 | 功能 |
 | --- | --- |
-| [terminal](extensions/terminal/README.md) | 打开编辑器、Git 界面和文件管理器 |
 | [open](extensions/open/README.md) | 用默认应用打开文件、URL 和目录 |
 | [preview](extensions/preview/README.md) | 只读预览会话回复 |
 | [context-preview](extensions/context-preview/README.md) | 查看模型请求 payload |
@@ -26,9 +25,13 @@ pi install https://github.com/aqua2k1/pi-kits.git
 | [subagent](extensions/subagent/README.md) | Pi/Codex 独立任务与原生终端视图；须配置 Herdr mux 并在 Herdr 内运行 |
 | [web-kits](extensions/web-kits/README.md) | Web 搜索、网页与 GitHub 内容获取 |
 
+`terminal` 扩展已从主线移除，原实现保留在 `archive/terminal` 分支；`/vim`、`/lg`、`/fm` 不再注册，建议通过 mux 启动相应程序。
+
 ## 配置
 
 配置文件为 agent 目录下的 `pi-kits.json`，默认位于 `~/.pi/agent/`，可由 `PI_CODING_AGENT_DIR` 调整。修改后执行 `/reload`。
+
+`terminal.editor` 仍用于 `preview` 和 `context-preview`，默认 `nvim`。旧配置中的 `terminal.enabled`、`gitUI`、`fileManager` 仅为兼容保留，不再控制扩展或启动程序。
 
 各扩展可通过 `enabled` 独立关闭。完整字段见[配置示例](pi-kits.example.json)和 [JSON Schema](pi-kits.schema.json)；架构与使用细节见各包 README。
 
