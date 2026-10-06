@@ -1,9 +1,11 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { setImmediate } from "node:timers/promises";
+import type { AssistantMessage } from "@earendil-works/pi-ai";
 import type {
   ExtensionAPI,
   ExtensionContext,
+  MessageEndEvent,
 } from "@earendil-works/pi-coding-agent";
 import { useAgentDir } from "../../tests/helpers/agent-dir.ts";
 import notifyExtension, {
@@ -13,7 +15,7 @@ import notifyExtension, {
 } from "./index.ts";
 
 type EventHandler = (
-  event: { type: string },
+  event: { type: string; message?: MessageEndEvent["message"] },
   ctx: ExtensionContext,
 ) => unknown | Promise<unknown>;
 
@@ -68,6 +70,8 @@ test("registerCompletionNotification: registers lifecycle hooks", () => {
     "before_agent_start",
     "agent_start",
     "session_shutdown",
+    "session_start",
+    "message_end",
     "agent_settled",
   ]);
 });
@@ -93,6 +97,136 @@ test("registerCompletionNotification: notifies only the idle TUI", async () => {
 
   assert.deepEqual(notifications, [["Pi", "Task completed."]]);
 });
+
+function assistantMessage(
+  overrides: Partial<AssistantMessage> = {},
+): AssistantMessage {
+  return {
+    role: "assistant",
+    content: [{ type: "text", text: "Updated the notification extension." }],
+    stopReason: "stop",
+    ...overrides,
+  } as AssistantMessage;
+}
+
+for (const [stopReason, errorMessage, expected] of [
+  ["stop", undefined, "Task completed."],
+  ["error", "HTTP 401: Invalid API key", "Task failed."],
+  ["error", undefined, "Task failed."],
+  ["error", "  ", "Task failed."],
+  ["aborted", "Request cancelled", "Task aborted."],
+  ["aborted", undefined, "Task aborted."],
+  ["length", undefined, "Response truncated (token limit)."],
+] as const) {
+  test(`notification includes only ${stopReason} status (${errorMessage})`, async () => {
+    const notifications: string[] = [];
+    const { handler } = captureHandlers(
+      immediateDependencies({
+        notify: (_title, body) => {
+          notifications.push(body);
+        },
+      }),
+    );
+    await handler("message_end")(
+      {
+        type: "message_end",
+        message: assistantMessage({ stopReason, errorMessage }),
+      },
+      context(),
+    );
+    assert.deepEqual(notifications, []);
+    await handler("agent_settled")({ type: "agent_settled" }, context());
+    assert.deepEqual(notifications, [expected]);
+  });
+}
+
+test("notification uses the recovered final response, ignoring tool results", async () => {
+  const notifications: string[] = [];
+  const { handler } = captureHandlers(
+    immediateDependencies({
+      notify: (_title, body) => {
+        notifications.push(body);
+      },
+    }),
+  );
+  for (const message of [
+    assistantMessage({
+      stopReason: "error",
+      errorMessage: "Temporary failure",
+    }),
+    assistantMessage(),
+    {
+      role: "toolResult",
+      isError: true,
+      content: [{ type: "text", text: "tool error" }],
+    } as MessageEndEvent["message"],
+  ]) {
+    await handler("message_end")({ type: "message_end", message }, context());
+  }
+  await handler("agent_settled")({ type: "agent_settled" }, context());
+  assert.deepEqual(notifications, ["Task completed."]);
+});
+
+test("notification excludes response text, thinking and tool calls", async () => {
+  const notifications: string[] = [];
+  const { handler } = captureHandlers(
+    immediateDependencies({
+      notify: (_title, body) => {
+        notifications.push(body);
+      },
+    }),
+  );
+  await handler("message_end")(
+    {
+      type: "message_end",
+      message: assistantMessage({
+        content: [
+          { type: "thinking", thinking: "private reasoning" },
+          {
+            type: "toolCall",
+            id: "1",
+            name: "bash",
+            arguments: { command: "secret" },
+          },
+          { type: "text", text: `  Summary\n\t${"😀".repeat(400)}  ` },
+        ],
+      }),
+    },
+    context(),
+  );
+  await handler("agent_settled")({ type: "agent_settled" }, context());
+  assert.deepEqual(notifications, ["Task completed."]);
+});
+
+for (const event of [
+  "before_agent_start",
+  "session_start",
+  "session_shutdown",
+]) {
+  test(`notification clears stale errors on ${event}`, async () => {
+    const notifications: string[] = [];
+    const { handler } = captureHandlers(
+      immediateDependencies({
+        notify: (_title, body) => {
+          notifications.push(body);
+        },
+      }),
+    );
+    await handler("message_end")(
+      {
+        type: "message_end",
+        message: assistantMessage({
+          stopReason: "error",
+          errorMessage: "Old failure",
+        }),
+      },
+      context(),
+    );
+    await handler(event)({ type: event }, context());
+    await handler("agent_settled")({ type: "agent_settled" }, context());
+    assert.deepEqual(notifications, ["Task completed."]);
+  });
+}
 
 test("registerCompletionNotification: applies the idle quiet period", async () => {
   let delay: number | undefined;

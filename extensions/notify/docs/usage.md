@@ -24,9 +24,23 @@ Architecture:
   library through `import.meta.url`, independent of the working directory.
 - `extensions/notify/index.ts`: Pi lifecycle wiring only.
 
-The completion adapter uses the same API to send `Pi: Task completed.` only in
+The completion adapter uses the same API to send a `Pi` notification only in
 TUI after `agent_settled` has remained idle for the configured quiet period
-(one second by default). Pending notifications
+(one second by default). The body reflects the last assistant response:
+
+- `Task completed.`
+- `Task failed.`
+- `Task aborted.`
+- `Response truncated (token limit).`
+
+Only the status is included, never response summaries, error details, thinking,
+or tool-call arguments. Automatic retries are allowed to finish before
+notifying: a recovered error is not reported
+as a failure. Tool errors alone do not imply task failure; the final assistant
+response determines the status. Errors not represented in an assistant response
+(such as extension-handler errors or a process crash) are not captured.
+
+Pending notifications
 are cancelled on input, `before_agent_start`, `agent_start`, or session shutdown.
 The idle state is checked again before delivery; notifier errors are contained.
 
