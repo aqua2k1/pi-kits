@@ -347,9 +347,12 @@ export class HerdrAdapter implements MuxAdapter {
       !isAbsolute(options.cwd) ||
       !options.argv.length ||
       !options.argv[0] ||
-      [options.agentId, options.cwd, ...options.argv].some((s) =>
-        s.includes("\0"),
-      )
+      [
+        options.agentId,
+        options.agentType ?? "",
+        options.cwd,
+        ...options.argv,
+      ].some((s) => s.includes("\0"))
     ) {
       throw new HerdrError("invalid_start");
     }
@@ -359,7 +362,7 @@ export class HerdrAdapter implements MuxAdapter {
       "--cwd",
       options.cwd,
       "--label",
-      `pi-subagent-${options.agentId}`,
+      `sub-${options.agentType ?? "anonymous"}-${options.agentId}`,
       "--no-focus",
     ];
     for (const [key, value] of Object.entries(options.env)) {

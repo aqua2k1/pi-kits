@@ -209,6 +209,7 @@ class PiSession implements RuntimeSession {
       }
       this.terminal = await this.host.mux.start({
         agentId: this.options.id,
+        agentType: this.options.agent?.name,
         cwd: this.options.cwd,
         argv,
         env: {

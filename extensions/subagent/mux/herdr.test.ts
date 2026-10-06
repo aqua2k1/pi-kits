@@ -21,7 +21,8 @@ import {
 
 const binary = "/installed/herdr with ' quotes";
 const startOptions: StartOptions = {
-  agentId: "reviewer",
+  agentId: "550e8400-e29b-41d4-a716-446655440000",
+  agentType: "reviewer",
   cwd: "/tmp/work dir",
   argv: ["pi", "-e", "/tmp/worker.ts"],
   env: { WORKER_TOKEN: "secret-token" },
@@ -152,6 +153,17 @@ function shellWords(command: string): string[] {
     .slice(0, -1);
 }
 
+test("anonymous workspace labels retain the full agent ID", async (t) => {
+  environment(t);
+  const fake = new FakeHerdr();
+  await fake.adapter().start({ ...startOptions, agentType: undefined });
+  const argv = fake.commands("workspace", "create")[0];
+  assert.equal(
+    argv[argv.indexOf("--label") + 1],
+    `sub-anonymous-${startOptions.agentId}`,
+  );
+});
+
 test("constructor has no CLI side effects; check_env only reads HERDR_ENV", (t) => {
   environment(t);
   const fake = new FakeHerdr();
@@ -180,7 +192,7 @@ test("start creates a no-focus workspace with env, runs complete argv", async (t
       "--cwd",
       startOptions.cwd,
       "--label",
-      "pi-subagent-reviewer",
+      "sub-reviewer-550e8400-e29b-41d4-a716-446655440000",
       "--no-focus",
       "--env",
       "WORKER_TOKEN=secret-token",
@@ -785,6 +797,7 @@ test("validates argv/env/limits before mutating anything", async (t) => {
   const adapter = fake.adapter();
   for (const options of [
     { ...startOptions, argv: [] },
+    { ...startOptions, agentType: "explorer\0oops" },
     { ...startOptions, argv: ["pi\0oops"] },
     { ...startOptions, cwd: "--focus" },
   ]) {

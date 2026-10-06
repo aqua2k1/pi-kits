@@ -1494,13 +1494,15 @@ test("resume uses same thread without overriding native model or effort", async 
 });
 
 test("native attachment retains backend on detach, blocks managed sends until terminal exits", async (t) => {
-  const f = fixture();
+  const definition = agent();
+  const f = fixture({ agent: definition });
   t.after(() => f.session.close());
   await f.session.start();
   const terminal = await f.session.attachment();
   assert.equal(f.session.terminal, terminal);
   assert.equal(await f.session.attachment(), terminal);
   assert.equal(f.starts[0].env.PI_KITS_SUBAGENT_WORKER, "1");
+  assert.equal(f.starts[0].agentType, definition.name);
   assert.deepEqual(f.starts[0].argv.slice(-2), ["resume", "thread"]);
   assert.equal(f.starts[0].argv.includes(f.token), false);
   await f.mux.close_view({ id: "view" });

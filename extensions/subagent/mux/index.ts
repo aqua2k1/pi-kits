@@ -19,6 +19,8 @@ export interface ViewHandle {
 
 export interface StartOptions {
   agentId: string;
+  /** Configured agent type; omitted for anonymous sessions. */
+  agentType?: string;
   cwd: string;
   /** Complete command, including the executable (e.g. pi -e worker.ts). */
   argv: string[];

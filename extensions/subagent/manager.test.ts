@@ -222,6 +222,14 @@ test("native session names use the agent type or '-' and stay fixed on resume", 
   };
   assert.equal(name(named.id), "Sub · explorer · Inspect auth");
   assert.equal(name(anonymous.id), "Sub · - · Inspect auth");
+  assert.equal(
+    mux.started.find((entry) => entry.agentId === named.id)?.agentType,
+    "explorer",
+  );
+  assert.equal(
+    mux.started.find((entry) => entry.agentId === anonymous.id)?.agentType,
+    undefined,
+  );
   mux.emit(named.id, { type: "completed", result: "Done" });
   await until(() => manager.get(named.id).status === "completed");
   manager.resume(named.id, { prompt: "Continue", description: "New title" });

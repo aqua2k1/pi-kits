@@ -1133,6 +1133,7 @@ class CodexSession implements RuntimeSession {
       if (!threadId) throw new Error("Codex attachment thread missing");
       const terminal = await this.host.mux.start({
         agentId: this.options.id,
+        agentType: this.options.agent?.name,
         cwd: this.options.cwd,
         argv: [
           this.options.executable ?? "codex",

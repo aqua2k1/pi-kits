@@ -34,7 +34,9 @@ user Markdown files. Native sessions are named at creation as
 `Sub · <agent type or -> · <initial description>` (for example,
 `Sub · explorer · Inspect auth`). Resuming may change the displayed task
 description but does not rename the native session. This first version does not
-support scheduling or worktrees.
+support scheduling or worktrees. Herdr workspace labels use
+`sub-<agent type>-<full UUID>`, or `sub-anonymous-<full UUID>` when no type is
+selected; these are separate from native session names.
 
 Configure `<agent-dir>/pi-kits.json` (normally `~/.pi/agent/pi-kits.json`,
 honoring `PI_CODING_AGENT_DIR`, including `~` expansion) and `/reload`:
