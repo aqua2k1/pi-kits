@@ -105,6 +105,64 @@ test("shared messages apply full-width background in both modes", () => {
   }
 });
 
+test("message backgrounds survive resets and repeated terminal resizing", () => {
+  const renderer = compactMessage("Long notification title".repeat(8), () => ({
+    status: "completed",
+    preview: "中文🙂".repeat(100),
+  }));
+  const coloredTheme = {
+    ...theme,
+    fg: (_color: string, value: string) => `\x1b[36m${value}\x1b[0m`,
+    bg: (_color: string, value: string) => `\x1b[45m${value}\x1b[49m`,
+  } as Theme;
+  for (const expanded of [false, true]) {
+    const component = renderer(
+      {
+        role: "custom",
+        timestamp: 0,
+        customType: "test",
+        content: "中文🙂".repeat(100),
+        details: { value: "metadata" },
+        display: true,
+      },
+      { expanded, outputPad: 0 },
+      coloredTheme,
+    );
+    assert.ok(component);
+    for (const width of [80, 20, 8, 2, 1, 0, 1, 2, 8, 80]) {
+      const lines = component.render(width);
+      if (width === 0) assert.deepEqual(lines, []);
+      else assert.ok(lines.length > 0);
+      for (const line of lines) {
+        assert.equal(visibleWidth(line), width);
+        let background = false;
+        let cells = 0;
+        // biome-ignore lint/suspicious/noControlCharactersInRegex: Parse ANSI SGR to assert actual painted cells.
+        for (const span of line.split(/(\x1b\[[0-9;]*m)/u)) {
+          if (span.startsWith("\x1b[")) {
+            for (const code of span.slice(2, -1).split(";")) {
+              if (code === "" || code === "0" || code === "49")
+                background = false;
+              if (code === "45") background = true;
+            }
+          } else if (visibleWidth(span) > 0) {
+            assert.ok(background, `unpainted cells in ${JSON.stringify(line)}`);
+            cells += visibleWidth(span);
+          }
+        }
+        assert.equal(cells, width);
+        assert.equal(
+          background,
+          false,
+          "background must not leak past the line",
+        );
+      }
+    }
+    component.invalidate();
+    assert.ok(component.render(80).length > 0);
+  }
+});
+
 test("shared calls and messages escape terminal controls in both modes", () => {
   const args = { secret: "hidden\x1b[2J\x9b31m\u2028value" };
   const call = compactCall("Tool", () => args.secret);

@@ -870,6 +870,48 @@ test("multi-select footer distinguishes checked drafts from confirmed progress",
   await askTabbedQuestions(host.ui, multiParams);
 });
 
+test("multiline option labels stay within the frame when selecting and resizing", async () => {
+  const previousRows = tui.terminal.rows;
+  const multiline: AskUserParams = {
+    questions: [
+      {
+        question: "Choose",
+        options: [
+          { label: "First\nsecond" },
+          { label: "Third\r\nfourth\u2028last" },
+        ],
+      },
+    ],
+  };
+  const host = testUI(
+    (component) => {
+      for (const rows of [12, 24, 12]) {
+        Object.assign(tui.terminal, { rows });
+        for (const width of [80, 8, 1, 80]) {
+          for (const key of ["", "\x1b[B", "\x1b[A"]) {
+            if (key) component.handleInput?.(key);
+            const lines = component.render(width);
+            assert.equal(lines.length, Math.floor(rows / 2));
+            assert.ok(lines.every((line) => visibleWidth(line) === width));
+            assert.ok(lines.every((line) => !/[\r\n\u2028\u2029]/u.test(line)));
+          }
+        }
+      }
+      component.handleInput?.("\x1b");
+    },
+    undefined,
+    styledTheme,
+  );
+  try {
+    assert.equal(
+      (await askTabbedQuestions(host.ui, multiline)).cancelled,
+      true,
+    );
+  } finally {
+    Object.assign(tui.terminal, { rows: previousRows });
+  }
+});
+
 test("selected description scrolls independently of the title and survives compact layout", async () => {
   const previousRows = tui.terminal.rows;
   const detailed: AskUserParams = {

@@ -53,6 +53,22 @@ test("tab viewport supports many labels, narrow widths and click bounds", () => 
   assert.equal(tabs.at(-1)?.label, "›");
 });
 
+test("panel boundaries normalize line breaks without removing ANSI styles", () => {
+  const label = "First\nsecond\rthird\u2028fourth\u2029last";
+  const styled = `\x1b[36m${label}\x1b[39m`;
+  for (const width of [0, 1, 2, 8, 80]) {
+    const lines = fillPanel([styled, "Action\r\nHelp", "Footer"], width, 6);
+    assert.equal(lines.length, 6);
+    for (const line of [...lines, panelRule(width, styled, (text) => text)]) {
+      assert.doesNotMatch(line, /[\r\n\u2028\u2029]/u);
+      assert.equal(visibleWidth(line), width);
+    }
+  }
+  const lines = fillPanel([styled], 80, 1);
+  assert.ok(lines[0].startsWith("\x1b[36mFirst second third fourth last"));
+  assert.ok(lines[0].includes("\x1b[39m"));
+});
+
 test("panels clip Unicode content and pin arbitrary footer rows", () => {
   const lines = fillPanel(
     ["日志🙂".repeat(10), "Body", "Action", "Help"],

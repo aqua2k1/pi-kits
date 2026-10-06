@@ -134,19 +134,43 @@ export function compactMessage(
       typeof message.content === "string"
         ? message.content
         : textContent(message.content);
-    const box = new Box(1, 1, (text) => theme.bg("customMessageBg", text));
-    box.addChild(
-      options.expanded
-        ? expandedResult(content, message.details)
-        : summaryComponent(
-            summarize(message.details) ?? {
-              status: "result",
-              preview: content,
-            },
-            theme,
-            label,
-          ),
-    );
-    return box;
+    // Cropping inserts SGR resets. Paint each span separately so the ellipsis
+    // and padding retain the background without removing foreground styles.
+    const paint = (text: string) =>
+      text
+        // biome-ignore lint/suspicious/noControlCharactersInRegex: ANSI SGR reset sequences are intentional.
+        .split(/(\x1b\[(?:0|49)?m)/u)
+        .map((span, index) =>
+          index % 2 === 0 ? theme.bg("customMessageBg", span) : span,
+        )
+        .join("");
+    const child = options.expanded
+      ? expandedResult(content, message.details)
+      : summaryComponent(
+          summarize(message.details) ?? {
+            status: "result",
+            preview: content,
+          },
+          theme,
+          label,
+        );
+    // Text can emit a wide grapheme even when the viewport is only one column.
+    const boundedChild = {
+      render: (width: number) =>
+        child.render(width).map((line) => truncateToWidth(line, width)),
+      invalidate: () => child.invalidate(),
+    };
+    const box = new Box(1, 1, paint);
+    const narrowBox = new Box(0, 1, paint);
+    box.addChild(boundedChild);
+    narrowBox.addChild(boundedChild);
+    return {
+      render: (width: number) =>
+        width <= 0 ? [] : (width < 3 ? narrowBox : box).render(width),
+      invalidate() {
+        box.invalidate();
+        narrowBox.invalidate();
+      },
+    };
   };
 }
