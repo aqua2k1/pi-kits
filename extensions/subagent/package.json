@@ -1,7 +1,6 @@
 {
   "name": "pi-subagent",
   "private": true,
-  "version": "0.1.0",
   "type": "module",
   "keywords": [
     "pi-package"
@@ -19,8 +18,8 @@
     "test:herdr": "node --import tsx tests/herdr-live.ts"
   },
   "dependencies": {
-    "@pi-kits/config": "0.1.0",
-    "@pi-kits/shared": "0.1.0",
+    "@pi-kits/config": "*",
+    "@pi-kits/shared": "*",
     "ws": "^8.22.0"
   },
   "peerDependencies": {

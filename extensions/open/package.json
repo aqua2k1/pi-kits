@@ -1,7 +1,6 @@
 {
   "name": "pi-open",
   "private": true,
-  "version": "0.1.0",
   "type": "module",
   "keywords": [
     "pi-package"
@@ -15,8 +14,8 @@
     ]
   },
   "dependencies": {
-    "@pi-kits/config": "0.1.0",
-    "@pi-kits/shared": "0.1.0"
+    "@pi-kits/config": "*",
+    "@pi-kits/shared": "*"
   },
   "peerDependencies": {
     "@earendil-works/pi-ai": "*",

@@ -1,7 +1,6 @@
 {
   "name": "web-kits",
   "private": true,
-  "version": "0.1.0",
   "type": "module",
   "keywords": [
     "pi-package"
@@ -19,7 +18,7 @@
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {
-    "@pi-kits/config": "0.1.0"
+    "@pi-kits/config": "*"
   },
   "peerDependencies": {
     "@earendil-works/pi-ai": "*",

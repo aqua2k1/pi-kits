@@ -1,7 +1,6 @@
 {
   "name": "@pi-kits/shared",
   "private": true,
-  "version": "0.1.0",
   "type": "module",
   "exports": {
     "./desktop-open": "./desktop-open.ts",

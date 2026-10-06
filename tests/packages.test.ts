@@ -76,6 +76,7 @@ test("ten flat extensions explicitly declare their independent runtime entries",
     assert.deepEqual(manifest.pi.extensions, ["./index.ts"]);
     assert.ok(manifest.keywords.includes("pi-package"));
     assert.equal(manifest.private, true);
+    assert.equal(manifest.version, undefined);
     const declared = manifest.extensionResources[name];
     assert.deepEqual(
       typeof declared === "string" ? [declared] : declared,
@@ -103,13 +104,17 @@ test("ten flat extensions explicitly declare their independent runtime entries",
         "host packages must not be runtime dependencies",
       );
     }
-    assert.equal(manifest.dependencies["@pi-kits/config"], "0.1.0");
+    assert.equal(manifest.dependencies["@pi-kits/config"], "*");
+    if (name !== "web-kits") {
+      assert.equal(manifest.dependencies["@pi-kits/shared"], "*");
+    }
   }
   assert.equal(entries.length, 10);
   assert.equal(new Set(entries).size, 10);
   const repository = JSON.parse(
     readFileSync(join(root, "package.json"), "utf8"),
   );
+  assert.equal(repository.version, undefined);
   assert.ok(repository.keywords.includes("pi-package"));
   assert.deepEqual(Object.keys(repository.extensionResources), extensions);
   const named = Object.values(repository.extensionResources).flatMap((value) =>
@@ -172,6 +177,7 @@ test("repository declares an independent valid Gruvbox theme", async () => {
   );
   const dir = join(root, "themes");
   const manifest = JSON.parse(readFileSync(join(dir, "package.json"), "utf8"));
+  assert.equal(manifest.version, undefined);
   assert.ok(manifest.keywords.includes("pi-package"));
   assert.deepEqual(manifest.pi.themes, ["./gruvbox.json"]);
   assert.deepEqual(repository.pi.themes, ["./themes/gruvbox.json"]);
