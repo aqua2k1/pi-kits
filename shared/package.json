@@ -10,6 +10,7 @@
     "./ui/tabs": "./ui/tabs.ts",
     "./ui/panel": "./ui/panel.ts",
     "./ui/widget": "./ui/widget.ts",
+    "./ui/tree": "./ui/tree.ts",
     "./ui/docked-panel": "./ui/docked-panel/index.ts"
   },
   "scripts": {

@@ -1,5 +1,6 @@
 import type { Theme } from "@earendil-works/pi-coding-agent";
 import { oneLine } from "../../../shared/ui/renderers.ts";
+import { renderTree, type TreeNode } from "../../../shared/ui/tree.ts";
 import {
   renderWidgetFrame,
   widgetContentBounds,
@@ -128,54 +129,65 @@ export function layoutAgentWidget(
 ): { lines: string[]; hits: AgentWidgetHit[] } {
   if (width < 1 || !agents.length) return { lines: [], hits: [] };
   const bounds = widgetContentBounds(width);
-  const hits: AgentWidgetHit[] = [];
-  const hit = (agent: AgentSnapshot, row: number) => {
-    hits.push({
-      x: bounds.x,
-      y: bounds.y + row,
-      width: bounds.width,
-      agentId: agent.id,
-    });
-  };
   const queued = agents.filter((agent) => agent.status === "queued").length;
   const active = agents.filter(isBusy);
   const finished = agents.filter(
     (agent) => !isBusy(agent) && agent.status !== "queued",
   );
-  const lines: string[] = [];
-  const branch = (text: string) => theme.fg("muted", text);
   // Bounded height; active agents take priority over retained finished rows.
-  for (const agent of active.slice(0, 4)) {
+  const nodes: TreeNode<string>[] = active.slice(0, 4).map((agent) => {
     const interactive = agent.sessionState === "interactive";
-    hit(agent, lines.length);
-    lines.push(
-      `${branch("├─")} ${agentHeader(agent, theme, now)}`,
-      theme.fg(
-        "muted",
-        `│   ⎿ ${oneLine(interactive ? (agent.sessionActivity ?? "User interaction") : (agent.activity ?? agent.status))}${interactive ? "" : ` · ${agentStats(agent, now)}`}`,
-      ),
-    );
-  }
+    return {
+      content: agentHeader(agent, theme, now),
+      data: agent.id,
+      children: [
+        {
+          marker: "⎿",
+          content: theme.fg(
+            "muted",
+            `${oneLine(interactive ? (agent.sessionActivity ?? "User interaction") : (agent.activity ?? agent.status))}${interactive ? "" : ` · ${agentStats(agent, now)}`}`,
+          ),
+        },
+      ],
+    };
+  });
+  let rowCount = nodes.length * 2;
   if (active.length > 4) {
-    lines.push(
-      `${branch("├─")} ${theme.fg("dim", `${active.length - 4} more active`)}`,
-    );
+    nodes.push({
+      content: theme.fg("dim", `${active.length - 4} more active`),
+    });
+    rowCount += 1;
   }
   if (queued) {
-    lines.push(`${branch("├─")} ${theme.fg("dim", `${queued} queued`)}`);
+    nodes.push({ content: theme.fg("dim", `${queued} queued`) });
+    rowCount += 1;
   }
-  for (const agent of finished.slice(-Math.max(0, 10 - lines.length))) {
-    if (lines.length >= 10) break;
-    hit(agent, lines.length);
-    lines.push(
-      `${branch("├─")} ${agentHeader(agent, theme, now)} · ${agentStats(agent, now)}`,
+  const remaining = Math.max(0, 10 - rowCount);
+  if (remaining) {
+    nodes.push(
+      ...finished.slice(-remaining).map((agent) => ({
+        content: `${agentHeader(agent, theme, now)} · ${agentStats(agent, now)}`,
+        data: agent.id,
+      })),
     );
   }
-  if (lines.length) {
-    lines[lines.length - 1] = lines[lines.length - 1].replace("├─", "└─");
-  }
+  const rows = renderTree(nodes, theme, bounds.width);
+  const hits: AgentWidgetHit[] = rows.flatMap((row, index) =>
+    row.data === undefined
+      ? []
+      : [
+          {
+            x: bounds.x,
+            y: bounds.y + index,
+            width: bounds.width,
+            agentId: row.data,
+          },
+        ],
+  );
   return {
-    lines: renderWidgetFrame("Subagents", theme, width, () => lines),
+    lines: renderWidgetFrame("Subagents", theme, width, () =>
+      rows.map((row) => row.text),
+    ),
     hits,
   };
 }

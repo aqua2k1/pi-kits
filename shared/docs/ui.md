@@ -9,6 +9,15 @@ extension registration:
   provide a bounded tab viewport and component-local mouse hit testing.
 - `@pi-kits/shared/ui/panel`: `fillPanel` and `panelRule` provide opaque
   padded frames, pinned footer rows, and width-safe rules.
+- `@pi-kits/shared/ui/tree`: `renderTree(nodes, theme, width)` renders flat or
+  nested `TreeNode<T>` lists independently of widget frames. Each node supplies
+  single-line, optionally themed `content`, optional `children` and caller-owned
+  `data`. Connectors use `muted`; last-sibling/ancestor state determines `├─`,
+  `└─`, `│` and four-column indentation. Optional `marker` supports detail rows
+  such as `⎿` without changing ancestor continuation. Output rows retain `text`,
+  `depth` and each node's own `data` (never inherited), so callers can map rows
+  to actions. Content is clipped by terminal width; callers own row budgets and
+  input handling. Compose the rows with a widget frame, or use them on their own.
 - `@pi-kits/shared/ui/widget`: `renderWidgetFrame(title, theme, width, renderBody)`
   provides a rounded `dim` border, an `accent` title and one-column padding.
   The callback receives the available content width; ANSI/Unicode lines are

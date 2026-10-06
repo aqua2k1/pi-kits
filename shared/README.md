@@ -18,7 +18,7 @@ flowchart LR
 
 - `desktop-open.ts`、`terminal-app.ts`、`readonly-preview.ts`：本机应用启动与预览。
 - `notifications/`：独立通知 API 和平台脚本。
-- `ui/`：工具渲染、标签页与停靠面板，详见 [UI 文档](docs/ui.md)。
+- `ui/`：工具渲染、标签页、树形列表、widget 边框与停靠面板，详见 [UI 文档](docs/ui.md)。
 - `config/`：独立的 [@pi-kits/config](config/README.md) 配置子包。
 
 ## 配置

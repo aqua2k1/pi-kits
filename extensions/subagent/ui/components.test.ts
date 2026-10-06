@@ -15,6 +15,7 @@ import type { AgentSnapshot } from "../manager.ts";
 import {
   type AgentSource,
   agentStats,
+  layoutAgentWidget,
   oneLine,
   renderAgentWidget,
 } from "./presentation.ts";
@@ -691,9 +692,42 @@ test("widget preserves tree indentation and uses muted branches inside a dim fra
   assert.match(lines[2], /^│ │ {3}⎿ read/);
   assert.match(lines[3], /^│ └─ 1 queued/);
   const branches = colors.filter(
-    ({ text }) => text === "├─" || text.startsWith("│   ⎿"),
+    ({ text }) => text === "├─" || text === "└─" || text === "│   ⎿",
   );
   assert.equal(branches.length, 3);
   assert.ok(branches.every(({ color }) => color === "muted"));
   assert.ok(colors.some(({ color, text }) => color === "dim" && text === "│ "));
+});
+
+test("shared tree closes the last active agent and keeps only title rows clickable", () => {
+  for (const width of [20, 120]) {
+    const last = { ...agent("last"), description: "Task with ├─ text" };
+    const { lines, hits } = layoutAgentWidget(
+      [agent("first"), last],
+      theme,
+      width,
+      2_000,
+    );
+    assert.deepEqual(
+      hits.map((hit) => [hit.y, hit.agentId]),
+      [
+        [1, "first"],
+        [3, "last"],
+      ],
+    );
+    if (width >= 24) {
+      assert.match(lines[1], /^│ ├─ /);
+      assert.match(lines[2], /^│ │ {3}⎿ read/);
+      assert.match(lines[3], /^│ └─ /);
+      assert.match(lines[3], /Task with ├─ text/);
+      assert.match(lines[4], /^│ {5}⎿ read/);
+    } else {
+      assert.match(lines[3], /^└─ /);
+      assert.match(lines[4], /^ {4}⎿ read/);
+    }
+  }
+  const single = layoutAgentWidget([agent()], theme, 120, 2_000);
+  assert.match(single.lines[1], /^│ └─ /);
+  assert.match(single.lines[2], /^│ {5}⎿ read/);
+  assert.equal(single.hits.length, 1);
 });

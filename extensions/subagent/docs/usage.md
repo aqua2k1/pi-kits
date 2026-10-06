@@ -106,7 +106,9 @@ Views are native control attachments, not read-only viewers.
 
 In TUI mode, a live tree-style status area stays above the editor while tasks are
 active or queued, independently of the views panel. It uses the shared rounded
-widget frame with dim borders and consistently muted tree branches; below 24
+widget frame and shared nested-list renderer, with dim borders and consistently
+muted tree branches. Final nodes close their branch, including activity children;
+below 24
 columns it falls back to an unbordered heading. Height is bounded to 12 lines
 (11 without borders). In fullscreen mode, clicking an agent's title row opens
 its native pane or focuses the existing pane. Activity/statistics rows, borders
