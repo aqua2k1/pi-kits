@@ -1,10 +1,12 @@
 import type { ExtensionUIContext } from "@earendil-works/pi-coding-agent";
-import type { TUI } from "@earendil-works/pi-tui";
+import type { TUI, TuiMouseEvent } from "@earendil-works/pi-tui";
 import {
   type AgentSource,
+  type AgentWidgetHit,
   isBusy,
   isWorking,
-  renderAgentWidget,
+  layoutAgentWidget,
+  nativeViewAvailable,
 } from "./presentation.ts";
 
 export const SUBAGENT_WIDGET = "pi-kits:subagents";
@@ -33,10 +35,12 @@ export class SubagentStatusWidget {
   private cancelTimer?: () => void;
   private readonly unsubscribe: () => void;
   private lastStatus?: string;
+  private readonly opening = new Set<string>();
 
   constructor(
     private readonly source: AgentSource,
     private readonly clock: WidgetClock = defaultClock,
+    private readonly onOpen?: (agentId: string) => Promise<void> | void,
   ) {
     this.unsubscribe = source.subscribe(() => this.refresh());
   }
@@ -99,10 +103,47 @@ export class SubagentStatusWidget {
         SUBAGENT_WIDGET,
         (tui, theme) => {
           this.tui = tui;
+          let hits: AgentWidgetHit[] = [];
           return {
-            render: (width) =>
-              renderAgentWidget(this.visible(), theme, width, this.clock.now()),
-            invalidate() {},
+            render: (width) => {
+              const layout = layoutAgentWidget(
+                this.visible(),
+                theme,
+                width,
+                this.clock.now(),
+              );
+              hits = layout.hits;
+              return layout.lines;
+            },
+            handleMouse: (event: TuiMouseEvent) => {
+              if (this.disposed || !this.onOpen || event.button !== "left")
+                return;
+              const hit = hits.find(
+                (item) =>
+                  item.y === event.y &&
+                  event.x >= item.x &&
+                  event.x < item.x + item.width,
+              );
+              const agent =
+                hit && this.visible().find((item) => item.id === hit.agentId);
+              if (
+                !agent ||
+                agent.status === "queued" ||
+                !nativeViewAvailable(agent)
+              )
+                return;
+              if (event.type === "press")
+                return { handled: true, render: false };
+              if (event.type !== "click") return;
+              if (!this.opening.has(agent.id)) {
+                this.opening.add(agent.id);
+                void this.dispatchOpen(agent.id);
+              }
+              return { handled: true, render: false };
+            },
+            invalidate() {
+              hits = [];
+            },
           };
         },
         { placement: "aboveEditor" },
@@ -122,6 +163,21 @@ export class SubagentStatusWidget {
     } else if (!needsTimer && this.cancelTimer) {
       this.cancelTimer();
       this.cancelTimer = undefined;
+    }
+  }
+
+  private async dispatchOpen(agentId: string): Promise<void> {
+    try {
+      await this.onOpen?.(agentId);
+    } catch (error) {
+      if (!this.disposed) {
+        this.ui?.notify(
+          error instanceof Error ? error.message : String(error),
+          "error",
+        );
+      }
+    } finally {
+      this.opening.delete(agentId);
     }
   }
 

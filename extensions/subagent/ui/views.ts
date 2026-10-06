@@ -17,31 +17,18 @@ import {
   dockedPanelLayout,
   runDockedPanel,
 } from "../../../shared/ui/docked-panel/index.ts";
-import type { AgentSnapshot } from "../manager.ts";
 import {
   type AgentSource,
   agentDisplayStatus,
   agentHeader,
   agentStats,
+  nativeViewAvailable,
 } from "./presentation.ts";
 
 export type ViewAction = "open" | "focus" | "close" | "copy" | "delete";
 export interface ViewChoice {
   agentId: string;
   action: ViewAction;
-}
-
-function nativeViewAvailable(agent: AgentSnapshot): boolean {
-  if (agent.sessionState === "closed") return false;
-  if (agent.terminalId) return true;
-  return (
-    agent.capabilities?.retainedSession === true &&
-    ["running", "idle", "interactive"].includes(agent.sessionState ?? "") &&
-    !["queued", "starting", "disconnected"].includes(agent.status) &&
-    (agent.status !== "error" || agent.sessionState === "idle") &&
-    (!["running", "stopping"].includes(agent.status) ||
-      agent.capabilities.concurrentNativeInput)
-  );
 }
 
 export class SubagentViewsPanel {

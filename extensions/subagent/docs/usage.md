@@ -108,7 +108,10 @@ In TUI mode, a live tree-style status area stays above the editor while tasks ar
 active or queued, independently of the views panel. It uses the shared rounded
 widget frame with dim borders and consistently muted tree branches; below 24
 columns it falls back to an unbordered heading. Height is bounded to 12 lines
-(11 without borders). It shows state, current tool
+(11 without borders). In fullscreen mode, clicking an agent's title row opens
+its native pane or focuses the existing pane. Activity/statistics rows, borders
+and count summaries do not respond; queued/released tasks cannot open a pane.
+The keyboard alternative remains `/subagent:views`. It shows state, current tool
 activity, elapsed time, assistant turns, tool calls, cumulative tokens, context
 percentage (when available), and compactions. Tokens exclude repeated cache-read
 prefixes. Up to four active tasks are expanded; additional active/queued tasks

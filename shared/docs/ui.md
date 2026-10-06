@@ -15,6 +15,8 @@ extension registration:
   clipped and padded to the full frame width. Below 24 columns it falls back to
   an unbordered heading and body; empty content renders nothing. Callers own
   height limits, content styling, subscriptions and timers.
+  `widgetContentBounds(width)` supplies the content rectangle (excluding the
+  heading, border and padding) for caller-owned mouse hit testing.
 - `@pi-kits/shared/ui/docked-panel`: the fixed half-screen editor-dock design:
   `layout.ts` owns height, compact thresholds, title/detail/list budgeting and
   scrolling windows; `frame.ts` owns the themed titled top boundary, separate

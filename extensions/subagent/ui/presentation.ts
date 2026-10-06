@@ -1,6 +1,9 @@
 import type { Theme } from "@earendil-works/pi-coding-agent";
 import { oneLine } from "../../../shared/ui/renderers.ts";
-import { renderWidgetFrame } from "../../../shared/ui/widget.ts";
+import {
+  renderWidgetFrame,
+  widgetContentBounds,
+} from "../../../shared/ui/widget.ts";
 import type { AgentSnapshot, AgentStatus } from "../manager.ts";
 
 export { oneLine } from "../../../shared/ui/renderers.ts";
@@ -88,13 +91,52 @@ export function statusIcon(agent: AgentSnapshot, theme: Theme, now: number) {
   return theme.fg("dim", agent.status === "queued" ? "◦" : "■");
 }
 
+export function nativeViewAvailable(agent: AgentSnapshot): boolean {
+  if (agent.sessionState === "closed") return false;
+  if (agent.terminalId) return true;
+  return (
+    agent.capabilities?.retainedSession === true &&
+    ["running", "idle", "interactive"].includes(agent.sessionState ?? "") &&
+    !["queued", "starting", "disconnected"].includes(agent.status) &&
+    (agent.status !== "error" || agent.sessionState === "idle") &&
+    (!["running", "stopping"].includes(agent.status) ||
+      agent.capabilities.concurrentNativeInput)
+  );
+}
+
+export interface AgentWidgetHit {
+  x: number;
+  y: number;
+  width: number;
+  agentId: string;
+}
+
 export function renderAgentWidget(
   agents: AgentSnapshot[],
   theme: Theme,
   width: number,
   now = Date.now(),
 ): string[] {
-  if (width < 1 || !agents.length) return [];
+  return layoutAgentWidget(agents, theme, width, now).lines;
+}
+
+export function layoutAgentWidget(
+  agents: AgentSnapshot[],
+  theme: Theme,
+  width: number,
+  now = Date.now(),
+): { lines: string[]; hits: AgentWidgetHit[] } {
+  if (width < 1 || !agents.length) return { lines: [], hits: [] };
+  const bounds = widgetContentBounds(width);
+  const hits: AgentWidgetHit[] = [];
+  const hit = (agent: AgentSnapshot, row: number) => {
+    hits.push({
+      x: bounds.x,
+      y: bounds.y + row,
+      width: bounds.width,
+      agentId: agent.id,
+    });
+  };
   const queued = agents.filter((agent) => agent.status === "queued").length;
   const active = agents.filter(isBusy);
   const finished = agents.filter(
@@ -105,6 +147,7 @@ export function renderAgentWidget(
   // Bounded height; active agents take priority over retained finished rows.
   for (const agent of active.slice(0, 4)) {
     const interactive = agent.sessionState === "interactive";
+    hit(agent, lines.length);
     lines.push(
       `${branch("├─")} ${agentHeader(agent, theme, now)}`,
       theme.fg(
@@ -123,6 +166,7 @@ export function renderAgentWidget(
   }
   for (const agent of finished.slice(-Math.max(0, 10 - lines.length))) {
     if (lines.length >= 10) break;
+    hit(agent, lines.length);
     lines.push(
       `${branch("├─")} ${agentHeader(agent, theme, now)} · ${agentStats(agent, now)}`,
     );
@@ -130,5 +174,8 @@ export function renderAgentWidget(
   if (lines.length) {
     lines[lines.length - 1] = lines[lines.length - 1].replace("├─", "└─");
   }
-  return renderWidgetFrame("Subagents", theme, width, () => lines);
+  return {
+    lines: renderWidgetFrame("Subagents", theme, width, () => lines),
+    hits,
+  };
 }

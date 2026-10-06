@@ -120,7 +120,12 @@ export function registerSubagents(
         );
       },
     });
-    status ??= new SubagentStatusWidget(manager);
+    if (!status) {
+      const current = manager;
+      status = new SubagentStatusWidget(manager, undefined, async (id) => {
+        await current.openView(id);
+      });
+    }
     if (context?.mode === "tui") status.bind(context.ui);
     return manager;
   };

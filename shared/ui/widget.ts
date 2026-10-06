@@ -2,6 +2,17 @@ import type { Theme } from "@earendil-works/pi-coding-agent";
 import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import { oneLine } from "./renderers.ts";
 
+/** Content coordinates relative to the rendered widget, for caller-owned hit testing. */
+export function widgetContentBounds(width: number) {
+  const bordered = width >= 24;
+  return {
+    x: bordered ? 2 : 0,
+    y: 1,
+    width: Math.max(0, bordered ? width - 4 : width),
+    bordered,
+  };
+}
+
 /** Stateless widget frame; the caller owns content, height and lifecycle. */
 export function renderWidgetFrame(
   title: string,
@@ -10,8 +21,7 @@ export function renderWidgetFrame(
   renderBody: (contentWidth: number) => string[],
 ): string[] {
   if (width < 1) return [];
-  const bordered = width >= 24;
-  const contentWidth = bordered ? width - 4 : width;
+  const { bordered, width: contentWidth } = widgetContentBounds(width);
   const body = renderBody(contentWidth);
   if (!body.length) return [];
   const heading = oneLine(title);
