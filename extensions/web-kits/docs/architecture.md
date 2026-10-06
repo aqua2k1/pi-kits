@@ -15,7 +15,7 @@ web_fetch
   -> native HTTP for ordinary URLs
   -> GitHub API or shallow clone for GitHub repository URLs
   -> bounded temp file
-  -> text preview and fullOutputPath
+  -> metadata only, with savedContent.path for read
 ```
 
 Search and fetch share the extension process and configuration file, but they do
@@ -34,7 +34,7 @@ Boundary
 ├── config.ts       -> @pi-kits/config, web-kits.search/web-kits.fetch resolution
 ├── composition.ts  -> lazy search/fetch assembly
 ├── schema.ts       -> pure TypeBox schemas and derived output/response types
-└── fetch/format.ts -> bounded preview and local path metadata
+└── fetch/format.ts -> metadata-only output and saved-content metadata
 
 Search
 ├── core/            -> contracts, normalization, routing, classified errors
@@ -107,8 +107,10 @@ The file contains the final logical content that corresponds to the tool result.
 For ordinary HTTP, `raw: true` stores decoded response text; normal HTML fetches
 store extracted text. GitHub repository handlers ignore `raw` and keep their
 repository-specific text rendering.
-The model receives a small inline result for short content and a preview plus
-`fullOutputPath` for larger content.
+Every successful fetch returns metadata only, with no body, preview or summary.
+Use `read` on `savedContent.path` to access the saved text, regardless of size.
+The internal `FetchResponse`, fetching and storage flow remain unchanged;
+internal `fullOutputPath` is exposed publicly as `savedContent.path`.
 
 For native HTTP, the raw response is first streamed through a bounded
 `response.bin` and is then converted to `content.txt`; the intermediate file is
@@ -137,8 +139,8 @@ ordinary native HTTP still available when the GitHub API cannot serve the URL.
 The clone is cached under a hashed key so owner, repository and ref cannot create arbitrary
 local paths. The repository path is returned as `repositoryPath`; generated
 tree or file content is also saved to `content.txt`. Both API and clone paths
-render roots/trees as listings (with README content for roots), and blobs as file
-text. Binary files produce a textual description rather than raw binary output;
+render roots/trees as listings (with README content limited to 8 KiB for roots),
+and blobs as file text. Binary files produce a textual description rather than raw binary output;
 this differs from unsupported binary native HTTP responses.
 
 The clone does not recurse into submodules, install dependencies, run hooks,
@@ -150,19 +152,20 @@ argument arrays and `shell: false`; tokens are not placed in arguments.
 
 ## Machine output contract
 
-`schema.ts` defines separate TypeBox schemas/types for legacy `SearchDetails`
-and `FetchDetails` and meaningful `SearchMachineOutput` and `FetchMachineOutput`.
-Machine schemas reuse the metadata properties and add content-bearing fields;
+`schema.ts` defines TypeBox schemas/types for `SearchDetails`, `FetchDetails`,
+`SearchMachineOutput` and `FetchMachineOutput`. Fetch details and machine output
+share the same metadata-only schema.
+Machine schemas describe search content and metadata-only fetch output;
 search result fields, fetch source enums and truncation types are also derived
 with `Static` to avoid parallel shape drift. This is a pure helper, not an
 extension entry point. Enums use Pi's `StringEnum` for provider compatibility
 rather than literal unions/`anyOf`.
 
-The formatters retain legacy details and render model-facing text, then return
+The formatters render model-facing text and return metadata as `details` and
 machine data as `structuredContent`. `index.ts` declares the corresponding
 `outputSchema`. Pi codemode's `toScriptValue()` returns only `structuredContent`,
 not `content` or `details`, so machine output includes actual search summaries
-and fetch text. Failures remain classified thrown errors; there is no new error
+and fetch metadata, never fetched text. Failures remain classified thrown errors; there is no new error
 envelope. Progress updates are still text-only, with `details: undefined`.
 
 Search machine data contains `query`, `backend`, `resultCount`, `results`
@@ -178,26 +181,39 @@ line limit. It omits results until the return fits, marking both metadata copies
 as truncated. Omitted search data is not saved. If the remaining summary/query
 alone cannot fit, the existing classified `invalid-response` policy applies.
 
-Fetch machine data contains `url`, `finalUrl`, `source` (`native-http`,
-`github-gh`, `github-clone`), `fullOutputPath`, and optional `title`,
-`contentType`, `contentLength`, `repositoryPath`, `truncation`, `expiresAt`, plus
-`text` and `isPreview`. `text` contains the decoded/rendered saved logical text
-for small results, or a UTF-8-safe preview bounded to 8 KiB / 2,000 lines.
-The formatter counts the full serialized return toward 50 KiB, shortening both
-visible and machine previews further if JSON escaping or metadata consumes the
-budget. Metadata is not silently changed; if metadata alone cannot fit, a
-classified `invalid-response` is thrown.
+Fetch public output is metadata-only: `url`, `finalUrl`, `source` (`native-http`,
+`github-gh`, `github-clone`), optional `title`, `contentType`, `contentLength`,
+`repositoryPath`, and required `savedContent`:
 
-`isPreview` is true if machine text omits saved content **or** upstream/content
-limiting already capped the saved artifact. False means the returned text covers
-the stored logical artifact without reported upstream truncation; it does not
-mean raw bytes, complete repository coverage or a rendered browser page.
-Truncation carries `totalBytes`, `outputBytes`, and optional `totalLines` and
-`outputLines`. It describes upstream/stored-content limiting, not simply a
-short inline preview: a preview can omit content without a `truncation` field.
-`expiresAt` is a timestamp string for the spool, not the clone cache.
-`fullOutputPath` points to all saved logical text, which may already be bounded;
-it is never a promise that the original source was saved in full.
+```ts
+savedContent: {
+  path: string;
+  bytes: number;
+  truncated: boolean;
+  expiresAt?: string;
+  truncation?: {
+    totalBytes: number;
+    outputBytes: number;
+    totalLines?: number;
+    outputLines?: number;
+  };
+}
+```
+
+No body, preview or summary is returned. There are no top-level `fullOutputPath`,
+`expiresAt`, `truncation`, `text` or `isPreview` fields. Every successful result
+saves text; callers use `read` with `savedContent.path` to obtain it.
+`savedContent.bytes` counts the saved extracted/decoded/rendered text in UTF-8
+bytes, not HTTP `Content-Length` (which may be reported as `contentLength`).
+`savedContent.truncated` only indicates that the saved text was limited;
+`false` does not guarantee a complete original page, repository or browser render.
+Optional `savedContent.truncation` describes those stored-content limits.
+`savedContent.expiresAt` is a timestamp string for the spool, not the clone cache.
+The saved file is never a guarantee of the original source in full.
+
+The formatter counts the complete serialized return toward 50 KiB, including
+visible metadata, details, machine data and JSON-escaped UTF-8. Metadata is not
+silently changed; if it cannot fit, a classified `invalid-response` is thrown.
 
 Both public URL fields are the same final redacted URL, never a new requested-URL
 field: native HTTP supplies `response.url` after redirects (or the normalized

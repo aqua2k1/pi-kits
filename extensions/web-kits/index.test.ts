@@ -59,8 +59,11 @@ function checkMachineOutput(tool: ToolDefinition): ToolDefinition {
       ...(output.structuredContent as Record<string, unknown>),
     };
     delete metadata.summary;
-    delete metadata.text;
-    delete metadata.isPreview;
+    if (tool.name === "web_fetch") {
+      assert.equal("text" in metadata, false);
+      assert.equal("isPreview" in metadata, false);
+      assert.equal("fullOutputPath" in metadata, false);
+    }
     assert.deepEqual(metadata, output.details);
     assert.ok(Buffer.byteLength(JSON.stringify(output)) <= MAX_OUTPUT_BYTES);
     return output;
@@ -331,7 +334,9 @@ test("web_fetch uses the fetch composition and reports a temp path", async () =>
   );
   assert.equal(updates.length, 1);
   assert.equal(JSON.stringify(updates[0]).includes("secret=hidden"), false);
-  assert.match(JSON.stringify(output), /fullOutputPath|content\.txt/);
+  assert.match(JSON.stringify(output), /savedContent/);
+  assert.match(JSON.stringify(output), /content\.txt/);
+  assert.ok(!JSON.stringify(output).includes("first line"));
   const content = output.content[0];
   assert.equal(content?.type, "text");
   if (content?.type === "text") assert.match(content.text, /Synthetic page/);
@@ -354,22 +359,22 @@ test("web_fetch uses the real native composition when a fetch runtime is injecte
     undefined,
     context,
   );
-  const details = output.details as { fullOutputPath: string };
-  assert.match(
-    output.content[0]?.type === "text" ? output.content[0].text : "",
-    /hello/,
-  );
-  assert.match(details.fullOutputPath, /pi-web-fetch-/);
-  await rm(
-    details.fullOutputPath.substring(
-      0,
-      details.fullOutputPath.lastIndexOf("/"),
-    ),
-    {
+  const details = output.details as {
+    savedContent: { path: string; bytes: number; truncated: boolean };
+  };
+  try {
+    assert.ok(!JSON.stringify(output).includes("hello"));
+    assert.match(details.savedContent.path, /pi-web-fetch-/);
+    const saved = await readFile(details.savedContent.path, "utf8");
+    assert.match(saved, /hello/);
+    assert.equal(details.savedContent.bytes, Buffer.byteLength(saved));
+    assert.equal(details.savedContent.truncated, false);
+  } finally {
+    await rm(dirname(details.savedContent.path), {
       recursive: true,
       force: true,
-    },
-  );
+    });
+  }
 });
 
 test("config read failures are classified during extension loading", async () => {
@@ -571,7 +576,8 @@ test("guidance keeps routing and security, while descriptions carry provider and
     fetchGuidance,
     /do not execute repository code unless the user explicitly asks/,
   );
-  assert.doesNotMatch(fetchGuidance, /Use the read tool/);
+  assert.match(fetchGuidance, /Use the read tool on savedContent\.path/);
+  assert.match(fetch.description, /Returns metadata only, not inline content/);
   const schema = JSON.parse(JSON.stringify(search.parameters));
   assert.match(
     schema.properties.provider.description,
@@ -614,7 +620,7 @@ for (const raw of [false, true]) {
     const details = output.details as {
       url: string;
       finalUrl: string;
-      fullOutputPath: string;
+      savedContent: { path: string; bytes: number; truncated: boolean };
     };
     try {
       assert.equal(details.url, details.finalUrl);
@@ -622,20 +628,21 @@ for (const raw of [false, true]) {
         details.finalUrl,
         "https://example.com/redirected?token=%5Bredacted%5D",
       );
-      const saved = await readFile(details.fullOutputPath, "utf8");
+      const saved = await readFile(details.savedContent.path, "utf8");
       const machine = output.structuredContent as {
-        text: string;
-        isPreview: boolean;
+        savedContent: { path: string; bytes: number; truncated: boolean };
       };
-      assert.equal(machine.text, saved);
-      assert.equal(machine.isPreview, false);
+      assert.equal(machine.savedContent.path, details.savedContent.path);
+      assert.equal(machine.savedContent.bytes, Buffer.byteLength(saved));
+      assert.equal(machine.savedContent.truncated, false);
+      assert.ok(!JSON.stringify(output).includes("hello"));
       if (raw) assert.equal(saved, body);
       else {
         assert.match(saved, /hello/);
         assert.doesNotMatch(saved, /<p>/);
       }
     } finally {
-      await rm(dirname(details.fullOutputPath), {
+      await rm(dirname(details.savedContent.path), {
         recursive: true,
         force: true,
       });
@@ -699,18 +706,25 @@ for (const mode of ["api", "clone"] as const) {
         url: string;
         finalUrl: string;
         repositoryPath?: string;
-        fullOutputPath: string;
-        expiresAt?: string;
+        savedContent: {
+          path: string;
+          bytes: number;
+          truncated: boolean;
+          expiresAt?: string;
+        };
       };
-      fullOutputPath = details.fullOutputPath;
+      fullOutputPath = details.savedContent.path;
       assert.equal(
         details.source,
         mode === "api" ? "github-gh" : "github-clone",
       );
       assert.equal(details.url, url);
       assert.equal(details.finalUrl, url);
-      assert.ok(details.expiresAt);
+      assert.ok(details.savedContent.expiresAt);
       const saved = await readFile(fullOutputPath, "utf8");
+      assert.equal(details.savedContent.bytes, Buffer.byteLength(saved));
+      assert.equal(details.savedContent.truncated, false);
+      assert.ok(!JSON.stringify(output).includes("repository text"));
       assert.match(saved, /repository text/);
       if (mode === "clone") {
         assert.ok(details.repositoryPath?.startsWith(clonePath));

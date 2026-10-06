@@ -40,6 +40,23 @@ export const FetchTruncationSchema = Type.Object({
   outputLines: Type.Optional(Type.Integer({ minimum: 0 })),
 });
 
+export const SavedContentSchema = Type.Object({
+  path: Type.String({
+    description:
+      "Local saved text file. Use the read tool to inspect its contents.",
+  }),
+  bytes: Type.Integer({
+    minimum: 0,
+    description:
+      "UTF-8 byte length of the saved text, not the HTTP response size.",
+  }),
+  truncated: Type.Boolean({
+    description: "True when content limits capped the saved text itself.",
+  }),
+  expiresAt: Type.Optional(Type.String()),
+  truncation: Type.Optional(FetchTruncationSchema),
+});
+
 export const FetchDetailsSchema = Type.Object({
   url: Type.String({
     description:
@@ -52,23 +69,12 @@ export const FetchDetailsSchema = Type.Object({
   contentType: Type.Optional(Type.String()),
   contentLength: Type.Optional(Type.Integer({ minimum: 0 })),
   source: FetchSourceSchema,
-  fullOutputPath: Type.String(),
+  savedContent: SavedContentSchema,
   repositoryPath: Type.Optional(Type.String()),
-  truncation: Type.Optional(FetchTruncationSchema),
-  expiresAt: Type.Optional(Type.String()),
 });
 
 export type FetchDetails = Readonly<Static<typeof FetchDetailsSchema>>;
 
-export const FetchOutputSchema = Type.Object({
-  ...FetchDetailsSchema.properties,
-  text: Type.String({
-    description: "Decoded/rendered text, bounded to the inline preview limit.",
-  }),
-  isPreview: Type.Boolean({
-    description:
-      "True when text omits saved content or the saved artifact was already limited; consult truncation and fullOutputPath.",
-  }),
-});
+export const FetchOutputSchema = FetchDetailsSchema;
 
 export type FetchMachineOutput = Static<typeof FetchOutputSchema>;

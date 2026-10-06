@@ -155,18 +155,29 @@ test("tool summaries retain questions, search counts, saved fetch details and er
   );
   const fetch = {
     title: "Page",
-    fullOutputPath: "/private/fetch.txt",
+    savedContent: {
+      path: "/private/fetch.txt",
+      bytes: 100,
+      truncated: false,
+    },
     finalUrl: "https://example.test",
     source: "native-http",
   };
   assert.equal(rendered(get("web_fetch"), fetch), "completed\nPage");
   assert.match(
-    rendered(get("web_fetch"), fetch, "Full fetched body", true),
-    /Full fetched body/,
+    rendered(get("web_fetch"), fetch, "Saved content metadata", true),
+    /Saved content metadata/,
   );
   assert.match(
-    rendered(get("web_fetch"), fetch, "Full fetched body", true),
+    rendered(get("web_fetch"), fetch, "Saved content metadata", true),
     /\/private\/fetch.txt/,
+  );
+  assert.match(
+    rendered(get("web_fetch"), {
+      ...fetch,
+      savedContent: { ...fetch.savedContent, truncated: true },
+    }),
+    /\[Result truncated\]/,
   );
   assert.equal(
     rendered(get("web_fetch"), undefined, "Network failed", false, false, true),

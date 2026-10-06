@@ -33,7 +33,7 @@ clone failure   -> API fallback
 
 The handler supports repository root, tree and blob URLs. A clone is stored in a
 local temporary cache and returned as `repositoryPath`; the generated result is
-also stored in a per-fetch `fullOutputPath`.
+also stored in a per-fetch file exposed as `savedContent.path`.
 
 The clone is never used as an execution workspace automatically. No dependency
 installation, build, test, hook, submodule recursion or repository script is
@@ -78,10 +78,21 @@ local `gh` CLI. Missing files use defaults; invalid files fail without fallback.
 
 ## Local persistence
 
-Successful textual results are saved by default. The stored file is bounded to
-50 MiB and expires after the temporary-file TTL. The model receives the full path
-for later `read` access; large results include only a short inline preview to
-avoid wasting context.
+Every successful fetch saves text. The stored file is bounded to 50 MiB and
+expires after the temporary-file TTL. Public output is metadata-only: `url`
+(an alias of `finalUrl`), `finalUrl`, `source`, optional `title`, `contentType`,
+`contentLength`, `repositoryPath`, and
+`savedContent: { path: string, bytes: number, truncated: boolean, expiresAt?: string,
+truncation?: { totalBytes: number, outputBytes: number, totalLines?: number,
+outputLines?: number } }`. Use `read` on `savedContent.path` for the content;
+no body, preview or summary is returned. There are no top-level `fullOutputPath`,
+`expiresAt`, `truncation`, `text` or `isPreview` fields.
+
+`savedContent.bytes` is the UTF-8 byte count of saved extracted/decoded/rendered
+text, not HTTP `Content-Length`. `savedContent.truncated` only indicates that
+saved text was limited; the file is not a guarantee of the complete original
+page, even when this flag is false. Internal `FetchResponse` and fetching/storage
+flows are unchanged; internal `fullOutputPath` may still identify the file.
 
 The temporary path is not a security boundary. A trusted local agent is assumed,
 and the host's session/transcript may also retain tool output.
@@ -89,8 +100,9 @@ and the host's session/transcript may also retain tool output.
 ## Limits and errors
 
 - final fetch text: 50 MiB;
-- inline preview: 8 KiB;
-- inline output: 50 KiB / 2,000 lines;
+- serialized fetch output object: 50 KiB (metadata only);
+- search output retains its existing line limit;
+- GitHub root README: 8 KiB;
 - GitHub tree listing: 200 entries;
 - command stdout: bounded separately from final content;
 - native and command operations: cancellable and time-bounded.

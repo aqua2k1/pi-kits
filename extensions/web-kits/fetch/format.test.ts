@@ -2,10 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { Value } from "typebox/value";
 import { FetchDetailsSchema, FetchOutputSchema } from "../schema.ts";
-import {
-  MAX_FETCH_OUTPUT_BYTES,
-  MAX_FETCH_PREVIEW_BYTES,
-} from "../shared/limits.ts";
+import { MAX_FETCH_OUTPUT_BYTES } from "../shared/limits.ts";
 import { WebFetchError } from "./errors.ts";
 import { buildFetchOutput as buildOutput } from "./format.ts";
 import type { FetchResponse } from "./types.ts";
@@ -14,10 +11,16 @@ function buildFetchOutput(...args: Parameters<typeof buildOutput>) {
   const output = buildOutput(...args);
   assert.ok(Value.Check(FetchOutputSchema, output.structuredContent));
   assert.ok(Value.Check(FetchDetailsSchema, output.details));
-  const { text, isPreview, ...metadata } = output.structuredContent;
-  assert.equal(typeof text, "string");
-  assert.equal(typeof isPreview, "boolean");
-  assert.deepEqual(metadata, output.details);
+  assert.deepEqual(output.structuredContent, output.details);
+  for (const field of [
+    "text",
+    "isPreview",
+    "fullOutputPath",
+    "expiresAt",
+    "truncation",
+  ]) {
+    assert.equal(field in output.structuredContent, false, field);
+  }
   assert.ok(
     Buffer.byteLength(JSON.stringify(output)) <= MAX_FETCH_OUTPUT_BYTES,
   );
@@ -36,51 +39,66 @@ function response(text: string): FetchResponse {
   };
 }
 
-test("buildFetchOutput returns small content inline and includes its path", () => {
+test("small fetch output contains metadata and read guidance, never inline content", () => {
   const output = buildFetchOutput(response("hello\nworld"));
-  assert.match(output.content[0]?.text ?? "", /hello\nworld/);
-  assert.match(output.content[0]?.text ?? "", /content\.txt/);
-  assert.equal(
-    output.details.fullOutputPath,
-    "/tmp/pi-web-fetch-example/content.txt",
-  );
-  assert.equal(output.details.truncation, undefined);
-  assert.equal(output.structuredContent.text, "hello\nworld");
-  assert.equal(output.structuredContent.isPreview, false);
+  assert.ok(!JSON.stringify(output).includes("hello"));
+  assert.match(output.content[0].text, /content\.txt/);
+  assert.match(output.content[0].text, /Use the `read` tool/);
+  assert.deepEqual(output.structuredContent.savedContent, {
+    path: "/tmp/pi-web-fetch-example/content.txt",
+    bytes: 11,
+    truncated: false,
+  });
 });
 
-test("buildFetchOutput copies truncation details", () => {
+test("fetch output copies saved truncation details without claiming a complete source", () => {
   const input = {
     ...response("hello"),
     truncation: { totalBytes: 100, outputBytes: 5 },
   };
   const output = buildFetchOutput(input);
   input.truncation.totalBytes = 200;
-  assert.equal(output.details.truncation?.totalBytes, 100);
-  assert.equal(output.structuredContent.text, "hello");
-  assert.equal(output.structuredContent.isPreview, true);
+  assert.deepEqual(output.details.savedContent, {
+    path: input.fullOutputPath,
+    bytes: 5,
+    truncated: true,
+    truncation: { totalBytes: 100, outputBytes: 5 },
+  });
+  assert.match(
+    output.content[0].text,
+    /Saved content limited to 5 of 100 bytes/,
+  );
 });
 
-test("buildFetchOutput returns a bounded preview for large content", () => {
-  const text = "x".repeat(MAX_FETCH_PREVIEW_BYTES + 100);
-  const output = buildFetchOutput(response(text));
-  const rendered = output.content[0]?.text ?? "";
-  assert.equal(
-    output.structuredContent.text,
-    text.slice(0, MAX_FETCH_PREVIEW_BYTES),
-  );
-  assert.equal(output.structuredContent.isPreview, true);
-  assert.match(rendered, /Preview/);
-  assert.match(rendered, /Use the `read` tool/);
-  assert.ok(Buffer.byteLength(rendered) < 50 * 1_024);
-  assert.equal(
-    output.details.fullOutputPath,
-    "/tmp/pi-web-fetch-example/content.txt",
-  );
+test("saved bytes measure UTF-8 text, not the HTTP response length", () => {
+  const output = buildFetchOutput({
+    ...response("中文🙂"),
+    contentLength: 999,
+  });
+  assert.equal(output.structuredContent.savedContent.bytes, 10);
+  assert.equal(output.structuredContent.contentLength, 999);
+});
+
+test("large, line-heavy, and JSON-escaped content never appear in tool output", () => {
+  for (const text of [
+    "large-body-marker".repeat(10_000),
+    "line-body-marker\n".repeat(3_000),
+    "\u0001".repeat(8 * 1_024),
+  ]) {
+    const output = buildFetchOutput(response(text));
+    assert.equal(
+      output.structuredContent.savedContent.bytes,
+      Buffer.byteLength(text),
+    );
+    assert.equal(output.structuredContent.savedContent.truncated, false);
+    assert.ok(!JSON.stringify(output).includes(text.slice(0, 100)));
+    assert.ok(Buffer.byteLength(JSON.stringify(output)) < 2_000);
+    assert.doesNotMatch(output.content[0].text, /Preview/);
+  }
 });
 
 for (const source of ["native-http", "github-gh", "github-clone"] as const) {
-  test(`machine fetch output preserves optional metadata and URL aliases for ${source}`, () => {
+  test(`fetch output preserves saved metadata and redacts URL aliases for ${source}`, () => {
     const input: FetchResponse = {
       ...response("hello"),
       finalUrl: "https://user:password@example.com/final?token=hidden#fragment",
@@ -104,20 +122,23 @@ for (const source of ["native-http", "github-gh", "github-clone"] as const) {
       contentType: "text/plain",
       contentLength: 5,
       source,
-      fullOutputPath: input.fullOutputPath,
-      expiresAt: input.expiresAt,
-      truncation: input.truncation,
+      savedContent: {
+        path: input.fullOutputPath,
+        bytes: 5,
+        truncated: true,
+        expiresAt: input.expiresAt,
+        truncation: input.truncation,
+      },
       ...(input.repositoryPath ? { repositoryPath: input.repositoryPath } : {}),
     });
     assert.ok(!JSON.stringify(output).includes("password"));
     assert.ok(!JSON.stringify(output).includes("hidden"));
-    assert.match(output.content[0].text, /Content limited to 5 of 100 bytes/);
     if (input.repositoryPath)
       assert.ok(output.content[0].text.includes(input.repositoryPath));
   });
 }
 
-test("empty fetch output omits absent optional metadata and preserves exact text", () => {
+test("empty saved content has zero bytes and omits absent optional metadata", () => {
   const output = buildFetchOutput({
     text: "",
     finalUrl: "https://example.com/",
@@ -128,40 +149,32 @@ test("empty fetch output omits absent optional metadata and preserves exact text
     url: "https://example.com/",
     finalUrl: "https://example.com/",
     source: "native-http",
-    fullOutputPath: "/tmp/content.txt",
+    savedContent: { path: "/tmp/content.txt", bytes: 0, truncated: false },
   });
+  assert.match(output.content[0].text, /Saved bytes:\*\* 0/);
+  assert.match(output.content[0].text, /Content is not returned inline/);
+});
+
+test("schema requires a saved file and explicit byte count and truncation state", () => {
+  const metadata = buildFetchOutput(response("hello")).structuredContent;
+  for (const field of ["path", "bytes", "truncated"]) {
+    const savedContent: Record<string, unknown> = { ...metadata.savedContent };
+    delete savedContent[field];
+    assert.equal(
+      Value.Check(FetchOutputSchema, { ...metadata, savedContent }),
+      false,
+    );
+  }
   assert.equal(
-    output.content[0].text,
-    "**Fetched:** https://example.com/\n**Source:** native-http\n**Full content:** /tmp/content.txt\n\n",
+    Value.Check(FetchOutputSchema, {
+      ...metadata,
+      savedContent: { ...metadata.savedContent, bytes: -1 },
+    }),
+    false,
   );
 });
 
-test("JSON escaping and both text copies count toward the fetch return budget", () => {
-  const text = "\u0001".repeat(MAX_FETCH_PREVIEW_BYTES);
-  const input = response(text);
-  const output = buildFetchOutput(input);
-  assert.equal(output.structuredContent.isPreview, true);
-  assert.ok(output.structuredContent.text.length < text.length);
-  assert.ok(text.startsWith(output.structuredContent.text));
-  assert.ok(output.content[0].text.includes(output.structuredContent.text));
-  assert.equal(output.details.contentLength, input.contentLength);
-  assert.equal(output.details.truncation, undefined);
-});
-
-test("line-limited machine previews keep the saved file path without claiming complete text", () => {
-  const output = buildFetchOutput(response("line\n".repeat(3_000)));
-  assert.equal(output.structuredContent.isPreview, true);
-  assert.ok(output.structuredContent.text.split("\n").length <= 2_000);
-  assert.ok(
-    Buffer.byteLength(output.structuredContent.text) <= MAX_FETCH_PREVIEW_BYTES,
-  );
-  assert.equal(
-    output.structuredContent.fullOutputPath,
-    output.details.fullOutputPath,
-  );
-});
-
-test("metadata that cannot fit the fetch budget throws instead of changing legacy details", () => {
+test("metadata that cannot fit the fetch budget throws instead of dropping fields", () => {
   assert.throws(
     () =>
       buildOutput({

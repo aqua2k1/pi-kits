@@ -177,8 +177,9 @@ Successful textual fetches create:
 /tmp/pi-web-fetch-<random>/content.txt
 ```
 
-The response includes `fullOutputPath`. The file is kept for the temporary-file
-TTL, currently 24 hours, and can be read with Pi's `read` tool.
+Every successful response includes `savedContent.path`. The file is kept for
+the temporary-file TTL, currently 24 hours. Use Pi's `read` tool to obtain the
+text; fetch output itself contains no body, preview or summary.
 
 Successful repository operations may additionally return:
 
@@ -191,10 +192,11 @@ execute repository code.
 
 ## Output behavior
 
-- Small content is returned inline.
-- Large content returns a short preview and `fullOutputPath`.
+- All successful fetches save text and return metadata only; read it through
+  `savedContent.path` regardless of size.
 - Serialized tool output is limited to 50 KiB, including all machine/text/details
-  copies and JSON escaping; fetch text previews are at most 8 KiB / 2,000 lines.
+  copies and JSON escaping. No fetched body, preview or summary is returned.
+- GitHub root README content remains limited to 8 KiB in the saved rendering.
 - For ordinary HTTP, `raw: false` extracts readable text from HTML.
 - For ordinary HTTP, `raw: true` preserves decoded response text, not bytes.
 - Binary ordinary HTTP responses are unsupported regardless of `raw`.
@@ -204,18 +206,25 @@ execute repository code.
 
 Both tools declare typed `outputSchema` and return meaningful `structuredContent`
 for codemode callers, who receive only that machine value. Search adds optional
-sanitized summary text, and fetch adds bounded `text` and `isPreview`; legacy
-details retain their original fields. `isPreview` is true for a short preview or
-when upstream limiting capped the stored artifact, so `fullOutputPath` does not
-promise the original document is complete. Fetch `url` is a compatibility alias
-of `finalUrl`; both contain the final redacted handler URL, not the original
+sanitized summary text; fetch returns `url`, `finalUrl`, `source`, optional
+`title`, `contentType`, `contentLength`, `repositoryPath`, and
+`savedContent: { path: string, bytes: number, truncated: boolean, expiresAt?: string,
+truncation?: { totalBytes: number, outputBytes: number, totalLines?: number,
+outputLines?: number } }`. There are no top-level `fullOutputPath`, `expiresAt`,
+`truncation`, `text` or `isPreview` fields. `savedContent.bytes` counts saved
+extracted/decoded/rendered text in UTF-8 bytes, not HTTP `Content-Length`.
+`savedContent.truncated` only means the saved text was limited; even `false`
+is not a guarantee of the complete original page. Fetch `url` is a compatibility
+alias of `finalUrl`; both contain the final redacted handler URL, not the original
 requested URL. See the [machine output contract](architecture.md#machine-output-contract)
 for all fields and budget behavior.
 
 Native HTTP streams a bounded `response.bin` before decoding/extraction and
 saving `content.txt`, then removes the intermediate file. GitHub-generated text
-is saved directly to `content.txt`. A preview does not mean the saved content
-was truncated; optional truncation metadata describes upstream/content limits.
+is saved directly to `content.txt`. Internal `FetchResponse` and fetching/storage
+flows remain unchanged; internal `fullOutputPath` maps to public
+`savedContent.path`. Optional `savedContent.truncation` describes limits applied
+to the saved text, not an inline preview.
 
 ## Security assumption
 

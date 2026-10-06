@@ -35,7 +35,8 @@ export const renderFetchCall = compactCall("Web Fetch", (args) => {
 });
 export const renderFetchResult = compactResult((details) => {
   const data = record(details);
-  if (typeof data.fullOutputPath !== "string") return;
+  const savedContent = record(data.savedContent);
+  if (typeof savedContent.path !== "string") return;
   return {
     status: "completed",
     preview:
@@ -44,6 +45,6 @@ export const renderFetchResult = compactResult((details) => {
         : typeof data.finalUrl === "string"
           ? data.finalUrl
           : "Content saved",
-    truncated: Boolean(data.truncation),
+    truncated: savedContent.truncated === true,
   };
 });

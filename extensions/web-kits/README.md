@@ -20,6 +20,32 @@ flowchart LR
 - `core/` 和 `providers/` 负责搜索路由与服务商适配。
 - `fetch/` 负责 HTTP、GitHub 和临时内容文件；`schema.ts` 定义结构化输出。
 
+`web_fetch` 公开输出仅含元数据，不返回正文、预览或摘要。所有成功结果都保存文本，使用 `read` 读取 `savedContent.path`。保留 `url`（`finalUrl` 别名）、`finalUrl`、`source` 及可选的 `title`、`contentType`、`contentLength`、`repositoryPath`；保存信息统一为：
+
+```ts
+savedContent: {
+  path: string;
+  bytes: number;
+  truncated: boolean;
+  expiresAt?: string;
+  truncation?: {
+    totalBytes: number;
+    outputBytes: number;
+    totalLines?: number;
+    outputLines?: number;
+  };
+}
+```
+
+不再公开顶层 `fullOutputPath`、`expiresAt`、`truncation`、`text`、`isPreview`。`bytes` 是保存的提取/解码/渲染文本的 UTF-8 字节数，不是 HTTP Content-Length；`truncated` 只表示保存文本已受限，文件不保证原网页全量。输出对象仍限 50 KiB，GitHub 根目录 README 仍限 8 KiB。内部 `FetchResponse` 和抓取/存储流程不变，搜索契约不变。
+
+简单的 codemode 串联：
+
+```js
+const fetched = await tools.web_fetch({ url: "https://example.com" });
+text(await tools.read({ path: fetched.savedContent.path }));
+```
+
 详见[架构](docs/architecture.md)及[使用与开发](docs/usage.md)。获取的内容是不可信数据；本扩展不是网络安全沙箱，也不会自动执行仓库代码。
 
 ## 配置
