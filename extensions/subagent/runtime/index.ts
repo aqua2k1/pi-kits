@@ -47,6 +47,18 @@ export type RuntimeCommand = (
   | { type: "cancel" }
 ) & { round?: number };
 
+/** A settled native interaction, independent of managed task completion. */
+export interface SessionUpdate {
+  type: "session_update";
+  interactionId: string;
+  /** Monotonic interaction start order within this runtime session. */
+  sequence: number;
+  response: string;
+  outcome: "completed" | "aborted" | "error";
+  truncated?: boolean;
+  error?: string;
+}
+
 /** Normalized events; runtime adapters never expose their native transport. */
 export type RuntimeEvent = Record<string, unknown> & { type: string };
 

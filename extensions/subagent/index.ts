@@ -44,7 +44,10 @@ const runtimeConfig = Type.Optional(
 );
 
 function toolResult(snapshot: AgentSnapshot) {
-  const text = JSON.stringify(snapshot, null, 2);
+  // Keep provenance and task/session metadata visible even when a long reply
+  // exhausts the model-facing output budget.
+  const { result, ...metadata } = snapshot;
+  const text = JSON.stringify({ ...metadata, result }, null, 2);
   return {
     content: [
       {
@@ -80,6 +83,31 @@ export function registerSubagents(
     manager ??= new SubagentManager(adapter, {
       maxConcurrent,
       extensionAllowlist,
+      onSessionUpdate(snapshot, update) {
+        pi.sendMessage(
+          {
+            customType: "subagent-notification",
+            content: [
+              {
+                type: "text",
+                text: `Subagent user interaction ${update.outcome}. ${update.response ? "Latest reply updated; managed task status/round/statistics are unchanged." : "No new reply; the previous result is retained."}${update.error ? ` Error: ${update.error}` : ""}`,
+              },
+              ...toolResult(snapshot).content,
+            ],
+            display: true,
+            details: {
+              ...snapshot,
+              sessionUpdate: {
+                interactionId: update.interactionId,
+                outcome: update.outcome,
+                hasReply: Boolean(update.response),
+                error: update.error,
+              },
+            },
+          },
+          { triggerTurn: false },
+        );
+      },
       onComplete(snapshot) {
         pi.sendMessage(
           {
@@ -298,7 +326,8 @@ export function registerSubagents(
         manager?.list().find((agent) => agent.id === id),
       ),
       renderResult: renderSubagentResult,
-      description: "Read a task's status, result, and current session state.",
+      description:
+        "Read managed task status and current session state, plus the latest settled reply (managed or user interaction) with its source, revision and update time.",
       parameters: Type.Object({
         agent_id: agentId,
         wait: Type.Optional(

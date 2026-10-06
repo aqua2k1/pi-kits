@@ -14,6 +14,7 @@ import type {
   RuntimeHost,
   RuntimeOptions,
   RuntimeSession,
+  SessionUpdate,
 } from "../index.ts";
 import {
   codexConfig,
@@ -36,6 +37,7 @@ const capabilities: RuntimeCapabilities = Object.freeze({
   concurrentNativeInput: true,
 });
 const RESULT_LIMIT = 64 * 1024;
+const INTERACTION_HISTORY_LIMIT = 256;
 const efforts: Record<string, string> = {
   off: "none",
   none: "none",
@@ -253,8 +255,19 @@ export class CodexRuntime implements AgentRuntime {
   }
 }
 
+type NativeInteraction = {
+  id: string;
+  sequence: number;
+  finishing: boolean;
+  final?: { text: string; truncated: boolean };
+  fallback?: { text: string; truncated: boolean };
+  review?: { text: string; truncated: boolean };
+  reviewing?: boolean;
+};
+
 type ManagedTurn = {
   round: number;
+  sequence: number;
   id?: string;
   submitted: Promise<void>;
   releaseSubmission(): void;
@@ -295,6 +308,10 @@ class CodexSession implements RuntimeSession {
   private attachmentPromise?: Promise<TerminalHandle>;
   private managed?: ManagedTurn;
   private nativeTurnId?: string;
+  private nativeInteraction?: NativeInteraction;
+  private interactionHistory = new Set<string>();
+  // Start order spans managed and native turns, independent of round numbers.
+  private replySequence = 0;
   private round = 0;
   private latestUsage?: NativeUsage;
   private systemPrompt: string;
@@ -636,6 +653,7 @@ class CodexSession implements RuntimeSession {
     });
     const managed: ManagedTurn = {
       round,
+      sequence: ++this.replySequence,
       submitted,
       releaseSubmission,
       cancel: false,
@@ -663,6 +681,7 @@ class CodexSession implements RuntimeSession {
         this.emit("session_state", { state: "idle", round });
         this.emit("completed", {
           round,
+          resultSequence: managed.sequence,
           result: "",
           truncated: false,
           canceled: true,
@@ -670,6 +689,12 @@ class CodexSession implements RuntimeSession {
         return;
       }
       const control = this.requireConnected();
+      // Only accepted dispatch supersedes native hydration. A rejected or
+      // canceled preflight must not discard a valid pending native reply.
+      if (this.nativeInteraction) {
+        this.rememberInteraction(this.nativeInteraction.id);
+        this.nativeInteraction = undefined;
+      }
       managed.dispatched = true;
       const method = managed.review ? "review/start" : "turn/start";
       const response = await control.request<{
@@ -685,6 +710,7 @@ class CodexSession implements RuntimeSession {
         throw new Error("Missing Codex turnId");
       }
       managed.id = response.turn.id;
+      this.rememberInteraction(managed.id);
       this.emit("started", { round, turnId: managed.id });
       this.emit("session_state", {
         state: "running",
@@ -725,14 +751,10 @@ class CodexSession implements RuntimeSession {
       this.latestUsage = params.tokenUsage;
     const managed = this.managed;
     const turnId = params.turnId ?? params.turn?.id;
-    if (managed?.id && turnId && turnId !== managed.id) {
-      if (method === "turn/started") this.nativeTurnId = turnId;
-      if (method === "turn/completed" && this.nativeTurnId === turnId)
-        this.nativeTurnId = undefined;
-    }
     if (method === "thread/status/changed" && params.status?.type === "idle")
       this.nativeTurnId = undefined;
     if (!managed) {
+      this.nativeNotification(method, params);
       if (method === "thread/status/changed")
         this.emit("session_state", {
           state: params.status?.type === "active" ? "interactive" : "idle",
@@ -774,7 +796,11 @@ class CodexSession implements RuntimeSession {
       managed.early.push([method, raw]);
       return;
     }
-    if (turnId !== managed.id || managed.finishing) return; // Native turns never belong to a managed round.
+    if (turnId !== managed.id) {
+      this.nativeNotification(method, params);
+      return; // Native turns never belong to a managed round.
+    }
+    if (managed.finishing) return;
     if (method === "item/started" || method === "item/completed") {
       this.cacheItem(managed, params.item);
       const tool = params.item?.type;
@@ -808,6 +834,138 @@ class CodexSession implements RuntimeSession {
         this.disconnect(error),
       );
     }
+  }
+  private rememberInteraction(id: string): void {
+    this.interactionHistory.add(id);
+    if (this.interactionHistory.size > INTERACTION_HISTORY_LIMIT) {
+      const oldest = this.interactionHistory.values().next().value;
+      if (oldest !== undefined) this.interactionHistory.delete(oldest);
+    }
+  }
+  private nativeNotification(method: string, params: NativeEvent): void {
+    const id = params.turnId ?? params.turn?.id;
+    if (
+      !id ||
+      this.interactionHistory.has(id) ||
+      ![
+        "turn/started",
+        "turn/completed",
+        "item/started",
+        "item/completed",
+      ].includes(method)
+    )
+      return;
+    // Retry/error notifications are not turn completion. Only terminal turn
+    // statuses can publish a result, even if a final item arrived earlier.
+    if (
+      method === "turn/completed" &&
+      !["completed", "interrupted", "failed"].includes(
+        params.turn?.status ?? "",
+      )
+    )
+      return;
+    let interaction = this.nativeInteraction;
+    if (interaction?.id !== id) {
+      // A late item/completion from another turn must not replace a newer
+      // active turn. A new turn/started is the authoritative ordering signal.
+      if (interaction && this.nativeTurnId && method !== "turn/started") {
+        this.rememberInteraction(id);
+        return;
+      }
+      if (interaction) this.rememberInteraction(interaction.id);
+      interaction = { id, sequence: ++this.replySequence, finishing: false };
+      this.nativeInteraction = interaction;
+    }
+    if (interaction.finishing) return;
+    if (method === "turn/started") this.nativeTurnId = id;
+    if (method === "item/started" || method === "item/completed")
+      this.cacheNativeItem(interaction, params.item);
+    if (method === "turn/completed" && params.turn) {
+      interaction.finishing = true;
+      this.rememberInteraction(id);
+      if (this.nativeTurnId === id) this.nativeTurnId = undefined;
+      void this.completeNative(interaction, params.turn);
+    }
+  }
+  private cacheNativeItem(
+    interaction: NativeInteraction,
+    item: NativeItem | undefined,
+  ): void {
+    if (!item) return;
+    if (item.type === "enteredReviewMode") interaction.reviewing = true;
+    if (item.type === "exitedReviewMode" && typeof item.review === "string")
+      interaction.review = bounded(item.review);
+    if (item.type === "agentMessage" && typeof item.text === "string") {
+      if (item.phase === "final_answer") interaction.final = bounded(item.text);
+      else interaction.fallback = bounded(item.text);
+    }
+  }
+  private async completeNative(
+    interaction: NativeInteraction,
+    turn: NativeTurn,
+  ): Promise<void> {
+    for (const item of turn.items ?? [])
+      this.cacheNativeItem(interaction, item);
+    let hydrationError: string | undefined;
+    if (
+      turn.itemsView !== "full" &&
+      interaction.review === undefined &&
+      (interaction.reviewing || interaction.final === undefined)
+    ) {
+      try {
+        let cursor: string | undefined;
+        const cursors = new Set<string>();
+        for (let page = 0; page < 64; page++) {
+          const result = await this.requireConnected().request<{
+            data: Array<{ item: NativeItem }>;
+            nextCursor?: string | null;
+          }>("thread/items/list", {
+            threadId: this.threadId,
+            turnId: interaction.id,
+            limit: 100,
+            sortDirection: "asc",
+            cursor,
+          });
+          if (!this.connected || this.nativeInteraction !== interaction) return;
+          if (!Array.isArray(result?.data))
+            throw new Error("Invalid Codex item page");
+          for (const entry of result.data)
+            this.cacheNativeItem(interaction, entry.item);
+          if (!result.nextCursor) break;
+          if (cursors.has(result.nextCursor) || page === 63)
+            throw new Error("Codex item pagination limit exceeded");
+          cursors.add(result.nextCursor);
+          cursor = result.nextCursor;
+        }
+      } catch (error) {
+        hydrationError =
+          error instanceof Error
+            ? error.message
+            : "Codex item hydration failed";
+      }
+    }
+    if (!this.connected || this.nativeInteraction !== interaction) return;
+    const result =
+      interaction.review ?? interaction.final ?? interaction.fallback;
+    const error =
+      turn.status === "failed"
+        ? String(turn.error?.message ?? "Codex turn failed")
+        : hydrationError;
+    const update: SessionUpdate = {
+      type: "session_update",
+      interactionId: interaction.id,
+      sequence: interaction.sequence,
+      response: result?.text ?? "",
+      outcome:
+        turn.status === "interrupted"
+          ? "aborted"
+          : error !== undefined
+            ? "error"
+            : "completed",
+      truncated: result?.truncated ?? false,
+      ...(error === undefined ? {} : { error }),
+    };
+    this.emit(update.type, { ...update });
   }
   private cacheItem(managed: ManagedTurn, item: NativeItem | undefined): void {
     if (!item || typeof item.id !== "string") return;
@@ -912,6 +1070,7 @@ class CodexSession implements RuntimeSession {
     this.emit("completed", {
       round: managed.round,
       turnId: managed.id,
+      resultSequence: managed.sequence,
       result: managed.reviewResult ?? (managed.final || managed.fallback),
       truncated: managed.truncated,
       canceled: turn.status === "interrupted",

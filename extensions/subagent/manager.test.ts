@@ -434,6 +434,136 @@ test("manager is lazy, starts an authenticated worker and returns structured res
   unsubscribe();
 });
 
+test("latest native replies update result metadata without changing managed execution", async (t) => {
+  const mux = new FakeMux();
+  const completions: string[] = [];
+  const updates: string[] = [];
+  const manager = new SubagentManager(mux, {
+    onComplete: (snapshot) => completions.push(snapshot.result ?? ""),
+    onSessionUpdate: (snapshot, update) => {
+      updates.push(`${snapshot.resultRevision}:${update.outcome}`);
+    },
+  });
+  t.after(() => manager.close());
+  const agent = manager.spawn({ ...task, keepAlive: true });
+  await until(() => mux.commands.get(agent.id)?.length === 1);
+  mux.emit(agent.id, {
+    type: "stats",
+    turnCount: 2,
+    toolUses: 3,
+    totalTokens: 42,
+  });
+  mux.emit(agent.id, { type: "completed", result: "A" });
+  await until(() => manager.get(agent.id).status === "completed");
+  const original = manager.get(agent.id);
+  assert.equal(original.resultSource, "managed");
+  assert.equal(original.resultRevision, 1);
+  assert.ok(original.resultUpdatedAt);
+  await manager.result(agent.id, true);
+  await manager.openView(agent.id);
+  assert.deepEqual(updates, []);
+  const update = {
+    type: "session_update",
+    interactionId: "native-1",
+    sequence: 1,
+    response: "B",
+    outcome: "completed",
+  };
+  mux.emit(agent.id, update);
+  await until(() => manager.get(agent.id).result === "B");
+  const latest = await manager.result(agent.id);
+  assert.equal(latest.resultSource, "user_interaction");
+  assert.equal(latest.resultRevision, 2);
+  assert.equal(latest.resultOutcome, "completed");
+  assert.ok((latest.resultUpdatedAt ?? 0) >= (original.resultUpdatedAt ?? 0));
+  for (const key of [
+    "status",
+    "round",
+    "completedAt",
+    "turnCount",
+    "toolUses",
+    "totalTokens",
+  ] as const) {
+    assert.equal(latest[key], original[key]);
+  }
+  mux.emit(agent.id, update);
+  mux.emit(agent.id, {
+    ...update,
+    interactionId: "native-3",
+    sequence: 3,
+    response: "C",
+    outcome: "aborted",
+  });
+  await until(() => manager.get(agent.id).result === "C");
+  mux.emit(agent.id, {
+    ...update,
+    interactionId: "native-2",
+    sequence: 2,
+    response: "stale",
+  });
+  mux.emit(agent.id, {
+    ...update,
+    interactionId: "native-4",
+    sequence: 4,
+    response: "",
+    outcome: "error",
+    error: "Failed",
+  });
+  await until(() => updates.length === 3);
+  assert.equal(manager.get(agent.id).result, "C");
+  assert.equal(manager.get(agent.id).resultRevision, 3);
+  assert.equal(manager.get(agent.id).resultOutcome, "aborted");
+  assert.deepEqual(completions, ["A"]);
+  assert.deepEqual(updates, ["2:completed", "3:aborted", "3:error"]);
+  const resumed = manager.resume(agent.id, { prompt: "next" });
+  assert.equal(resumed.result, "C");
+  await until(() => mux.commands.get(agent.id)?.length === 2);
+  mux.emit(agent.id, {
+    ...update,
+    sequence: 3,
+    interactionId: "late-native",
+    response: "late",
+  });
+  mux.emit(agent.id, { type: "completed", result: "D" });
+  await until(() => manager.get(agent.id).result === "D");
+  assert.equal(manager.get(agent.id).resultSource, "managed");
+  assert.equal(manager.get(agent.id).resultRevision, 4);
+  mux.emit(agent.id, {
+    ...update,
+    sequence: 3,
+    interactionId: "late-native",
+    response: "late",
+  });
+  await delay(20);
+  assert.equal(manager.get(agent.id).result, "D");
+  assert.equal(updates.length, 3);
+});
+
+test("newer native replies survive older managed result hydration", async (t) => {
+  const mux = new FakeMux();
+  const updates: string[] = [];
+  const manager = new SubagentManager(mux, {
+    onSessionUpdate: (snapshot) => updates.push(snapshot.result ?? ""),
+  });
+  t.after(() => manager.close());
+  const agent = manager.spawn({ ...task, keepAlive: true });
+  await until(() => mux.commands.get(agent.id)?.length === 1);
+  mux.emit(agent.id, {
+    type: "session_update",
+    interactionId: "newer-native",
+    sequence: 2,
+    response: "B",
+    outcome: "completed",
+  });
+  await until(() => manager.get(agent.id).result === "B");
+  mux.emit(agent.id, { type: "completed", result: "A", resultSequence: 1 });
+  await until(() => manager.get(agent.id).status === "completed");
+  assert.equal(manager.get(agent.id).result, "B");
+  assert.equal(manager.get(agent.id).resultSource, "user_interaction");
+  assert.equal(manager.get(agent.id).resultRevision, 1);
+  assert.deepEqual(updates, ["B"]);
+});
+
 test("finished tasks retain results while native session state continues changing", async (t) => {
   const mux = new FakeMux();
   const notifications: string[] = [];
@@ -1017,9 +1147,11 @@ test("resume reuses identity, terminal, view and agent configuration with fresh 
   assert.equal(next.sessionPath, original.sessionPath);
   assert.equal(next.subagentType, original.subagentType);
   assert.equal(next.description, "Follow-up");
-  assert.equal(next.result, undefined);
+  assert.equal(next.result, "First");
+  assert.equal(next.resultSource, "managed");
+  assert.equal(next.resultRevision, 1);
   assert.equal(next.completedAt, undefined);
-  assert.equal(next.truncated, undefined);
+  assert.equal(next.truncated, true);
   assert.equal(next.turnCount, 0);
   assert.equal(next.contextPercent, undefined);
   assert.equal(manager.backgroundPreference(first.id), false);
@@ -1170,7 +1302,7 @@ test("old waiters and late round events never consume or finish a resumed round"
   mux.emit(first.id, { type: "stats", turnCount: 2 });
   await until(() => manager.get(first.id).turnCount === 2);
   assert.equal(manager.get(first.id).status, "running");
-  assert.equal(manager.get(first.id).result, undefined);
+  assert.equal(manager.get(first.id).result, "Old result");
   assert.notEqual(manager.get(first.id).sessionState, "interactive");
   mux.emit(first.id, { type: "completed", result: "New result" });
   await until(() => manager.get(first.id).status === "completed");

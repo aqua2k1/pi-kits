@@ -254,6 +254,438 @@ function finished(
   });
 }
 
+function sessionUpdates(f: ReturnType<typeof fixture>) {
+  return f.events.filter((event) => event.type === "session_update");
+}
+function nativeStarted(f: ReturnType<typeof fixture>, id: string) {
+  f.event("turn/started", { turn: { id, status: "inProgress" } });
+}
+function nativeReply(
+  f: ReturnType<typeof fixture>,
+  id: string,
+  text: string,
+  phase = "final_answer",
+) {
+  f.event("item/completed", {
+    turnId: id,
+    item: { id: `${id}-reply`, type: "agentMessage", text, phase },
+  });
+}
+
+test("native results publish once only at actual completion, ignoring retry errors and stats", async (t) => {
+  const f = fixture();
+  t.after(() => f.session.close());
+  await f.session.start();
+  nativeStarted(f, "native-1");
+  nativeReply(f, "native-1", "commentary", "commentary");
+  nativeReply(f, "native-1", "final reply");
+  f.event("error", {
+    turnId: "native-1",
+    error: { message: "retrying" },
+    willRetry: true,
+  });
+  f.event("error", {
+    turnId: "native-1",
+    error: { message: "final error notification" },
+    willRetry: false,
+  });
+  finished(f, "native-1", { status: "inProgress" });
+  f.event("thread/status/changed", { status: { type: "idle" } });
+  assert.equal(sessionUpdates(f).length, 0);
+  finished(f, "native-1");
+  finished(f, "native-1");
+  nativeStarted(f, "native-1");
+  nativeReply(f, "native-1", "late reply");
+  await tick();
+  assert.deepEqual(sessionUpdates(f), [
+    {
+      type: "session_update",
+      threadId: "thread",
+      runtimeSessionId: "session",
+      interactionId: "native-1",
+      sequence: 1,
+      response: "final reply",
+      outcome: "completed",
+      truncated: false,
+    },
+  ]);
+  assert.equal(
+    f.events.some((event) => ["stats", "completed"].includes(event.type)),
+    false,
+  );
+});
+
+test("native reply hydration paginates and bounds the selected reply to 64 KiB UTF-8", async (t) => {
+  const f = fixture();
+  t.after(() => f.session.close());
+  await f.session.start();
+  nativeStarted(f, "native");
+  nativeReply(f, "native", "fallback", "commentary");
+  f.handlers.set("thread/items/list", (params) => {
+    assert.equal(params.turnId, "native");
+    assert.equal(params.sortDirection, "asc");
+    return params.cursor
+      ? {
+          data: [
+            {
+              item: {
+                id: "final",
+                type: "agentMessage",
+                phase: "final_answer",
+                text: `a${"😀".repeat(20_000)}`,
+              },
+            },
+          ],
+          nextCursor: null,
+        }
+      : { data: [], nextCursor: "next" };
+  });
+  finished(f, "native", { itemsView: "notLoaded" });
+  await tick();
+  const update = must(sessionUpdates(f)[0]);
+  assert.equal(update.response, `a${"😀".repeat(16_383)}`);
+  assert.ok(Buffer.byteLength(String(update.response)) <= 64 * 1024);
+  assert.equal(update.truncated, true);
+  assert.equal(update.outcome, "completed");
+  assert.equal(
+    f.calls.filter((call) => call.method === "thread/items/list").length,
+    2,
+  );
+});
+
+test("native terminal items override cached replies; empty finals and review output are authoritative", async (t) => {
+  const f = fixture();
+  t.after(() => f.session.close());
+  await f.session.start();
+  nativeStarted(f, "empty");
+  nativeReply(f, "empty", "x".repeat(70_000), "commentary");
+  finished(f, "empty", {
+    itemsView: "notLoaded",
+    items: [
+      {
+        id: "empty-final",
+        type: "agentMessage",
+        phase: "final_answer",
+        text: "",
+      },
+    ],
+  });
+  nativeStarted(f, "review");
+  nativeReply(f, "review", "not the review");
+  finished(f, "review", {
+    items: [
+      { id: "review-exit", type: "exitedReviewMode", review: "review result" },
+    ],
+  });
+  await tick();
+  assert.deepEqual(
+    sessionUpdates(f).map(({ response, truncated, sequence }) => ({
+      response,
+      truncated,
+      sequence,
+    })),
+    [
+      { response: "", truncated: false, sequence: 1 },
+      { response: "review result", truncated: false, sequence: 2 },
+    ],
+  );
+  assert.equal(
+    f.calls.some((call) => call.method === "thread/items/list"),
+    false,
+  );
+});
+
+test("native review hydrates its authoritative output even after a final agent message", async (t) => {
+  const f = fixture();
+  t.after(() => f.session.close());
+  await f.session.start();
+  nativeStarted(f, "review");
+  f.event("item/started", {
+    turnId: "review",
+    item: { id: "review-entry", type: "enteredReviewMode" },
+  });
+  nativeReply(f, "review", "intermediate final");
+  f.handlers.set("thread/items/list", () => ({
+    data: [
+      { item: { id: "review-exit", type: "exitedReviewMode", review: "" } },
+    ],
+    nextCursor: null,
+  }));
+  finished(f, "review", { itemsView: "notLoaded" });
+  await tick();
+  assert.equal(sessionUpdates(f)[0].response, "");
+  assert.equal(sessionUpdates(f)[0].outcome, "completed");
+  assert.equal(
+    f.calls.filter((call) => call.method === "thread/items/list").length,
+    1,
+  );
+});
+
+test("native hydration rejects invalid pages and repeated cursors with one error result", async (t) => {
+  for (const invalid of [true, false]) {
+    await t.test(`invalid page: ${invalid}`, async (t) => {
+      const f = fixture();
+      t.after(() => f.session.close());
+      await f.session.start();
+      f.handlers.set("thread/items/list", () =>
+        invalid ? { data: null } : { data: [], nextCursor: "repeat" },
+      );
+      // A completion with full turn identity can recover a missed start.
+      finished(f, "native", { itemsView: "notLoaded" });
+      await tick();
+      assert.equal(sessionUpdates(f).length, 1);
+      assert.equal(sessionUpdates(f)[0].sequence, 1);
+      assert.equal(sessionUpdates(f)[0].outcome, "error");
+      assert.equal(
+        sessionUpdates(f)[0].error,
+        invalid
+          ? "Invalid Codex item page"
+          : "Codex item pagination limit exceeded",
+      );
+      finished(f, "native");
+      assert.equal(sessionUpdates(f).length, 1);
+      assert.equal(f.session.connected, true);
+    });
+  }
+});
+
+test("native interrupted, failed, and hydration-failed turns publish terminal outcomes without disconnect", async (t) => {
+  const f = fixture();
+  t.after(() => f.session.close());
+  await f.session.start();
+  nativeStarted(f, "aborted");
+  nativeReply(f, "aborted", "partial", "commentary");
+  finished(f, "aborted", { status: "interrupted" });
+  nativeStarted(f, "failed");
+  finished(f, "failed", {
+    status: "failed",
+    error: { message: "turn failure" },
+  });
+  nativeStarted(f, "hydrate-failed");
+  nativeReply(f, "hydrate-failed", "fallback", "commentary");
+  f.handlers.set("thread/items/list", () => {
+    throw new Error("read failure");
+  });
+  finished(f, "hydrate-failed", { itemsView: "notLoaded" });
+  await tick();
+  assert.deepEqual(
+    sessionUpdates(f).map(({ response, outcome, error }) => ({
+      response,
+      outcome,
+      error,
+    })),
+    [
+      { response: "partial", outcome: "aborted", error: undefined },
+      { response: "", outcome: "error", error: "turn failure" },
+      { response: "fallback", outcome: "error", error: "read failure" },
+    ],
+  );
+  assert.equal(f.session.connected, true);
+});
+
+test("newer native starts suppress delayed hydration and late completion of older native turns", async (t) => {
+  const f = fixture();
+  t.after(() => f.session.close());
+  await f.session.start();
+  const hydration = deferred<unknown>();
+  f.handlers.set("thread/items/list", () => hydration.promise);
+  nativeStarted(f, "old");
+  finished(f, "old", { itemsView: "notLoaded" });
+  nativeStarted(f, "new");
+  finished(f, "old");
+  nativeReply(f, "new", "new result");
+  finished(f, "new");
+  hydration.resolve({
+    data: [
+      {
+        item: {
+          id: "old-final",
+          type: "agentMessage",
+          text: "old result",
+          phase: "final_answer",
+        },
+      },
+    ],
+    nextCursor: null,
+  });
+  await tick();
+  assert.deepEqual(
+    sessionUpdates(f).map(({ interactionId, sequence, response }) => ({
+      interactionId,
+      sequence,
+      response,
+    })),
+    [{ interactionId: "new", sequence: 2, response: "new result" }],
+  );
+  nativeStarted(f, "superseded");
+  nativeStarted(f, "latest");
+  finished(f, "superseded");
+  nativeReply(f, "latest", "latest result");
+  finished(f, "latest");
+  assert.equal(sessionUpdates(f).length, 2);
+  assert.equal(sessionUpdates(f)[1].sequence, 4);
+});
+
+test("accepted managed dispatch suppresses old native hydration", async (t) => {
+  const f = fixture();
+  t.after(() => f.session.close());
+  await f.session.start();
+  const hydration = deferred<unknown>();
+  const preflight = deferred<unknown>();
+  f.handlers.set("thread/items/list", () => hydration.promise);
+  f.handlers.set("thread/read", () => preflight.promise);
+  nativeStarted(f, "old-native");
+  finished(f, "old-native", { itemsView: "notLoaded" });
+  const sending = f.session.send({
+    type: "task",
+    prompt: "managed",
+    round: 10,
+  });
+  await tick();
+  preflight.resolve({ thread: { status: { type: "idle" } } });
+  await sending;
+  hydration.resolve({ data: [], nextCursor: null });
+  await tick();
+  assert.equal(sessionUpdates(f).length, 0);
+  finished(f);
+  await tick();
+  // Replayed managed notifications must never become native interactions.
+  finished(f);
+  nativeStarted(f, "next-native");
+  nativeReply(f, "next-native", "next");
+  finished(f, "next-native");
+  assert.equal(sessionUpdates(f).length, 1);
+  assert.equal(sessionUpdates(f)[0].sequence, 3);
+  assert.equal(completed(f).resultSequence, 2);
+  assert.equal(
+    f.events.filter((event) => event.type === "completed").length,
+    1,
+  );
+});
+
+test("rejected managed preflight preserves a pending native reply", async (t) => {
+  const f = fixture();
+  t.after(() => f.session.close());
+  await f.session.start();
+  await f.session.attachment();
+  const hydration = deferred<unknown>();
+  f.handlers.set("thread/items/list", () => hydration.promise);
+  nativeStarted(f, "native");
+  finished(f, "native", { itemsView: "notLoaded" });
+  await assert.rejects(
+    async () => await f.session.send({ type: "task", prompt: "rejected" }),
+    /native Codex TUI/,
+  );
+  hydration.resolve({
+    data: [
+      {
+        item: {
+          id: "reply",
+          type: "agentMessage",
+          phase: "final_answer",
+          text: "B",
+        },
+      },
+    ],
+    nextCursor: null,
+  });
+  await tick();
+  assert.equal(sessionUpdates(f).length, 1);
+  assert.equal(sessionUpdates(f)[0].response, "B");
+});
+
+test("native completion before managed hydration has newer reply order without changing managed stats", async (t) => {
+  const f = fixture();
+  t.after(() => f.session.close());
+  await f.session.start();
+  await f.session.send({ type: "task", prompt: "managed" });
+  const hydration = deferred<unknown>();
+  f.handlers.set("thread/items/list", () => hydration.promise);
+  finished(f, "turn-1", { itemsView: "notLoaded" });
+  const statsBefore = f.events.filter((event) => event.type === "stats").length;
+  nativeStarted(f, "native");
+  nativeReply(f, "native", "native result");
+  f.event("item/completed", {
+    turnId: "native",
+    item: { id: "native-tool", type: "commandExecution" },
+  });
+  finished(f, "native");
+  assert.equal(sessionUpdates(f)[0].response, "native result");
+  assert.equal(sessionUpdates(f)[0].sequence, 2);
+  assert.equal(
+    f.events.some((event) => event.type === "completed"),
+    false,
+  );
+  assert.equal(
+    f.events.filter((event) => event.type === "stats").length,
+    statsBefore,
+  );
+  hydration.resolve({
+    data: [
+      {
+        item: {
+          id: "managed-final",
+          type: "agentMessage",
+          phase: "final_answer",
+          text: "older managed result",
+        },
+      },
+    ],
+    nextCursor: null,
+  });
+  await tick();
+  assert.equal(completed(f).result, "older managed result");
+  assert.equal(completed(f).resultSequence, 1);
+  assert.equal(stats(f).toolUses, 0);
+  assert.equal(sessionUpdates(f).length, 1);
+  assert.deepEqual(
+    f.events
+      .filter((event) => ["session_update", "completed"].includes(event.type))
+      .map((event) => [event.type, event.sequence ?? event.resultSequence]),
+    [
+      ["session_update", 2],
+      ["completed", 1],
+    ],
+  );
+});
+
+test("native hydration updates are suppressed after disconnect or close", async (t) => {
+  for (const action of ["disconnect", "close"] as const) {
+    await t.test(action, async (t) => {
+      const f = fixture();
+      t.after(() => f.session.close());
+      await f.session.start();
+      const hydration = deferred<unknown>();
+      f.handlers.set("thread/items/list", () => hydration.promise);
+      nativeStarted(f, "native");
+      finished(f, "native", { itemsView: "notLoaded" });
+      if (action === "disconnect") f.disconnect();
+      else await f.session.close();
+      hydration.resolve({ data: [], nextCursor: null });
+      await tick();
+      assert.equal(sessionUpdates(f).length, 0);
+    });
+  }
+});
+
+test("native interaction deduplication is bounded and sequence does not use managed rounds", async (t) => {
+  const f = fixture();
+  t.after(() => f.session.close());
+  await f.session.start();
+  for (let index = 0; index < 300; index++) {
+    const id = `native-${index}`;
+    nativeStarted(f, id);
+    finished(f, id);
+    finished(f, id);
+  }
+  assert.equal(sessionUpdates(f).length, 300);
+  assert.equal(sessionUpdates(f).at(-1)?.sequence, 300);
+  const state = f.session as unknown as { interactionHistory: Set<string> };
+  assert.equal(state.interactionHistory.size, 256);
+  assert.equal(state.interactionHistory.has("native-0"), false);
+  assert.equal(state.interactionHistory.has("native-299"), true);
+});
+
 const reviewOptions = { runtimeConfig: { runtime_args: ["review"] } };
 function reviewTask(
   target: unknown = { type: "uncommittedChanges" },
@@ -1590,6 +2022,7 @@ test("cancel awaiting preflight read completes stopped without dispatch or inter
     true,
   );
   assert.equal(f.events.find((event) => event.type === "completed")?.round, 1);
+  assert.equal(completed(f).resultSequence, 1);
   assert.equal(
     f.events.filter((event) => event.type === "session_state").at(-1)?.state,
     "idle",

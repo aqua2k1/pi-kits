@@ -61,7 +61,7 @@ environment, the entry registers no tools, hooks, or commands.
 | `subagent` | Start an ad-hoc task or select a user-defined agent type. |
 | `resume_subagent` | Continue a finished task in its retained runtime session/history. |
 | `list_subagent_types` | Discover user-defined agents and their source/configuration. |
-| `get_subagent_result` | Retrieve the current managed round's status/result and live session state. |
+| `get_subagent_result` | Retrieve managed task status, the latest settled reply and its source/revision/time, and live session state. |
 | `steer_subagent` | Send guidance to a running task. |
 | `stop_subagent` | Cancel a queued or running task. |
 
@@ -111,15 +111,30 @@ after rows disappear; runtime retention follows the policy below. Shutdown/reloa
 its refresh timer.
 
 Task and session states are separate: `status` remains the last managed task's
-state/result; `sessionState` is `idle`, `running` (managed execution),
+state; `result` is the latest settled reply from managed or user interaction.
+`resultSource` is `managed` or `user_interaction`, `resultRevision` increases
+for each published reply, and `resultUpdatedAt` is a Unix timestamp in milliseconds.
+`resultOutcome` and optional `resultError` describe that reply independently of
+the managed task's `status` and `error`. `sessionState` is `idle`, `running` (managed execution),
 `interactive` (native/user execution without an active managed task),
 `disconnected`, or `closed`. Native guidance during a managed run remains part
 of that managed batch. Session state is absent
 before a worker connects. Opening a view does not make a session interactive.
 Native conversations update session activity through IPC and remain visible in
-the widget until Pi settles, including retries and continuations. They do not
-overwrite the managed result/statistics, emit another completion notification,
-or acquire a managed concurrency slot. An IPC task cannot take over native work.
+the widget until Pi settles, including retries and continuations. Each settled
+native interaction updates `result` and sends a visible notification into the
+parent's context without waking or interrupting it. Intermediate replies are not
+published. Native interactions do not change managed task status, round or
+statistics, emit another task-completion notification, or acquire a managed
+concurrency slot. Opening a view alone does not publish an update. An IPC task
+cannot take over native work.
+
+Replies are limited to 64 KiB of UTF-8, safely truncated with `truncated: true`.
+Cancellation/failure updates include their outcome; if no reply was produced,
+the previous result and its metadata remain intact. The manager retains only the
+latest reply, while session files retain conversation history. Native conversations
+are shared with the parent: their notifications accumulate in its context and
+consume tokens just like managed completion notifications.
 ### Automatic runtime release
 
 A finished managed task (`completed`, `stopped`, or `error`) automatically releases
@@ -160,8 +175,9 @@ completed, cooperatively stopped, and errored rounds may resume only while retai
 by `keep_alive` or an open native view. Interactive,
 active, closed, or disconnected sessions are rejected without replacing their
 results. No process is restarted. Each accepted resume increments `round` and
-resets the current result/error, per-round usage, timestamps, waiter claims, and
-completion notification. Earlier results remain in tool history and Pi's session
+resets the managed error, per-round usage, task timestamps, waiter claims, and
+completion notification. The latest reply and its metadata remain available until
+a newer reply is published. Earlier results remain in tool history and Pi's session
 file. Foreground waits are bound to their round even if another round starts.
 
 Resumed rounds enter the same FIFO concurrency queue as new tasks. If native
@@ -329,7 +345,7 @@ app-server. They are writable, not screen-scraped viewers. Attachment waits for
 the managed `turn/start` or `review/start` to settle; opening/focusing/detaching a pane never
 cancels or relinquishes that managed turn. Native input may steer or interrupt
 it, and its terminal event still determines the managed result. Independent
-native turns never overwrite the managed result or get canceled by
+native turns update the latest reply independently of managed task completion and never get canceled by
 `stop_subagent`. Interactive requests are left to a live native TUI rather than
 being rejected by the headless client.
 

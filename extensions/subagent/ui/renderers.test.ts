@@ -12,11 +12,16 @@ import {
   visibleWidth,
 } from "@earendil-works/pi-tui";
 import type { AgentSnapshot } from "../manager.ts";
-import { renderSubagentResult, subagentCallRenderer } from "./renderers.ts";
+import {
+  renderSubagentNotification,
+  renderSubagentResult,
+  subagentCallRenderer,
+} from "./renderers.ts";
 
 type RenderContext = Parameters<NonNullable<ToolDefinition["renderResult"]>>[3];
 const theme = {
   fg: (_color: string, text: string) => text,
+  bg: (_color: string, text: string) => text,
   bold: (text: string) => text,
 } as Theme;
 const snapshot: AgentSnapshot = Object.freeze({
@@ -80,6 +85,48 @@ test("collapsed subagent output shows shared identity header and one preview lin
     snapshot.result,
     'Script completed\nOutput:\n{"packageName":"pi-kits"}',
   );
+});
+
+test("native notifications show latest reply revision and independent outcome", () => {
+  const message = {
+    role: "custom" as const,
+    customType: "subagent-notification",
+    content: "Latest reply",
+    display: true,
+    timestamp: 123,
+    details: {
+      ...snapshot,
+      status: "error" as const,
+      error: "Old managed error",
+      result: "New native reply",
+      resultSource: "user_interaction" as const,
+      resultRevision: 2,
+      sessionUpdate: {
+        interactionId: "native-1",
+        outcome: "completed",
+        hasReply: true,
+      },
+    },
+  };
+  const rendered = renderSubagentNotification(
+    message,
+    { expanded: false, outputPad: 0 },
+    theme,
+  );
+  assert.ok(rendered);
+  const lines = rendered.render(300);
+  assert.match(lines.join("\n"), /user interaction completed · reply #2/);
+  assert.match(lines.join("\n"), /New native reply/);
+  assert.ok(!lines.join("\n").includes("Old managed error"));
+  message.details.sessionUpdate.hasReply = false;
+  const renderedEmpty = renderSubagentNotification(
+    message,
+    { expanded: false, outputPad: 0 },
+    theme,
+  );
+  assert.ok(renderedEmpty);
+  const empty = renderedEmpty.render(300);
+  assert.match(empty.join("\n"), /No new reply; previous result retained/);
 });
 
 test("headers fall back to type, model ID and generic agent name", () => {

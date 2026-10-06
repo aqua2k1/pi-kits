@@ -12,12 +12,14 @@ import type {
   RuntimeId,
   RuntimeOptions,
   RuntimeSession,
+  SessionUpdate,
 } from "./runtime/index.ts";
 import type { ParentSessionSnapshot } from "./runtime/pi/clone.ts";
 import { PiRuntime } from "./runtime/pi/index.ts";
 import {
   isWorkerSessionState,
   MAX_COMMAND_BYTES,
+  MAX_RESULT_BYTES,
   type WorkerSessionState,
 } from "./runtime/pi/protocol.ts";
 
@@ -53,7 +55,13 @@ export interface AgentSnapshot {
   modelName?: string;
   agentSource?: AgentDefinition["source"];
   agentPath?: string;
+  /** Latest settled reply, including native/user interactions. */
   result?: string;
+  resultSource?: "managed" | "user_interaction";
+  resultRevision?: number;
+  resultUpdatedAt?: number;
+  resultOutcome?: SessionUpdate["outcome"];
+  resultError?: string;
   error?: string;
   activity?: string;
   sessionPath?: string;
@@ -100,6 +108,8 @@ interface AgentRecord {
   releaseRequested?: boolean;
   releasing?: Promise<void>;
   openingViews?: number;
+  lastInteractionSequence?: number;
+  lastResultSequence?: number;
   viewTimer?: ReturnType<typeof setTimeout>;
 }
 
@@ -133,6 +143,7 @@ export interface ManagerOptions {
   executable?: string;
   runtimeExecutables?: Partial<Record<RuntimeId, string>>;
   onComplete?: (snapshot: AgentSnapshot) => void;
+  onSessionUpdate?: (snapshot: AgentSnapshot, update: SessionUpdate) => void;
 }
 
 const terminalStatus = (status: AgentStatus) =>
@@ -345,9 +356,7 @@ export class SubagentManager {
       description: next.description,
       round,
       status: "queued",
-      result: undefined,
       error: undefined,
-      truncated: undefined,
       activity: undefined,
       sessionActivity: undefined,
       createdAt: Date.now(),
@@ -993,6 +1002,10 @@ export class SubagentManager {
   }
 
   private event(record: AgentRecord, event: RuntimeEvent): void {
+    if (event.type === "session_update") {
+      this.sessionUpdate(record, event);
+      return;
+    }
     if (event.round !== undefined && event.round !== record.execution.round)
       return;
     if (event.type === "disconnected") {
@@ -1084,8 +1097,21 @@ export class SubagentManager {
       if (record.snapshot.sessionState === "running") {
         record.snapshot.sessionState = "idle";
       }
-      record.snapshot.result = event.result;
-      record.snapshot.truncated = event.truncated === true;
+      this.updateResult(
+        record,
+        event.result,
+        "managed",
+        event.canceled === true
+          ? "aborted"
+          : typeof event.error === "string"
+            ? "error"
+            : "completed",
+        event.truncated === true,
+        typeof event.error === "string" ? event.error : undefined,
+        typeof event.resultSequence === "number"
+          ? event.resultSequence
+          : undefined,
+      );
       if (typeof event.sessionPath === "string") {
         record.snapshot.sessionPath = event.sessionPath;
       }
@@ -1101,6 +1127,86 @@ export class SubagentManager {
     }
     if (event.type === "error" && typeof event.error === "string") {
       this.finish(record, "error", event.error);
+    }
+  }
+
+  private updateResult(
+    record: AgentRecord,
+    response: string,
+    source: AgentSnapshot["resultSource"],
+    outcome: SessionUpdate["outcome"],
+    truncated: boolean,
+    error?: string,
+    sequence?: number,
+  ): void {
+    if (sequence !== undefined) {
+      if (!Number.isSafeInteger(sequence) || sequence < 1) {
+        throw new Error("Invalid result sequence");
+      }
+      if (sequence <= (record.lastResultSequence ?? 0)) return;
+      record.lastResultSequence = sequence;
+    }
+    if (!response) return;
+    Object.assign(record.snapshot, {
+      result: response,
+      resultSource: source,
+      resultRevision: (record.snapshot.resultRevision ?? 0) + 1,
+      resultUpdatedAt: Date.now(),
+      resultOutcome: outcome,
+      resultError: error,
+      truncated,
+    });
+  }
+
+  private sessionUpdate(record: AgentRecord, event: RuntimeEvent): void {
+    if (
+      typeof event.interactionId !== "string" ||
+      !event.interactionId.trim() ||
+      event.interactionId.length > 4096 ||
+      typeof event.sequence !== "number" ||
+      !Number.isSafeInteger(event.sequence) ||
+      event.sequence < 1 ||
+      typeof event.response !== "string" ||
+      Buffer.byteLength(event.response) > MAX_RESULT_BYTES ||
+      !["completed", "aborted", "error"].includes(String(event.outcome)) ||
+      (event.error !== undefined && typeof event.error !== "string")
+    ) {
+      throw new Error("Invalid session update");
+    }
+    if (
+      event.sequence <= (record.lastInteractionSequence ?? 0) ||
+      record.snapshot.sessionState === "closed" ||
+      record.releaseRequested ||
+      this.disposed
+    )
+      return;
+    record.lastInteractionSequence = event.sequence;
+    // Result ownership is separate from task completion: native work can
+    // settle while an older managed turn is still hydrating its final reply.
+    if (event.sequence <= (record.lastResultSequence ?? 0)) return;
+    const update: SessionUpdate = {
+      type: "session_update",
+      interactionId: event.interactionId,
+      sequence: event.sequence,
+      response: event.response,
+      outcome: event.outcome as SessionUpdate["outcome"],
+      truncated: event.truncated === true,
+      error: typeof event.error === "string" ? event.error : undefined,
+    };
+    this.updateResult(
+      record,
+      update.response,
+      "user_interaction",
+      update.outcome,
+      update.truncated === true,
+      update.error,
+      update.sequence,
+    );
+    this.changed();
+    try {
+      this.options.onSessionUpdate?.(this.snapshot(record), update);
+    } catch {
+      // Notification failures must not invalidate the latest reply.
     }
   }
 

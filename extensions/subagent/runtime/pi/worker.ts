@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { createConnection, type Socket } from "node:net";
 import type {
   ExtensionAPI,
@@ -5,6 +6,7 @@ import type {
   MessageEndEvent,
 } from "@earendil-works/pi-coding-agent";
 
+import type { SessionUpdate } from "../index.ts";
 import {
   MAX_COMMAND_BYTES,
   MAX_PENDING_COMMANDS,
@@ -50,6 +52,7 @@ export type WorkerActivityName =
   | "control_rejected";
 
 export type WorkerEvent = (
+  | (SessionUpdate & { id: string; round?: never })
   | {
       type: "session_state";
       id: string;
@@ -291,6 +294,9 @@ export function registerWorkerBridge(
   let truncated = false;
   let error: string | undefined;
   let aborted = false;
+  // Native state never participates in managed results, statistics or rounds.
+  let interaction: SessionUpdate | undefined;
+  let interactionSequence = 0;
 
   function disconnect(): void {
     connected = false;
@@ -305,6 +311,7 @@ export function registerWorkerBridge(
     const ctx = context;
     disconnect();
     reset();
+    interaction = undefined;
     context = undefined;
     try {
       ctx?.abort();
@@ -322,7 +329,11 @@ export function registerWorkerBridge(
 
   function send(event: WorkerEvent): void {
     if (!connected || !socket || socket.destroyed) return;
-    if (round !== undefined && event.type !== "ready") {
+    if (
+      round !== undefined &&
+      event.type !== "ready" &&
+      event.type !== "session_update"
+    ) {
       event = { round, ...event };
     }
     if (
@@ -579,6 +590,7 @@ export function registerWorkerBridge(
     if (shuttingDown) return;
     disconnect();
     reset();
+    interaction = undefined;
     sessionState = "idle";
     sessionActivity = undefined;
     lastRound = 0;
@@ -640,6 +652,14 @@ export function registerWorkerBridge(
       error = "Subagent is busy with user interaction; wait until idle.";
       complete(); // Invalidates the reservation, never the native run.
     }
+    // before_agent_start and agent_start can both fire, including on retries.
+    interaction ??= {
+      type: "session_update",
+      interactionId: randomUUID(),
+      sequence: ++interactionSequence,
+      response: "",
+      outcome: "completed",
+    };
   }
 
   pi.on("before_agent_start", (_event, ctx) => {
@@ -669,7 +689,28 @@ export function registerWorkerBridge(
   });
   pi.on("message_end", (event, ctx) => {
     context = ctx;
-    if (!active) return;
+    if (!active) {
+      if (interaction && event.message.role === "assistant") {
+        const final = boundedText(messageText(event.message), MAX_RESULT_BYTES);
+        interaction.response = final.text;
+        interaction.truncated = final.truncated || undefined;
+        interaction.outcome =
+          event.message.stopReason === "error"
+            ? "error"
+            : event.message.stopReason === "aborted"
+              ? "aborted"
+              : "completed";
+        // A later reply replaces transient retry errors and partial output.
+        interaction.error =
+          interaction.outcome === "error"
+            ? boundedText(
+                event.message.errorMessage || "Pi assistant failed",
+                MAX_ACTIVITY_BYTES,
+              ).text
+            : undefined;
+      }
+      return;
+    }
     if (event.message.role === "user") {
       pendingCommands = Math.max(0, pendingCommands - 1);
     }
@@ -752,16 +793,31 @@ export function registerWorkerBridge(
       send({ type: "activity", id: config.id, event: "agent_end" });
     }
   });
+  pi.on("agent_before_settle", (event, ctx) => {
+    context = ctx;
+    if (active || !interaction) return;
+    // This boundary also supplies an outcome when no assistant reply exists.
+    // It is actionable, so retain state until the notification-only settlement.
+    interaction.outcome = event.outcome;
+    interaction.error =
+      event.outcome === "error"
+        ? interaction.error || "Pi assistant failed"
+        : undefined;
+  });
   // Installed Pi declares agent_settled. Do not substitute agent_end or an
   // idle timeout: both can precede retries, compaction and follow-up work.
   pi.on("agent_settled", (_event, ctx) => {
     context = ctx;
+    const settledInteraction = interaction;
+    interaction = undefined;
     reportSession("idle");
     if (active) complete();
+    else if (settledInteraction) send({ ...settledInteraction, id: config.id });
   });
   pi.on("session_shutdown", () => {
     disconnect();
     reset();
+    interaction = undefined;
     context = undefined;
   });
 }

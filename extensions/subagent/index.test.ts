@@ -13,6 +13,8 @@ import { Value } from "typebox/value";
 import { useAgentDir } from "../../tests/helpers/agent-dir.ts";
 import subagentExtension, { registerSubagents } from "./index.ts";
 import {
+  type AgentSnapshot,
+  type ManagerOptions,
   type ResumeOptions,
   type SpawnOptions,
   SubagentManager,
@@ -239,6 +241,82 @@ test("tool prompts stay runtime-neutral while runtime_config documents native re
   assert.ok(steer);
   assert.match(steer.description, /running task/);
   assert.ok(!steer.description.includes("after its current tools"));
+});
+
+test("native reply notifications share the renderer without waking the parent", async (t) => {
+  const cwd = useAgentDir(t);
+  const capture = registrations();
+  const messages: Parameters<ExtensionAPI["sendMessage"]>[] = [];
+  capture.pi.sendMessage = (...args) => {
+    messages.push(args);
+  };
+  let options: ManagerOptions | undefined;
+  const snapshot: AgentSnapshot = {
+    id: "native-id",
+    description: "Native reply",
+    status: "completed",
+    result: "B",
+    resultSource: "user_interaction",
+    resultRevision: 2,
+    resultUpdatedAt: 123,
+    resultOutcome: "completed",
+  };
+  t.mock.method(
+    SubagentManager.prototype,
+    "spawn",
+    function (this: SubagentManager) {
+      options = (this as unknown as { options: ManagerOptions }).options;
+      return snapshot;
+    },
+  );
+  registerSubagents(capture.pi, {} as MuxAdapter);
+  const spawn = capture.definitions.get("subagent");
+  assert.ok(spawn);
+  await spawn.execute(
+    "call",
+    { runtime: "codex", prompt: "go", description: "test" },
+    undefined,
+    undefined,
+    { cwd, mode: "print", hasUI: false } as ExtensionToolContext,
+  );
+  assert.ok(options?.onSessionUpdate);
+  options.onSessionUpdate(snapshot, {
+    type: "session_update",
+    interactionId: "native-1",
+    sequence: 1,
+    response: "B",
+    outcome: "completed",
+  });
+  assert.equal(messages.length, 1);
+  assert.equal(messages[0][0].customType, "subagent-notification");
+  assert.equal(messages[0][0].display, true);
+  assert.deepEqual(messages[0][1], { triggerTurn: false });
+  assert.match(
+    JSON.stringify(messages[0][0].content),
+    /user interaction completed/,
+  );
+  assert.match(JSON.stringify(messages[0][0].content), /resultRevision/);
+  options.onComplete?.({ ...snapshot, resultSource: "managed" });
+  assert.deepEqual(messages[1][1], {
+    triggerTurn: true,
+    deliverAs: "followUp",
+  });
+  const longReply = "x".repeat(64 * 1024);
+  options.onSessionUpdate(
+    { ...snapshot, result: longReply, resultRevision: 3 },
+    {
+      type: "session_update",
+      interactionId: "native-2",
+      sequence: 2,
+      response: longReply,
+      outcome: "completed",
+    },
+  );
+  const longContent = JSON.stringify(messages[2][0].content);
+  assert.match(longContent, /resultSource/);
+  assert.match(longContent, /resultRevision/);
+  assert.match(longContent, /resultUpdatedAt/);
+  assert.match(longContent, /Truncated/);
 });
 
 test("opaque runtime configuration is forwarded on spawn and resume", async (t) => {

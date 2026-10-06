@@ -102,9 +102,26 @@ export const renderSubagentNotification: ReturnType<typeof compactMessage> = (
   options,
   theme,
 ) =>
-  compactMessage("", (details) =>
-    snapshotSummary(details, (snapshot) => agentHeader(snapshot, theme)),
-  )(message, options, theme);
+  compactMessage("", (details) => {
+    const update = record(record(details).sessionUpdate);
+    const summary = snapshotSummary(
+      details,
+      (snapshot) =>
+        `${agentHeader(snapshot, theme)}${update.interactionId ? ` · user interaction ${update.outcome} · reply #${snapshot.resultRevision ?? 0}` : ""}`,
+    );
+    if (summary && update.interactionId) {
+      summary.isError = update.outcome === "error";
+      summary.preview =
+        typeof update.error === "string"
+          ? update.error
+          : update.hasReply === false
+            ? "No new reply; previous result retained"
+            : typeof record(details).result === "string"
+              ? String(record(details).result)
+              : "No new reply";
+    }
+    return summary;
+  })(message, options, theme);
 
 export const renderSubagentTypesCall = compactCall("Subagent types");
 export const renderSubagentTypesResult = compactResult((details) => {

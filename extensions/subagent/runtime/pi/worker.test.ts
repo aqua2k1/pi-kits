@@ -163,6 +163,10 @@ function completions(socket: FakeSocket) {
   return socket.frames.filter((frame) => frame.type === "completed");
 }
 
+function sessionUpdates(socket: FakeSocket) {
+  return socket.frames.filter((frame) => frame.type === "session_update");
+}
+
 test("actual model selection is reported while idle and in resumed tasks", () => {
   const h = harness();
   const socket = h.start();
@@ -398,7 +402,7 @@ test("worker leaves CLI system prompts intact in managed and native turns", () =
   assert.equal(before(), undefined);
 });
 
-test("native conversations publish interactive/idle without producing task results or stats", () => {
+test("native conversations publish settled updates without managed results or stats", () => {
   const h = harness();
   const socket = h.start();
   socket.command({ type: "task", prompt: "first" });
@@ -424,18 +428,215 @@ test("native conversations publish interactive/idle without producing task resul
   assert.equal(socket.frames.at(-1)?.type, "session_state");
   assert.deepEqual(completions(socket), [original]);
   h.emit("agent_settled");
-  assert.deepEqual(socket.frames.at(-1), {
-    type: "session_state",
+  assert.deepEqual(
+    socket.frames.filter((frame) => frame.type === "session_state").at(-1),
+    {
+      type: "session_state",
+      id: config.id,
+      state: "idle",
+      model: "test/test-model",
+      modelName: "Test Model",
+    },
+  );
+  const update = sessionUpdates(socket)[0];
+  assert.ok(update?.interactionId);
+  assert.deepEqual(update, {
+    type: "session_update",
     id: config.id,
-    state: "idle",
-    model: "test/test-model",
-    modelName: "Test Model",
+    interactionId: update.interactionId,
+    sequence: 1,
+    response: "Manual result\nsecond block",
+    outcome: "completed",
   });
   assert.deepEqual(completions(socket), [original]);
   assert.equal(
     socket.frames.filter((frame) => frame.type === "stats").length,
     stats,
   );
+});
+
+test("opening a pane, idle settlement and history messages emit no update", () => {
+  const h = harness();
+  const socket = h.start();
+  h.emit("message_end", { message: assistant("hydrated history") });
+  h.emit("agent_before_settle", { outcome: "completed" });
+  h.emit("agent_settled");
+  h.emit("agent_settled");
+  assert.deepEqual(sessionUpdates(socket), []);
+  assert.deepEqual(completions(socket), []);
+});
+
+test("native retries and continuations publish only the final reply once", () => {
+  const h = harness();
+  const socket = h.start();
+  h.emit("before_agent_start");
+  h.emit("agent_start");
+  h.emit("message_end", {
+    message: assistant("中文🙂".repeat(MAX_RESULT_BYTES), "error", "retry me"),
+  });
+  h.emit("agent_end");
+  assert.deepEqual(sessionUpdates(socket), []);
+  h.emit("before_agent_start");
+  h.emit("agent_start");
+  h.emit("message_end", { message: assistant("intermediate") });
+  h.emit("agent_before_settle", { outcome: "completed", continue: true });
+  h.emit("agent_start");
+  h.emit("message_end", { message: assistant("authoritative final") });
+  h.emit("message_end", {
+    message: {
+      role: "toolResult",
+      content: [{ type: "text", text: "ignore" }],
+    },
+  });
+  h.emit("agent_end");
+  h.emit("agent_before_settle", { outcome: "completed" });
+  assert.deepEqual(sessionUpdates(socket), []);
+  h.emit("agent_settled");
+  h.emit("agent_settled");
+  const updates = sessionUpdates(socket);
+  assert.equal(updates.length, 1);
+  assert.ok(updates[0]?.interactionId);
+  assert.deepEqual(updates[0], {
+    type: "session_update",
+    id: config.id,
+    interactionId: updates[0].interactionId,
+    sequence: 1,
+    response: "authoritative final\nsecond block",
+    outcome: "completed",
+  });
+  assert.deepEqual(completions(socket), []);
+  assert.equal(
+    socket.frames.some((frame) => frame.type === "stats"),
+    false,
+  );
+});
+
+test("native sequence counts starts, never managed rounds, with unique IDs", () => {
+  const h = harness();
+  const socket = h.start();
+  const native = () => {
+    h.emit("before_agent_start");
+    h.emit("agent_start");
+    h.emit("message_end", { message: assistant("native") });
+    h.emit("agent_settled");
+  };
+  native();
+  socket.command({ type: "task", prompt: "managed", round: 7 });
+  h.emit("before_agent_start");
+  h.emit("agent_start");
+  h.emit("message_end", { message: assistant("managed") });
+  h.emit("agent_before_settle", { outcome: "completed" });
+  h.emit("agent_settled");
+  assert.equal(sessionUpdates(socket).length, 1);
+  native();
+  const updates = sessionUpdates(socket);
+  assert.deepEqual(
+    updates.map((update) => update.sequence),
+    [1, 2],
+  );
+  assert.notEqual(updates[0]?.interactionId, updates[1]?.interactionId);
+  assert.equal(
+    updates.every((update) => !("round" in update)),
+    true,
+  );
+  assert.equal(completions(socket)[0]?.round, 7);
+  assert.equal(completions(socket)[0]?.result, "managed\nsecond block");
+  const stats = socket.frames.filter((frame) => frame.type === "stats");
+  assert.equal(stats.length, 1);
+  assert.equal(stats[0]?.turnCount, 1);
+  assert.equal(stats[0]?.round, 7);
+});
+
+test("native replies are UTF-8 safe and bounded to 64 KiB", () => {
+  assert.equal(MAX_RESULT_BYTES, 64 * 1024);
+  for (const text of [
+    "a".repeat(MAX_RESULT_BYTES),
+    `${"a".repeat(MAX_RESULT_BYTES - 1)}🙂`,
+    "中文🙂".repeat(MAX_RESULT_BYTES),
+  ]) {
+    const h = harness();
+    const socket = h.start();
+    h.emit("agent_start");
+    h.emit("message_end", {
+      message: { ...assistant(text), content: [{ type: "text", text }] },
+    });
+    h.emit("agent_settled");
+    const update = sessionUpdates(socket)[0];
+    assert.ok(update);
+    assert.ok(Buffer.byteLength(update.response) <= MAX_RESULT_BYTES);
+    assert.equal(update.response.includes("\ufffd"), false);
+    assert.ok(text.startsWith(update.response));
+    assert.equal(update.truncated, text === update.response ? undefined : true);
+  }
+});
+
+test("native errors and aborts publish outcomes and bounded error text", () => {
+  for (const outcome of ["error", "aborted"] as const) {
+    const h = harness();
+    const socket = h.start();
+    h.emit("agent_start");
+    h.emit("message_end", {
+      message: assistant("partial reply", outcome, "中文🙂".repeat(4096)),
+    });
+    h.emit("agent_end");
+    assert.deepEqual(sessionUpdates(socket), []);
+    h.emit("agent_before_settle", { outcome });
+    h.emit("agent_settled");
+    const update = sessionUpdates(socket)[0];
+    assert.ok(update);
+    assert.equal(update.outcome, outcome);
+    assert.equal(update.response, "partial reply\nsecond block");
+    assert.equal(update.round, undefined);
+    if (outcome === "error") {
+      assert.ok(update.error);
+      assert.ok(Buffer.byteLength(update.error) <= 4096);
+      assert.equal(update.error.includes("\ufffd"), false);
+    } else assert.equal(update.error, undefined);
+    assert.deepEqual(completions(socket), []);
+  }
+});
+
+test("native settlement without a reply can publish an empty response", () => {
+  for (const outcome of ["completed", "aborted", "error"] as const) {
+    const h = harness();
+    const socket = h.start();
+    h.emit("before_agent_start");
+    h.emit("agent_before_settle", { outcome });
+    assert.deepEqual(sessionUpdates(socket), []);
+    h.emit("agent_settled");
+    h.emit("agent_settled");
+    const updates = sessionUpdates(socket);
+    assert.equal(updates.length, 1);
+    assert.equal(updates[0]?.response, "");
+    assert.equal(updates[0]?.outcome, outcome);
+    assert.equal(
+      updates[0]?.error,
+      outcome === "error" ? "Pi assistant failed" : undefined,
+    );
+  }
+});
+
+test("session replacement discards old native replies without reusing sequences", () => {
+  const h = harness();
+  const old = h.start();
+  h.emit("agent_start");
+  h.emit("message_end", { message: assistant("old reply") });
+  const socket = h.start();
+  h.emit("agent_settled");
+  assert.deepEqual(sessionUpdates(old), []);
+  assert.deepEqual(sessionUpdates(socket), []);
+  h.emit("agent_start");
+  h.emit("message_end", { message: assistant("fresh reply") });
+  h.emit("agent_settled");
+  assert.equal(sessionUpdates(socket)[0]?.sequence, 2);
+  assert.equal(
+    sessionUpdates(socket)[0]?.response,
+    "fresh reply\nsecond block",
+  );
+  h.emit("agent_start");
+  h.emit("session_shutdown");
+  h.emit("agent_settled");
+  assert.equal(sessionUpdates(socket).length, 1);
 });
 
 test("IPC tasks cannot take over native work, and task cancellation does not abort it", () => {
@@ -834,6 +1035,12 @@ test("native startup invalidates auth reservations without claiming or aborting 
       h.ctx.isIdle = () => true;
       h.emit("agent_settled");
       assert.equal(completions(socket).length, 1);
+      const update = sessionUpdates(socket)[0];
+      assert.ok(update?.interactionId);
+      assert.equal(update.sequence, 1);
+      assert.equal(update.response, "native answer\nsecond block");
+      assert.equal(update.outcome, "completed");
+      assert.equal(update.round, undefined);
       h.ctx.modelRegistry.hasConfiguredAuth = () => true;
       socket.command({ type: "task", prompt: "next round", round: 2 });
       assert.equal(h.messages.at(-1)?.text, "next round");
