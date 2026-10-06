@@ -1,6 +1,10 @@
 import type { Theme } from "@earendil-works/pi-coding-agent";
 import { oneLine } from "../../../shared/ui/renderers.ts";
-import { renderTree, type TreeNode } from "../../../shared/ui/tree.ts";
+import {
+  renderTree,
+  TREE_DETAIL_MARKER,
+  type TreeNode,
+} from "../../../shared/ui/tree.ts";
 import {
   renderWidgetFrame,
   widgetContentBounds,
@@ -142,7 +146,7 @@ export function layoutAgentWidget(
       data: agent.id,
       children: [
         {
-          marker: "⎿",
+          marker: TREE_DETAIL_MARKER,
           content: theme.fg(
             "muted",
             `${oneLine(interactive ? (agent.sessionActivity ?? "User interaction") : (agent.activity ?? agent.status))}${interactive ? "" : ` · ${agentStats(agent, now)}`}`,

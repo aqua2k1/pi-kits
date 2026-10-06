@@ -2,6 +2,16 @@ import type { Theme } from "@earendil-works/pi-coding-agent";
 import { truncateToWidth } from "@earendil-works/pi-tui";
 import { oneLine } from "./renderers.ts";
 
+export const TREE_BRANCH_MARKER = "├─";
+export const TREE_LAST_BRANCH_MARKER = "└─";
+export const TREE_CONTINUATION_MARKER = "│";
+export const TREE_DETAIL_MARKER = "⎿";
+export const TREE_INDENT_WIDTH = 4;
+
+const emptyPrefix = " ".repeat(TREE_INDENT_WIDTH);
+const continuationPrefix =
+  TREE_CONTINUATION_MARKER + " ".repeat(TREE_INDENT_WIDTH - 1);
+
 export interface TreeNode<T = unknown> {
   /** Single-line content, optionally already styled by the caller. */
   content: string;
@@ -34,7 +44,11 @@ export function renderTree<T>(
     for (const [index, node] of items.entries()) {
       const last = index === items.length - 1;
       const marker =
-        node.marker === undefined ? (last ? "└─" : "├─") : oneLine(node.marker);
+        node.marker === undefined
+          ? last
+            ? TREE_LAST_BRANCH_MARKER
+            : TREE_BRANCH_MARKER
+          : oneLine(node.marker);
       rows.push({
         text: truncateToWidth(
           `${theme.fg("muted", `${prefix}${marker}`)} ${node.content}`,
@@ -44,7 +58,11 @@ export function renderTree<T>(
         data: node.data,
       });
       if (node.children?.length) {
-        visit(node.children, prefix + (last ? "    " : "│   "), depth + 1);
+        visit(
+          node.children,
+          prefix + (last ? emptyPrefix : continuationPrefix),
+          depth + 1,
+        );
       }
     }
   };

@@ -2,7 +2,15 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { Theme } from "@earendil-works/pi-coding-agent";
 import { stripTerminalSequences, visibleWidth } from "@earendil-works/pi-tui";
-import { renderTree, type TreeNode } from "./tree.ts";
+import {
+  renderTree,
+  TREE_BRANCH_MARKER,
+  TREE_CONTINUATION_MARKER,
+  TREE_DETAIL_MARKER,
+  TREE_INDENT_WIDTH,
+  TREE_LAST_BRANCH_MARKER,
+  type TreeNode,
+} from "./tree.ts";
 import { renderWidgetFrame } from "./widget.ts";
 
 const theme = {
@@ -21,6 +29,19 @@ const nested: TreeNode<string>[] = [
   },
   { content: "Last", children: [{ content: "Final child" }] },
 ];
+
+test("tree markers and indentation are defined by the shared renderer", () => {
+  assert.deepEqual(
+    [
+      TREE_BRANCH_MARKER,
+      TREE_LAST_BRANCH_MARKER,
+      TREE_CONTINUATION_MARKER,
+      TREE_DETAIL_MARKER,
+    ],
+    ["├─", "└─", "│", "⎿"],
+  );
+  assert.equal(TREE_INDENT_WIDTH, 4);
+});
 
 test("trees support flat lists without a widget and close the final branch", () => {
   assert.deepEqual(
@@ -66,7 +87,7 @@ test("custom detail markers retain the same ancestry and do not inherit action d
       {
         content: "Agent",
         data,
-        children: [{ content: "Activity", marker: "⎿" }],
+        children: [{ content: "Activity", marker: TREE_DETAIL_MARKER }],
       },
     ],
     theme,

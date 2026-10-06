@@ -13,8 +13,11 @@ extension registration:
   nested `TreeNode<T>` lists independently of widget frames. Each node supplies
   single-line, optionally themed `content`, optional `children` and caller-owned
   `data`. Connectors use `muted`; last-sibling/ancestor state determines `├─`,
-  `└─`, `│` and four-column indentation. Optional `marker` supports detail rows
-  such as `⎿` without changing ancestor continuation. Output rows retain `text`,
+  `└─`, `│` and four-column indentation. The shared module exports
+  `TREE_BRANCH_MARKER`, `TREE_LAST_BRANCH_MARKER`, `TREE_CONTINUATION_MARKER`,
+  `TREE_DETAIL_MARKER` and `TREE_INDENT_WIDTH`; business renderers do not hardcode
+  these glyphs or indentation. Optional `marker` supports detail rows using
+  `TREE_DETAIL_MARKER` (`⎿`) without changing ancestor continuation. Output rows retain `text`,
   `depth` and each node's own `data` (never inherited), so callers can map rows
   to actions. Content is clipped by terminal width; callers own row budgets and
   input handling. Compose the rows with a widget frame, or use them on their own.
