@@ -143,7 +143,9 @@ test("renderStatsHtml is self-contained and includes model bars", () => {
       usage(100, 20, 0.1),
     ),
   ]);
-  const html = renderStatsHtml(snapshot, new Date("2026-01-04T00:00:00.000Z"));
+  const html = renderStatsHtml(
+    serializeStatsSnapshot(snapshot, new Date("2026-01-04T00:00:00.000Z")),
+  );
 
   assert.match(html, /<title>Pi Token Usage Stats<\/title>/);
   assert.match(html, /Usage by model/);
@@ -163,14 +165,14 @@ test("stats uses the shared desktop opener and reports launch failures", async (
     for (const directory of directories)
       rmSync(directory, { recursive: true, force: true });
   });
-  const snapshot = aggregateEntries([]);
-  const file = await openStatsHtml(snapshot, async (target) => {
+  const report = serializeStatsSnapshot(aggregateEntries([]));
+  const file = await openStatsHtml(report, async (target) => {
     directories.push(path.dirname(target));
     return { ok: true, message: "Opened" };
   });
   assert.equal(path.basename(file), "stats.html");
   await assert.rejects(
-    openStatsHtml(snapshot, async (target) => {
+    openStatsHtml(report, async (target) => {
       directories.push(path.dirname(target));
       return { ok: false, message: "Opener unavailable" };
     }),
@@ -181,8 +183,7 @@ test("stats uses the shared desktop opener and reports launch failures", async (
 test("writeStatsHtmlSnapshot writes a browser-ready snapshot file", async () => {
   const snapshot = aggregateEntries([]);
   const filePath = await writeStatsHtmlSnapshot(
-    snapshot,
-    new Date("2026-01-04T00:00:00.000Z"),
+    serializeStatsSnapshot(snapshot, new Date("2026-01-04T00:00:00.000Z")),
   );
 
   try {

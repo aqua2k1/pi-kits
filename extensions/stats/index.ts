@@ -11,6 +11,8 @@ import {
   scanSessionFiles,
 } from "./core.ts";
 import { openStatsHtml } from "./html.ts";
+import { buildStatsReport } from "./report.ts";
+import { showStatsPanel } from "./tui.ts";
 
 const STATUS_ID = "stats";
 
@@ -74,8 +76,21 @@ export default function (pi: ExtensionAPI) {
         return;
       }
 
+      const report = buildStatsReport(snapshot);
+      if (ctx.mode === "tui") {
+        try {
+          const action = await showStatsPanel(ctx.ui, report);
+          if (action !== "details") return;
+        } catch (error) {
+          const message =
+            error instanceof Error ? error.message : String(error);
+          ctx.ui.notify(`统计面板打开失败: ${message}`, "error");
+          return;
+        }
+      }
+
       try {
-        const filePath = await openStatsHtml(snapshot);
+        const filePath = await openStatsHtml(report);
         ctx.ui.notify(`统计快照已打开: ${filePath}`, "info");
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);

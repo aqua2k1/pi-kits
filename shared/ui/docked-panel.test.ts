@@ -100,6 +100,22 @@ test("shared frame themes boundaries, keeps tabs at y1, and fills Unicode cells"
   }
 });
 
+test("styled titles cannot reset the trailing boundary color", () => {
+  const title = `${theme.fg("muted", "今日")} ${theme.fg("accent", theme.bold("40.6K"))}`;
+  for (const width of [20, 40, 80, 120]) {
+    const frame = new DockedPanelFrame(
+      dockedPanelLayout(24),
+      width,
+      theme,
+      title,
+    );
+    const line = frame.heading([], 0)[0];
+    const trailing = "─".repeat(width - visibleWidth(`── ${title} `));
+    assert.ok(line.endsWith(theme.fg("accent", theme.bold(trailing))));
+    assert.equal(visibleWidth(line), width);
+  }
+});
+
 test("compact frame prioritizes value/input and six-row title+detail+controls", () => {
   for (const height of [1, 2, 3, 4, 5, 6, 7, 8]) {
     for (const kind of ["value", "input", "controls"] as const) {

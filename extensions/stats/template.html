@@ -341,12 +341,7 @@
           const selected = models.get(model);
           return selected ? selected : emptyTotals();
         }
-        const total = emptyTotals();
-        models.forEach((value) => {
-          total.totalTokens += value.totalTokens;
-          total.cost += value.cost;
-        });
-        return total;
+        return data.calendar.totalsByDate[day] || emptyTotals();
       }
 
       function renderSummary(model) {

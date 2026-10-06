@@ -8,9 +8,9 @@ export function panelRule(
 ): string {
   if (width < 1) return "";
   const content = truncateToWidth(`── ${label} `, width, "");
-  return paint(
-    content + "─".repeat(Math.max(0, width - visibleWidth(content))),
-  );
+  const rule = "─".repeat(Math.max(0, width - visibleWidth(content)));
+  // Styled labels may reset ANSI attributes; repaint the trailing boundary.
+  return paint(content) + (rule ? paint(rule) : "");
 }
 
 /** Opaque half-screen frame: fill every cell and keep input/footer at the bottom. */
