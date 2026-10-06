@@ -105,7 +105,10 @@ data or JSON/print output.
 Views are native control attachments, not read-only viewers.
 
 In TUI mode, a live tree-style status area stays above the editor while tasks are
-active or queued, independently of the views panel. It shows state, current tool
+active or queued, independently of the views panel. It uses the shared rounded
+widget frame with dim borders and consistently muted tree branches; below 24
+columns it falls back to an unbordered heading. Height is bounded to 12 lines
+(11 without borders). It shows state, current tool
 activity, elapsed time, assistant turns, tool calls, cumulative tokens, context
 percentage (when available), and compactions. Tokens exclude repeated cache-read
 prefixes. Up to four active tasks are expanded; additional active/queued tasks

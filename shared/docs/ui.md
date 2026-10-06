@@ -9,6 +9,12 @@ extension registration:
   provide a bounded tab viewport and component-local mouse hit testing.
 - `@pi-kits/shared/ui/panel`: `fillPanel` and `panelRule` provide opaque
   padded frames, pinned footer rows, and width-safe rules.
+- `@pi-kits/shared/ui/widget`: `renderWidgetFrame(title, theme, width, renderBody)`
+  provides a rounded `dim` border, an `accent` title and one-column padding.
+  The callback receives the available content width; ANSI/Unicode lines are
+  clipped and padded to the full frame width. Below 24 columns it falls back to
+  an unbordered heading and body; empty content renders nothing. Callers own
+  height limits, content styling, subscriptions and timers.
 - `@pi-kits/shared/ui/docked-panel`: the fixed half-screen editor-dock design:
   `layout.ts` owns height, compact thresholds, title/detail/list budgeting and
   scrolling windows; `frame.ts` owns the themed titled top boundary, separate

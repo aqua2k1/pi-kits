@@ -650,7 +650,12 @@ test("widget tree is bounded, unicode-safe, themed and renders truthful counters
   ];
   for (const width of [1, 4, 10, 80, 200]) {
     const lines = renderAgentWidget(agents, theme, width, 2_000);
-    assert.ok(lines.length <= 12);
+    assert.ok(lines.length <= (width >= 24 ? 12 : 11));
+    if (width >= 24) {
+      assert.match(lines[0], /^╭─ Subagents /);
+      assert.match(lines.at(-1) ?? "", /^╰─+╯$/);
+      assert.ok(lines.every((line) => visibleWidth(line) === width));
+    }
     assert.ok(lines.every((line) => visibleWidth(line) <= width));
   }
   const last = agents.at(-1);
@@ -665,4 +670,30 @@ test("widget tree is bounded, unicode-safe, themed and renders truthful counters
     renderAgentWidget([named], theme, 200, 2_000).join("\n"),
     /Auditor · — · 任务 one/,
   );
+});
+
+test("widget preserves tree indentation and uses muted branches inside a dim frame", () => {
+  const colors: { color: string; text: string }[] = [];
+  const recordingTheme = {
+    ...theme,
+    fg(color: string, text: string) {
+      colors.push({ color, text });
+      return text;
+    },
+  } as Theme;
+  const lines = renderAgentWidget(
+    [agent(), agent("queued", "queued")],
+    recordingTheme,
+    120,
+    2_000,
+  );
+  assert.match(lines[1], /^│ ├─ /);
+  assert.match(lines[2], /^│ │ {3}⎿ read/);
+  assert.match(lines[3], /^│ └─ 1 queued/);
+  const branches = colors.filter(
+    ({ text }) => text === "├─" || text.startsWith("│   ⎿"),
+  );
+  assert.equal(branches.length, 3);
+  assert.ok(branches.every(({ color }) => color === "muted"));
+  assert.ok(colors.some(({ color, text }) => color === "dim" && text === "│ "));
 });

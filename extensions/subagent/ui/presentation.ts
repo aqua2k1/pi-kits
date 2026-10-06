@@ -1,6 +1,6 @@
 import type { Theme } from "@earendil-works/pi-coding-agent";
-import { truncateToWidth } from "@earendil-works/pi-tui";
 import { oneLine } from "../../../shared/ui/renderers.ts";
+import { renderWidgetFrame } from "../../../shared/ui/widget.ts";
 import type { AgentSnapshot, AgentStatus } from "../manager.ts";
 
 export { oneLine } from "../../../shared/ui/renderers.ts";
@@ -100,12 +100,13 @@ export function renderAgentWidget(
   const finished = agents.filter(
     (agent) => !isBusy(agent) && agent.status !== "queued",
   );
-  const lines = [theme.fg("accent", theme.bold("● Subagents"))];
+  const lines: string[] = [];
+  const branch = (text: string) => theme.fg("muted", text);
   // Bounded height; active agents take priority over retained finished rows.
   for (const agent of active.slice(0, 4)) {
     const interactive = agent.sessionState === "interactive";
     lines.push(
-      `├─ ${agentHeader(agent, theme, now)}`,
+      `${branch("├─")} ${agentHeader(agent, theme, now)}`,
       theme.fg(
         "muted",
         `│   ⎿ ${oneLine(interactive ? (agent.sessionActivity ?? "User interaction") : (agent.activity ?? agent.status))}${interactive ? "" : ` · ${agentStats(agent, now)}`}`,
@@ -113,17 +114,21 @@ export function renderAgentWidget(
     );
   }
   if (active.length > 4) {
-    lines.push(theme.fg("dim", `├─ ${active.length - 4} more active`));
-  }
-  if (queued) lines.push(theme.fg("dim", `├─ ${queued} queued`));
-  for (const agent of finished.slice(-Math.max(0, 11 - lines.length))) {
-    if (lines.length >= 11) break;
     lines.push(
-      `├─ ${agentHeader(agent, theme, now)} · ${agentStats(agent, now)}`,
+      `${branch("├─")} ${theme.fg("dim", `${active.length - 4} more active`)}`,
     );
   }
-  if (lines.length > 1) {
+  if (queued) {
+    lines.push(`${branch("├─")} ${theme.fg("dim", `${queued} queued`)}`);
+  }
+  for (const agent of finished.slice(-Math.max(0, 10 - lines.length))) {
+    if (lines.length >= 10) break;
+    lines.push(
+      `${branch("├─")} ${agentHeader(agent, theme, now)} · ${agentStats(agent, now)}`,
+    );
+  }
+  if (lines.length) {
     lines[lines.length - 1] = lines[lines.length - 1].replace("├─", "└─");
   }
-  return lines.map((line) => truncateToWidth(line, width));
+  return renderWidgetFrame("Subagents", theme, width, () => lines);
 }
