@@ -14,11 +14,12 @@ import {
   MAX_GITHUB_TREE_ENTRIES,
   TEMP_SPOOL_TTL_MS,
 } from "../shared/limits.ts";
-import { isBinaryFileName, limitReadme } from "./content.ts";
+import { isBinaryFileName } from "./content.ts";
 import { assertNotCancelled, WebFetchError } from "./errors.ts";
 import { formatDocument } from "./formatters/index.ts";
 import { GhClient } from "./gh-client.ts";
 import { generateCloneContent } from "./github-content.ts";
+import { resolveGitHubRef } from "./github-refs.ts";
 import {
   encodeGitHubPath,
   type GitHubUrlInfo,
@@ -52,7 +53,7 @@ interface CloneOperation {
 }
 
 function cacheKey(info: GitHubUrlInfo, ref?: string): string {
-  return `${info.owner}/${info.repo}@${ref ?? "default"}`;
+  return JSON.stringify([info.owner, info.repo, ref ?? null]);
 }
 
 async function cleanupExpiredClones(
@@ -159,9 +160,11 @@ export class GitHubHandler implements FetchHandler {
       url: new URL(request.url.toString()),
     };
     if (!this.config.enabled) return null;
-    const info = parseGitHubUrl(stableRequest.url);
-    if (!info) return null;
+    const parsed = parseGitHubUrl(stableRequest.url);
+    if (!parsed) return null;
     assertNotCancelled(signal);
+    const info = await resolveGitHubRef(parsed, this.gh, signal);
+    if (!info) return null;
 
     await cleanupExpiredClones(this.config.clonePath, this.now());
     const needsMetadata =
@@ -495,7 +498,7 @@ export class GitHubHandler implements FetchHandler {
       signal,
     });
     assertNotCancelled(signal);
-    return limitReadme(formatted);
+    return formatted;
   }
 
   private async storeResponse(

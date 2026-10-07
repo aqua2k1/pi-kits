@@ -15,10 +15,10 @@ test("parseGitHubUrl recognizes root, blob and tree URLs", () => {
     {
       owner: "acme",
       repo: "project",
-      ref: "main",
-      path: "src/index.ts",
+      path: "",
       refIsFullSha: false,
       type: "blob",
+      unresolvedSegments: ["main", "src", "index.ts"],
     },
   );
   assert.equal(
@@ -44,6 +44,32 @@ test("parseGitHubUrl leaves non-code pages and unsafe paths to native HTTP", () 
     null,
   );
   assert.equal(parseGitHubUrl("http://github.com/acme/project"), null);
+});
+
+test("parseGitHubUrl preserves explicit encoded slash refs and flags ambiguous boundaries", () => {
+  const encoded = parseGitHubUrl(
+    "https://github.com/acme/project/blob/feature%2Ftopic/src/file.ts",
+  );
+  assert.equal(encoded?.ref, "feature/topic");
+  assert.equal(encoded?.path, "src/file.ts");
+  assert.equal(encoded?.unresolvedSegments, undefined);
+  assert.deepEqual(
+    parseGitHubUrl("https://github.com/acme/project/tree/feature/topic")
+      ?.unresolvedSegments,
+    ["feature", "topic"],
+  );
+  for (const ref of [
+    "feature%2F..",
+    "feature%2F%2Ftopic",
+    "feature%5Ctopic",
+    "%00main",
+    "%zz",
+  ]) {
+    assert.equal(
+      parseGitHubUrl(`https://github.com/acme/project/blob/${ref}/file.ts`),
+      null,
+    );
+  }
 });
 
 test("encodeGitHubPath encodes each path component", () => {

@@ -1,8 +1,5 @@
 import { stripVTControlCharacters } from "node:util";
-import {
-  MAX_FETCH_CONTENT_BYTES,
-  MAX_GITHUB_README_BYTES,
-} from "../shared/limits.ts";
+import { MAX_FETCH_CONTENT_BYTES } from "../shared/limits.ts";
 import { WebFetchError } from "./errors.ts";
 import { formatDocument } from "./formatters/index.ts";
 import { limitUtf8Text } from "./spool.ts";
@@ -230,10 +227,6 @@ export async function decodeDocument(
     truncated: bounded.truncated,
     totalBytes: bounded.totalBytes,
   };
-}
-
-export function limitReadme(text: string): string {
-  return limitUtf8Text(text, MAX_GITHUB_README_BYTES).text;
 }
 
 export function isBinaryFileName(filePath: string): boolean {

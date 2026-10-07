@@ -1,5 +1,6 @@
 import type { FetchDetails, FetchMachineOutput } from "../schema.ts";
 import { MAX_FETCH_OUTPUT_BYTES } from "../shared/limits.ts";
+import { isSensitiveQueryName } from "../shared/results.ts";
 import { WebFetchError } from "./errors.ts";
 import type { FetchResponse } from "./types.ts";
 
@@ -16,11 +17,7 @@ function displayUrl(value: string): string {
     url.password = "";
     url.hash = "";
     for (const key of [...url.searchParams.keys()]) {
-      if (
-        /(?:token|key|secret|password|credential|authorization|signature|^sig$)/i.test(
-          key,
-        )
-      ) {
+      if (isSensitiveQueryName(key)) {
         url.searchParams.set(key, "[redacted]");
       }
     }

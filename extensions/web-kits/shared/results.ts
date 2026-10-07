@@ -87,9 +87,20 @@ export function createRedactor(
   };
 }
 
-/** Reject userinfo; remove sensitive query values and all fragments before reuse as text. */
+/** Shared URL parameter/path classification, including repeatedly encoded names. */
 function isSensitiveName(value: string): boolean {
   return SENSITIVE_NAME.test(decode(value));
+}
+
+/** Shared query policy; also covers provider-specific credential parameter names. */
+export function isSensitiveQueryName(value: string): boolean {
+  const name = decode(value);
+  return (
+    SENSITIVE_NAME.test(name) ||
+    /(?:token|key|secret|password|credential|authorization|signature)/i.test(
+      name,
+    )
+  );
 }
 
 function safeUrl(
@@ -118,7 +129,7 @@ function safeUrl(
       })
       .join("/");
     for (const [key, value] of [...url.searchParams]) {
-      if (isSensitiveName(key) || /%[a-f0-9]{2}/i.test(decode(key))) {
+      if (isSensitiveQueryName(key) || /%[a-f0-9]{2}/i.test(decode(key))) {
         url.searchParams.delete(key);
         continue;
       }

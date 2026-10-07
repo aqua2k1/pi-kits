@@ -56,6 +56,15 @@ test("GitHubHandler shallow-clones a small repository and saves content locally"
       if (commandName === "gh" && args[0] === "api") {
         apiTimeouts.push(options.timeoutMs);
         apiEndpoints.push(String(args.at(-1)));
+        if (String(args.at(-1)).includes("matching-refs")) {
+          return result({
+            stdout: JSON.stringify(
+              String(args.at(-1)).includes("/heads/")
+                ? [{ ref: "refs/heads/main" }]
+                : [],
+            ),
+          });
+        }
         return result({
           stdout: JSON.stringify({ default_branch: "main", size: 12 }),
         });
@@ -86,7 +95,11 @@ test("GitHubHandler shallow-clones a small repository and saves content locally"
   assert.equal(first.repositoryPath !== undefined, true);
   assert.match(first.text, /export const x = 1/);
   assert.equal(cloneCalls, 1);
-  assert.deepEqual(apiEndpoints, ["repos/acme/project"]);
+  const refEndpoints = [
+    "repos/acme/project/git/matching-refs/heads/main",
+    "repos/acme/project/git/matching-refs/tags/main",
+  ];
+  assert.deepEqual(apiEndpoints, [...refEndpoints, "repos/acme/project"]);
   assert.equal(
     await readFile(first.fullOutputPath, "utf8").then((text) =>
       text.includes("export const x = 1"),
@@ -99,8 +112,12 @@ test("GitHubHandler shallow-clones a small repository and saves content locally"
   });
   assert.ok(second);
   assert.equal(cloneCalls, 1);
-  assert.deepEqual(apiEndpoints, ["repos/acme/project", "repos/acme/project"]);
-  assert.deepEqual(apiTimeouts, [1_000, 1_000]);
+  assert.deepEqual(apiEndpoints, [
+    ...refEndpoints,
+    "repos/acme/project",
+    "repos/acme/project",
+  ]);
+  assert.deepEqual(apiTimeouts, [1_000, 1_000, 1_000, 1_000]);
   assert.deepEqual(cloneTimeouts, [30_000]);
   assert.equal(second.repositoryPath, first.repositoryPath);
   await cleanupResult(first.fullOutputPath);
@@ -382,6 +399,137 @@ test("GitHubHandler reserves clone capacity before starting distinct clones", as
     if (response) await cleanupResult(response.fullOutputPath);
   }
   await rm(clonePath, { recursive: true, force: true });
+});
+
+test("GitHubHandler keeps implicit default and a branch named default in separate clone caches", async () => {
+  const clonePath = `/tmp/pi-web-tools-default-ref-${Date.now()}`;
+  const branches: (string | undefined)[] = [];
+  const command: CommandRunner = {
+    async run(_name, args) {
+      if (args[0] === "--version") return result();
+      if (args[0] === "repo") {
+        const branchIndex = args.indexOf("--branch");
+        const branch = branchIndex < 0 ? undefined : args[branchIndex + 1];
+        branches.push(branch);
+        const destination = args[3] as string;
+        await mkdir(destination, { recursive: true });
+        await writeFile(`${destination}/README.md`, branch ?? "implicit");
+        return result();
+      }
+      return result({ code: 1 });
+    },
+  };
+  const handler = new GitHubHandler({
+    config: config(clonePath, { mode: "clone" }),
+    apiTimeoutMs: 1_000,
+    runtime: { command },
+  });
+  const responses = [];
+  try {
+    for (const suffix of ["", "/tree/default", "", "/tree/default"]) {
+      const response = await handler.fetch({
+        url: new URL(`https://github.com/acme/project${suffix}`),
+      });
+      assert.ok(response);
+      responses.push(response);
+    }
+    assert.deepEqual(branches, [undefined, "default"]);
+    assert.notEqual(responses[0]?.repositoryPath, responses[1]?.repositoryPath);
+    assert.equal(responses[0]?.repositoryPath, responses[2]?.repositoryPath);
+    assert.equal(responses[1]?.repositoryPath, responses[3]?.repositoryPath);
+  } finally {
+    for (const response of responses)
+      await cleanupResult(response.fullOutputPath);
+    await rm(clonePath, { recursive: true, force: true });
+  }
+});
+
+test("GitHubHandler resolves slash refs before API/clone and declines ambiguous refs", async () => {
+  for (const mode of ["api", "clone"] as const) {
+    const clonePath = `/tmp/pi-web-tools-slash-${mode}-${Date.now()}`;
+    const endpoints: string[] = [];
+    const branches: string[] = [];
+    let ambiguous = false;
+    const command: CommandRunner = {
+      async run(_name, args) {
+        if (args[0] === "--version") return result();
+        if (args[0] === "api") {
+          const endpoint = String(args.at(-1));
+          endpoints.push(endpoint);
+          if (endpoint.includes("matching-refs")) {
+            return result({
+              stdout: JSON.stringify(
+                endpoint.includes("/heads/")
+                  ? [
+                      { ref: "refs/heads/feature/topic" },
+                      ...(ambiguous ? [{ ref: "refs/heads/feature" }] : []),
+                    ]
+                  : [],
+              ),
+            });
+          }
+          if (
+            endpoint ===
+            "repos/acme/project/contents/src/file.ts?ref=feature%2Ftopic"
+          ) {
+            return result({
+              stdout: JSON.stringify({
+                type: "file",
+                content: Buffer.from("slash branch\n").toString("base64"),
+              }),
+            });
+          }
+          return result({ code: 1 });
+        }
+        if (args[0] === "repo") {
+          branches.push(args[args.indexOf("--branch") + 1] as string);
+          const destination = args[3] as string;
+          await mkdir(`${destination}/src`, { recursive: true });
+          await writeFile(`${destination}/src/file.ts`, "slash branch\n");
+          return result();
+        }
+        return result({ code: 1 });
+      },
+    };
+    const handler = new GitHubHandler({
+      config: config(clonePath, { mode }),
+      apiTimeoutMs: 1_000,
+      runtime: { command },
+    });
+    try {
+      for (const ref of ["feature/topic", "feature%2Ftopic"]) {
+        const response = await handler.fetch({
+          url: new URL(
+            `https://github.com/acme/project/blob/${ref}/src/file.ts`,
+          ),
+        });
+        assert.ok(response);
+        assert.match(response.text, /slash branch/);
+        await cleanupResult(response.fullOutputPath);
+      }
+      if (mode === "clone") assert.deepEqual(branches, ["feature/topic"]);
+      else
+        assert.equal(
+          endpoints.filter((endpoint) =>
+            endpoint.includes("contents/src/file.ts?ref=feature%2Ftopic"),
+          ).length,
+          2,
+        );
+      ambiguous = true;
+      const before = branches.length;
+      assert.equal(
+        await handler.fetch({
+          url: new URL(
+            "https://github.com/acme/project/blob/feature/topic/src/file.ts",
+          ),
+        }),
+        null,
+      );
+      assert.equal(branches.length, before);
+    } finally {
+      await rm(clonePath, { recursive: true, force: true });
+    }
+  }
 });
 
 test("GitHubHandler falls back to public git when gh is unavailable", async () => {

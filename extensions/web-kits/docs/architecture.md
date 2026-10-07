@@ -161,6 +161,10 @@ https://github.com/{owner}/{repo}/tree/{ref}/{path}
 ```
 
 Issue, pull request, release, action, wiki and other UI pages use native HTTP.
+When a blob/tree URL has multiple possible ref/path boundaries, real branch and
+tag refs must identify a unique split. Encoded slashes (`%2F`) in the ref
+component explicitly delimit it. Ambiguous or unavailable ref metadata falls
+back to native HTTP rather than guessing a branch.
 
 `mode=auto` resolves repository metadata through `gh api`. Small repositories
 use a shallow, single-branch clone. Repositories known to exceed the configured
@@ -169,7 +173,7 @@ ordinary native HTTP still available when the GitHub API cannot serve the URL.
 The clone is cached under a hashed key so owner, repository and ref cannot create arbitrary
 local paths. The repository path is returned as `repositoryPath`; generated
 tree or file content is also saved to `content.txt`. Both API and clone paths
-render roots/trees as listings (with README content limited to 8 KiB for roots),
+render roots/trees as listings (root README shares the overall saved-content limit),
 and blobs as file text. HTML, JSON and Markdown blobs receive best-effort
 Prettier formatting on both API and clone paths, falling back to original file
 text on failure. Clone scaffolds and repository listings (including their root

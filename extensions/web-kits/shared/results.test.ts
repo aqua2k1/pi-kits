@@ -118,6 +118,19 @@ test("URL safety covers encoded keys, signed links, paths, fragments and nested 
   assert.match(response.results[0].url, /ok=1/);
 });
 
+test("search URLs share the fetch credential query classification", () => {
+  const response = normalizeSearchResponse(request, [
+    result(
+      "https://example.com/?auth=fixture-auth&hmac=fixture-hmac&policy=fixture-policy&custom_token=fixture-token&apiKey=fixture-key&author=alice",
+    ),
+  ]);
+  assert.doesNotMatch(JSON.stringify(response), /fixture-/);
+  assert.equal(
+    new URL(response.results[0].url).searchParams.get("author"),
+    "alice",
+  );
+});
+
 test("ordinary path and query names are not mistaken for credential fields", () => {
   const response = normalizeSearchResponse(request, [
     result("https://example.com/author/profile"),

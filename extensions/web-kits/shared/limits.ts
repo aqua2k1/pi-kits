@@ -24,7 +24,6 @@ export const MAX_FETCH_OUTPUT_BYTES = 50 * 1_024;
 export const MAX_OUTPUT_BYTES = MAX_FETCH_OUTPUT_BYTES;
 export const MAX_GITHUB_COMMAND_OUTPUT_BYTES = 2 * 1_024 * 1_024;
 export const MAX_GITHUB_TREE_ENTRIES = 200;
-export const MAX_GITHUB_README_BYTES = 8 * 1_024;
 export const MAX_GITHUB_SESSION_CLONES = 32;
 export const TEMP_SPOOL_TTL_MS = 24 * 60 * 60 * 1_000;
 export const DEFAULT_GITHUB_ENABLED = WEB_DEFAULTS.githubEnabled;

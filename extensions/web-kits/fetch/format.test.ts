@@ -144,6 +144,33 @@ for (const source of ["native-http", "github-gh", "github-clone"] as const) {
   });
 }
 
+test("fetch uses the shared credential query policy without changing the request URL", () => {
+  const keys = [
+    "auth",
+    "hmac",
+    "policy",
+    "access_token",
+    "refresh-token",
+    "api_key",
+    "X-Amz-Credential",
+    "X-Goog-Signature",
+    "custom_token",
+    "apiKey",
+    "%2561uth",
+  ];
+  for (const key of keys) {
+    const url = new URL("https://example.com/file?author=alice");
+    url.searchParams.set(key, "credential-fixture");
+    const input = { ...response("body"), finalUrl: url.toString() };
+    const output = buildFetchOutput(input);
+    assert.doesNotMatch(JSON.stringify(output), /credential-fixture/);
+    const displayed = new URL(output.details.finalUrl);
+    assert.equal(displayed.searchParams.get(key), "[redacted]", key);
+    assert.equal(displayed.searchParams.get("author"), "alice");
+    assert.equal(input.finalUrl, url.toString());
+  }
+});
+
 test("empty saved content has zero bytes and omits absent optional metadata", () => {
   const output = buildFetchOutput({
     text: "",

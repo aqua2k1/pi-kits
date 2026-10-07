@@ -3,13 +3,11 @@ import { extname, join, resolve, sep } from "node:path";
 import {
   FETCH_FILE_CONTENT_LIMIT_MESSAGE,
   MAX_FETCH_CONTENT_BYTES,
-  MAX_GITHUB_README_BYTES,
   MAX_GITHUB_TREE_ENTRIES,
 } from "../shared/limits.ts";
 import { isBinaryFileName } from "./content.ts";
 import { formatDocument } from "./formatters/index.ts";
 import type { GitHubUrlInfo } from "./github-url.ts";
-import { limitUtf8Text } from "./spool.ts";
 
 const NOISE_DIRECTORIES = new Set([
   "node_modules",
@@ -41,6 +39,11 @@ const MAX_CLONE_FILE_BYTES = MAX_FETCH_CONTENT_BYTES - 2 * 1_024;
 export interface BoundedFileText {
   text: string;
   truncated: boolean;
+}
+
+interface RootReadmeText extends BoundedFileText {
+  /** Formatted bytes plus source bytes omitted before formatting. */
+  totalBytes: number;
 }
 
 export interface CloneContentResult {
@@ -239,21 +242,28 @@ async function buildDirectoryListing(
 async function readRootReadme(
   rootPath: string,
   signal?: AbortSignal,
-): Promise<string | undefined> {
+): Promise<RootReadmeText | undefined> {
   for (const name of ROOT_READMES) {
     const path = await resolveWithinRepo(rootPath, name);
     if (!path) continue;
     try {
       const info = await stat(path);
       if (!info.isFile() || (await isBinaryFile(path))) continue;
-      const content = await readBoundedFile(path, MAX_GITHUB_README_BYTES);
-      const formatted = limitUtf8Text(
-        await formatDocument({ text: content.text, filePath: name, signal }),
-        MAX_GITHUB_README_BYTES,
-      );
-      return content.truncated || formatted.truncated
-        ? `${formatted.text}\n\n[README truncated]`
-        : formatted.text;
+      const content = await readBoundedFile(path);
+      const text = await formatDocument({
+        text: content.text,
+        filePath: name,
+        signal,
+      });
+      return {
+        text,
+        truncated: content.truncated,
+        totalBytes:
+          Buffer.byteLength(text, "utf8") +
+          (content.truncated
+            ? Math.max(0, info.size - MAX_FETCH_CONTENT_BYTES)
+            : 0),
+      };
     } catch {
       // Try the next conventional README name.
     }
@@ -287,15 +297,21 @@ export async function generateCloneContent(
   if (info.type === "root") {
     lines.push("## Structure", await buildTree(rootPath), "");
     const readme = await readRootReadme(rootPath, signal);
-    if (readme) lines.push("## README.md", readme, "");
+    if (readme) lines.push("## README.md", readme.text, "");
     lines.push(
       "Use read or bash at the repository path above for deeper exploration.",
     );
+    const text = lines.join("\n");
+    const omittedBytes = readme
+      ? readme.totalBytes - Buffer.byteLength(readme.text, "utf8")
+      : 0;
     return {
-      text: lines.join("\n"),
+      text,
       title,
       contentType: "text/plain",
+      contentLength: Buffer.byteLength(text, "utf8") + omittedBytes,
       repositoryPath: rootPath,
+      ...(readme?.truncated ? { truncated: true } : {}),
     };
   }
 

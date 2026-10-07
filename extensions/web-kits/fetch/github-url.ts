@@ -1,5 +1,5 @@
 const REPOSITORY_SEGMENT = /^[A-Za-z0-9][A-Za-z0-9_.-]*$/;
-const REF_SEGMENT = /^[^\\/:*?"<>|]+$/;
+const REF_SEGMENT = /^[^\\:*?"<>|\s]+$/;
 const FULL_SHA = /^[0-9a-f]{40}$/i;
 
 export interface GitHubUrlInfo {
@@ -9,12 +9,21 @@ export interface GitHubUrlInfo {
   refIsFullSha: boolean;
   path: string;
   type: "root" | "blob" | "tree";
+  /** Decoded URL components whose ref/path boundary needs real refs. */
+  unresolvedSegments?: string[];
 }
 
 function decodeSegment(segment: string): string | undefined {
   try {
     const decoded = decodeURIComponent(segment);
-    return decoded && decoded !== "." && decoded !== ".." ? decoded : undefined;
+    return decoded &&
+      !decoded.includes("\\") &&
+      !Array.from(decoded).some(
+        (char) => char.charCodeAt(0) < 32 || char.charCodeAt(0) === 127,
+      ) &&
+      decoded.split("/").every((part) => part && part !== "." && part !== "..")
+      ? decoded
+      : undefined;
   } catch {
     return undefined;
   }
@@ -64,6 +73,23 @@ export function parseGitHubUrl(url: URL | string): GitHubUrlInfo | null {
   if (!ref || !REF_SEGMENT.test(ref)) return null;
   const path = segments.slice(4).join("/");
   if (action === "blob" && !path) return null;
+  const tail = segments.slice(3);
+  // An encoded slash in the first component explicitly delimits the ref.
+  // Otherwise more than one legal boundary must be checked against real refs.
+  if (
+    !ref.includes("/") &&
+    !FULL_SHA.test(ref) &&
+    tail.length > (action === "blob" ? 2 : 1)
+  ) {
+    return {
+      owner,
+      repo,
+      path: "",
+      refIsFullSha: false,
+      type: action,
+      unresolvedSegments: tail,
+    };
+  }
   return {
     owner,
     repo,

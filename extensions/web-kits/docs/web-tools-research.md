@@ -102,7 +102,7 @@ and the host's session/transcript may also retain tool output.
 - final fetch text: 50 MiB;
 - serialized fetch output object: 50 KiB (metadata only);
 - search output retains its existing line limit;
-- GitHub root README: 8 KiB;
+- GitHub root README: no independent limit; shares the 50 MiB saved-content limit;
 - GitHub tree listing: 200 entries;
 - command stdout: bounded separately from final content;
 - native and command operations: cancellable and time-bounded.

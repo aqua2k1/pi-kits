@@ -50,7 +50,7 @@ These are package-internal limits, not user settings or hard total-RSS limits.
 
 GitHub HTML, JSON and Markdown blobs also receive best-effort formatting, with
 original file text saved on failure. Clone scaffolds and repository listings
-remain unchanged: roots/trees render listings (root README limited to 8 KiB),
+remain unchanged: roots/trees render listings (root README has no independent limit),
 and binary files produce a textual description, not raw bytes.
 HTTP responses stream through a bounded `response.bin` before conversion to
 `content.txt`; GitHub-generated text is saved directly to `content.txt`.

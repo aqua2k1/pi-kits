@@ -184,6 +184,10 @@ https://github.com/{owner}/{repo}/tree/{ref}/{path}
 ```
 
 Issue, pull request, release, action and wiki pages use native HTTP instead.
+Refs containing `/` are supported. Ambiguous ref/path boundaries require a
+unique match against real branch/tag refs; if those refs are unavailable or the
+split remains ambiguous, the request falls back to native HTTP. Encoding `/`
+as `%2F` within the ref component explicitly identifies the boundary.
 
 ## Temporary files
 
@@ -212,7 +216,7 @@ execute repository code.
   `savedContent.path` regardless of size.
 - Serialized tool output is limited to 50 KiB, including all machine/text/details
   copies and JSON escaping. No fetched body, preview or summary is returned.
-- GitHub root README content remains limited to 8 KiB in the saved rendering.
+- GitHub root README has no independent limit; the saved rendering uses the overall 50 MiB content limit.
 - Ordinary HTTP preserves decoded content in its original format, not extracted
   plain text. HTML structure, scripts and styles are retained; title extraction
   remains available.
