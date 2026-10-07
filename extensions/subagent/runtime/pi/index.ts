@@ -158,7 +158,6 @@ class PiSession implements RuntimeSession {
       const argv = [
         this.options.executable ?? "pi",
         "--no-extensions",
-        "--no-approve",
         "-e",
         this.options.workerPath ??
           fileURLToPath(new URL("./worker.ts", import.meta.url)),

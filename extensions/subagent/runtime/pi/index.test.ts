@@ -81,7 +81,6 @@ test("Pi CLI uses normalized session tools, denies, model and thinking for unnam
   assert.deepEqual(started.argv, [
     "custom-pi",
     "--no-extensions",
-    "--no-approve",
     "-e",
     "/custom/worker.ts",
     "--session-id",

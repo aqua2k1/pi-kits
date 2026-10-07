@@ -160,7 +160,7 @@ there is no agent body to apply:
 
 Both modes retain project `AGENTS.md`/`CLAUDE.md` context according to Pi's native
 trust rules; they do not disable context-file discovery or bypass trust. Workers
-use `--no-approve`, so untrusted project resources are not automatically approved.
+do not override project trust, so trusted project skills can load normally.
 The body is file content, never interpolated into shell commands. The role remains
 active after completion for native terminal interaction and resume while the runtime
 is retained.

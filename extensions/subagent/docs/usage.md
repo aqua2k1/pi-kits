@@ -220,8 +220,8 @@ IDs and resource kinds through Pi's extension error handling. This is best-effor
 cleanup; ownership is not persisted across processes or extension-runtime
 replacement. Pi workers self-terminate when the parent control connection is
 lost, including while idle or in native interaction. Workers share
-the filesystem and credentials and are not a sandbox. They start with
-`--no-approve`, so trust-gated project resources are not loaded automatically.
+the filesystem and credentials and are not a sandbox. They follow Pi's native
+project trust rules without overriding them, so trusted project skills can load.
 Workers also use `--no-extensions` and explicitly load the worker bridge plus
 `subagent.extensionAllowlist`. Defaults are `builtin:codemode` and
 `builtin:tool-search`; arbitrary parent/user extensions, including permission

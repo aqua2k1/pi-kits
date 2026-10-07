@@ -388,7 +388,8 @@ test("manager is lazy, starts an authenticated worker and returns structured res
   await until(() => mux.commands.get(agent.id)?.length === 1);
   const start = mux.started[0];
   assert.equal(start.env.PI_KITS_SUBAGENT_WORKER, "1");
-  assert.ok(start.argv.includes("--no-approve"));
+  assert.equal(start.argv.includes("--no-approve"), false);
+  assert.equal(start.argv.includes("--approve"), false);
   assert.ok(start.argv.includes("--no-extensions"));
   assert.equal(start.argv.filter((arg) => arg === "-e").length, 3);
   assert.ok(start.argv.includes("sonnet"));
