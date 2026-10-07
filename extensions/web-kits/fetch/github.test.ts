@@ -80,7 +80,6 @@ test("GitHubHandler shallow-clones a small repository and saves content locally"
 
   const first = await handler.fetch({
     url: new URL("https://github.com/acme/project/blob/main/src/index.ts"),
-    raw: false,
   });
   assert.ok(first);
   assert.equal(first.source, "github-clone");
@@ -97,7 +96,6 @@ test("GitHubHandler shallow-clones a small repository and saves content locally"
 
   const second = await handler.fetch({
     url: new URL("https://github.com/acme/project"),
-    raw: false,
   });
   assert.ok(second);
   assert.equal(cloneCalls, 1);
@@ -144,7 +142,6 @@ test("GitHubHandler uses gh api in api mode", async () => {
   });
   const response = await handler.fetch({
     url: new URL("https://github.com/acme/project/blob/main/README.md"),
-    raw: false,
   });
   assert.ok(response);
   assert.equal(response.source, "github-gh");
@@ -194,7 +191,6 @@ test("GitHubHandler does not clone a known oversized repository when API returns
 
   const response = await handler.fetch({
     url: new URL("https://github.com/acme/large"),
-    raw: false,
   });
   assert.equal(response, null);
   assert.equal(cloneCalls, 0);
@@ -244,7 +240,6 @@ test("GitHubHandler lets each in-flight clone waiter cancel independently", asyn
   });
   const request = {
     url: new URL("https://github.com/acme/project/blob/main/README.md"),
-    raw: false,
   };
   const controller = new AbortController();
   const first = handler.fetch(request, controller.signal);
@@ -318,7 +313,6 @@ test("GitHubHandler aborts cloning when its final waiter cancels", async () => {
   const response = handler.fetch(
     {
       url: new URL("https://github.com/acme/project/blob/main/README.md"),
-      raw: false,
     },
     controller.signal,
   );
@@ -373,7 +367,6 @@ test("GitHubHandler reserves clone capacity before starting distinct clones", as
       url: new URL(
         `https://github.com/acme/project/blob/ref-${index}/README.md`,
       ),
-      raw: false,
     }),
   );
   const fetches = requests.map((request) => handler.fetch(request));
@@ -412,7 +405,6 @@ test("GitHubHandler falls back to public git when gh is unavailable", async () =
   });
   const response = await handler.fetch({
     url: new URL("https://github.com/acme/project"),
-    raw: false,
   });
   assert.ok(response);
   assert.equal(response.source, "github-clone");

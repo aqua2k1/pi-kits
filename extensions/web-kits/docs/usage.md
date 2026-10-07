@@ -8,7 +8,8 @@ two Pi tools. Its package and sole public resource name is `web-kits`:
 - `web_fetch` — fetches a specific HTTP(S) URL through native Node HTTP, or
   reads GitHub repositories through `gh api` and shallow clone.
 
-The package uses the workspace runtime dependency `@pi-kits/config` and the
+The package uses the workspace runtime dependency `@pi-kits/config`, the runtime
+dependency `prettier` (through its API, not its CLI), and the
 Pi-provided peers
 `@earendil-works/pi-ai`, `@earendil-works/pi-coding-agent`, and `typebox`. Node
 `>=22.19.0` is required.
@@ -19,7 +20,7 @@ Pi-provided peers
 web_fetch
   -> ordinary URL: Node fetch / Undici
   -> GitHub repository URL: gh api or shallow clone
-  -> ordinary HTTP: decode/extract text; GitHub: render repository text
+  -> ordinary HTTP: decode and optionally format; GitHub: format blobs / render listings
   -> /tmp/pi-web-fetch-*/content.txt
   -> metadata only + savedContent.path for read
 ```
@@ -29,10 +30,28 @@ final text is limited to 50 MiB. No body, preview or summary is returned;
 pass `savedContent.path` to `read` for every successful result.
 Temporary files expire after the fixed temporary-file TTL (currently 24 hours).
 
-For ordinary HTTP, `raw: true` preserves decoded response text instead of HTML
-extraction; binary HTTP responses remain unsupported. GitHub repository handling
-is unchanged by `raw`: roots/trees render listings (root README limited to 8 KiB), blobs
-render file text, and binary files produce a textual description, not raw bytes.
+`web_fetch` accepts only `url`; the `raw` parameter has been removed. Ordinary
+HTTP preserves the decoded content's original format rather than extracting
+plain text from HTML. HTML structure, scripts and styles remain in the saved
+content; title extraction is retained, and JavaScript is never executed.
+HTML/XHTML, JSON (including `+json` media types), and Markdown are formatted on a
+best-effort basis through the Prettier API. Plain text, XML and other supported
+text remain unchanged; if formatting fails, the decoded original is saved.
+Binary HTTP responses remain unsupported.
+
+Prettier is a runtime dependency, not a CLI subprocess. Formatting uses fixed
+options, with no user configuration: `printWidth: 100`, `tabWidth: 2`,
+`useTabs: false`, `endOfLine: "lf"`, `proseWrap: "preserve"`,
+`htmlWhitespaceSensitivity: "css"`, and `embeddedLanguageFormatting: "off"`.
+Formatting runs in a cancellable worker rather than blocking the agent thread.
+Each worker has a 5-second wall-time budget and V8 heap budgets of 128 MiB old
+space / 32 MiB young space; errors or exhausted budgets preserve the input.
+These are package-internal limits, not user settings or hard total-RSS limits.
+
+GitHub HTML, JSON and Markdown blobs also receive best-effort formatting, with
+original file text saved on failure. Clone scaffolds and repository listings
+remain unchanged: roots/trees render listings (root README limited to 8 KiB),
+and binary files produce a textual description, not raw bytes.
 HTTP responses stream through a bounded `response.bin` before conversion to
 `content.txt`; GitHub-generated text is saved directly to `content.txt`.
 
@@ -58,7 +77,8 @@ providers/searxng/          SearXNG search adapter
 providers/codex/            Codex alpha/search adapter for web_search only
 fetch/router.ts             fetch routing
 fetch/http.ts               native HTTP transport
-fetch/content.ts            HTML/text decoding
+fetch/content.ts            text decoding, title extraction and content formatting
+fetch/formatters/            MIME/filename routing and bounded Prettier worker
 fetch/spool.ts              bounded temporary files
 fetch/github.ts             GitHub API/clone strategy
 fetch/gh-client.ts          bounded gh/git process runner
@@ -111,7 +131,8 @@ cd extensions/web-kits
 npx biome check .
 ```
 
-Only after `npx biome check .` passes, apply formatting in `extensions/web-kits`:
+Only after tests, typecheck, and the read-only `npx biome check .` all pass,
+apply formatting in `extensions/web-kits`:
 
 ```bash
 npx biome format --write .
@@ -130,9 +151,9 @@ Run the opt-in live fetch/read integration test from the repository root:
 PI_KITS_LIVE_FETCH=1 node --import tsx --test extensions/web-kits/fetch/read-integration.test.ts
 ```
 
-It fetches `https://example.com` and `https://nodejs.org/api/fs.html`, validates
-saved layout metadata, and follows real built-in `read` offsets to reconstruct
-the complete saved text. The same test file always covers small files, line/byte
+It fetches `https://example.com`, Node.js filesystem HTML/JSON documentation,
+and the Prettier package README from unpkg, validates saved layout metadata, and
+follows real built-in `read` offsets to reconstruct the complete saved text. The same test file always covers small files, line/byte
 pagination, and oversized UTF-8 lines over loopback HTTP without mocked tools.
 Live tests require internet access and intentionally fail on network errors.
 
@@ -160,6 +181,11 @@ actual returned read ranges against the fixture, and checks the final answers.
 Full review requires all lines to be delivered through `read` and all exceptions
 to be reported; targeted lookup requires searching without a full-document read.
 `coveredLines` measures only `read` coverage, not lines visible through `grep`.
+
+The observations and linked historical A/B reports below tested the earlier
+plain-text extraction behavior and saved-layout/read workflow, not the new
+content-formatting behavior or its effectiveness. The historical reports remain
+unchanged.
 
 Observed with `openai-codex/gpt-6.1-sol`, low thinking, one trial per task:
 
@@ -263,7 +289,7 @@ classified exceptions, not success-shaped error envelopes.
   truncation?: { totalBytes: number, outputBytes: number, totalLines?: number,
   outputLines?: number } }`. No top-level `fullOutputPath`, `expiresAt`,
   `truncation`, `text` or `isPreview` is returned. `savedContent.bytes` counts
-  saved extracted/decoded/rendered text in UTF-8 bytes, not HTTP `Content-Length`.
+  saved formatted/decoded/repository-rendered text in UTF-8 bytes, not HTTP `Content-Length`.
   `savedContent.truncated` only means the saved text was limited; even `false`
   does not guarantee the complete original page. Optional nested truncation
   metadata describes those saved-text limits.
@@ -274,8 +300,8 @@ Both formatters budget the complete serialized return object, including machine
 data, details, visible text, UTF-8 and JSON escaping, within 50 KiB.
 Search can omit additional results. Fetch does not shorten content previews:
 there are none; metadata that cannot fit produces a classified `invalid-response`.
-Internal `FetchResponse` and fetching/storage flows remain unchanged; internal
-`fullOutputPath` is exposed as `savedContent.path`.
+Internal `fullOutputPath` is exposed as `savedContent.path`; saved-layout
+metadata describes the final saved text after formatting and limits.
 
 ### Codemode: fetch → read
 

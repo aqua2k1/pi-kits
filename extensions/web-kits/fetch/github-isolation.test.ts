@@ -31,7 +31,6 @@ function result(code = 0): CommandResult {
 
 const request = {
   url: new URL("https://github.com/acme/project/blob/main/README.md"),
-  raw: false,
 };
 
 test("clone operations own unique directories across handlers, failures and retries", async () => {

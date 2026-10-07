@@ -187,13 +187,13 @@ test("web_search registers the public parameter schema", () => {
   assert.equal(schema.properties.recency_days.maximum, 3_650);
 });
 
-test("web_fetch registers the URL and raw schema", () => {
+test("web_fetch registers only the URL schema", () => {
   const tool = captureFetch();
   assert.equal(tool.name, "web_fetch");
   const schema = JSON.parse(JSON.stringify(tool.parameters));
   assert.deepEqual(schema.required, ["url"]);
   assert.equal(schema.properties.url.maxLength, 8_192);
-  assert.equal(schema.properties.raw.type, "boolean");
+  assert.deepEqual(Object.keys(schema.properties), ["url"]);
 });
 
 test("registered search tool uses its resolved config", async () => {
@@ -587,21 +587,18 @@ test("guidance keeps routing and security, while descriptions carry provider and
     schema.properties.recency_days.description,
     /Provider-dependent, best-effort/,
   );
-  assert.match(
-    JSON.parse(JSON.stringify(fetch.parameters)).properties.raw.description,
-    /decoded raw text.*ordinary HTTP.*Does not change GitHub/,
-  );
+  assert.match(fetch.description, /formatted with fixed Prettier rules/);
 });
 
-for (const raw of [false, true]) {
-  test(`native raw=${raw} keeps decoded text and final redacted URL provenance`, async () => {
+for (const contentType of ["text/html", "application/xhtml+xml"]) {
+  test(`native ${contentType} formats HTML and keeps final redacted URL provenance`, async () => {
     const body = "<title>Fixture</title><p>hello</p>";
     const tool = captureFetch({
       fetchConfig: resolveFetchConfig({ github: { enabled: false } }),
       fetchRuntime: {
         fetch: async () => {
           const response = new Response(body, {
-            headers: { "content-type": "text/html" },
+            headers: { "content-type": contentType },
           });
           Object.defineProperty(response, "url", {
             value: "https://example.com/redirected?token=hidden#fragment",
@@ -611,8 +608,8 @@ for (const raw of [false, true]) {
       },
     });
     const output = await tool.execute(
-      "native-raw",
-      { url: "  https://example.com/original  ", raw },
+      "native-formatted",
+      { url: "  https://example.com/original  " },
       undefined,
       undefined,
       context,
@@ -636,11 +633,7 @@ for (const raw of [false, true]) {
       assert.equal(machine.savedContent.bytes, Buffer.byteLength(saved));
       assert.equal(machine.savedContent.truncated, false);
       assert.ok(!JSON.stringify(output).includes("hello"));
-      if (raw) assert.equal(saved, body);
-      else {
-        assert.match(saved, /hello/);
-        assert.doesNotMatch(saved, /<p>/);
-      }
+      assert.equal(saved, "<title>Fixture</title>\n<p>hello</p>\n");
     } finally {
       await rm(dirname(details.savedContent.path), {
         recursive: true,
@@ -651,7 +644,7 @@ for (const raw of [false, true]) {
 }
 
 for (const mode of ["api", "clone"] as const) {
-  test(`registered fetch machine data matches real GitHub ${mode} output with raw=true`, async () => {
+  test(`registered fetch machine data matches real GitHub ${mode} formatted output`, async () => {
     const clonePath = await mkdtemp(join(tmpdir(), "pi-web-kit-contract-"));
     const commandResult = (stdout = ""): CommandResult => ({
       code: 0,
@@ -696,7 +689,7 @@ for (const mode of ["api", "clone"] as const) {
     try {
       const output = await tool.execute(
         "github-contract",
-        { url, raw: true },
+        { url },
         undefined,
         undefined,
         context,
@@ -731,7 +724,7 @@ for (const mode of ["api", "clone"] as const) {
         assert.match(saved, /Repository cloned to:/);
       } else {
         assert.equal(details.repositoryPath, undefined);
-        assert.equal(saved, "repository text");
+        assert.equal(saved, "repository text\n");
       }
     } finally {
       if (fullOutputPath) {

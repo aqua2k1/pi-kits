@@ -7,7 +7,9 @@ import {
   MAX_GITHUB_TREE_ENTRIES,
 } from "../shared/limits.ts";
 import { isBinaryFileName } from "./content.ts";
+import { formatDocument } from "./formatters/index.ts";
 import type { GitHubUrlInfo } from "./github-url.ts";
+import { limitUtf8Text } from "./spool.ts";
 
 const NOISE_DIRECTORIES = new Set([
   "node_modules",
@@ -234,7 +236,10 @@ async function buildDirectoryListing(
   return lines.join("\n");
 }
 
-async function readRootReadme(rootPath: string): Promise<string | undefined> {
+async function readRootReadme(
+  rootPath: string,
+  signal?: AbortSignal,
+): Promise<string | undefined> {
   for (const name of ROOT_READMES) {
     const path = await resolveWithinRepo(rootPath, name);
     if (!path) continue;
@@ -242,9 +247,13 @@ async function readRootReadme(rootPath: string): Promise<string | undefined> {
       const info = await stat(path);
       if (!info.isFile() || (await isBinaryFile(path))) continue;
       const content = await readBoundedFile(path, MAX_GITHUB_README_BYTES);
-      return content.truncated
-        ? `${content.text}\n\n[README truncated]`
-        : content.text;
+      const formatted = limitUtf8Text(
+        await formatDocument({ text: content.text, filePath: name, signal }),
+        MAX_GITHUB_README_BYTES,
+      );
+      return content.truncated || formatted.truncated
+        ? `${formatted.text}\n\n[README truncated]`
+        : formatted.text;
     } catch {
       // Try the next conventional README name.
     }
@@ -268,6 +277,7 @@ async function inspectPath(
 export async function generateCloneContent(
   rootPath: string,
   info: GitHubUrlInfo,
+  signal?: AbortSignal,
 ): Promise<CloneContentResult> {
   const lines: string[] = [`Repository cloned to: ${rootPath}`, ""];
   const title = info.path
@@ -276,7 +286,7 @@ export async function generateCloneContent(
 
   if (info.type === "root") {
     lines.push("## Structure", await buildTree(rootPath), "");
-    const readme = await readRootReadme(rootPath);
+    const readme = await readRootReadme(rootPath, signal);
     if (readme) lines.push("## README.md", readme, "");
     lines.push(
       "Use read or bash at the repository path above for deeper exploration.",
@@ -341,7 +351,10 @@ export async function generateCloneContent(
   }
 
   const content = await readBoundedFile(safePath, MAX_CLONE_FILE_BYTES);
-  lines.push(`## ${target}`, content.text);
+  lines.push(
+    `## ${target}`,
+    await formatDocument({ text: content.text, filePath: target, signal }),
+  );
   if (content.truncated) {
     lines.push("", FETCH_FILE_CONTENT_LIMIT_MESSAGE, `Full file: ${safePath}`);
   }

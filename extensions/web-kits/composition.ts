@@ -56,7 +56,6 @@ export function searchWeb(
 
 export interface FetchWebRequest {
   url: string;
-  raw?: boolean;
 }
 
 export function fetchWeb(

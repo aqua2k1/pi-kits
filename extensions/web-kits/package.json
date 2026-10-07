@@ -18,7 +18,8 @@
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {
-    "@pi-kits/config": "*"
+    "@pi-kits/config": "*",
+    "prettier": "3.9.9"
   },
   "peerDependencies": {
     "@earendil-works/pi-ai": "*",

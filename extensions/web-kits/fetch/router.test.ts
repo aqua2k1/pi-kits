@@ -20,8 +20,7 @@ async function cleanup(path: string): Promise<void> {
 
 test("normalizeFetchRequest accepts HTTP(S) and rejects unsafe schemes", () => {
   assert.equal(
-    normalizeFetchRequest({ url: "https://example.com/a", raw: true }).url
-      .hostname,
+    normalizeFetchRequest({ url: "https://example.com/a" }).url.hostname,
     "example.com",
   );
   assert.throws(

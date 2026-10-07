@@ -48,7 +48,7 @@ export const SavedContentSchema = Type.Object({
   bytes: Type.Integer({
     minimum: 0,
     description:
-      "UTF-8 byte length of the saved text, not the HTTP response size.",
+      "UTF-8 byte length of the saved formatted/decoded text, not the HTTP response size.",
   }),
   lines: Type.Integer({
     minimum: 1,

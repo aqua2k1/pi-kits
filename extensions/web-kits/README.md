@@ -26,6 +26,8 @@ flowchart LR
 savedContent: {
   path: string;
   bytes: number;
+  lines: number;
+  maxLineBytes: number;
   truncated: boolean;
   expiresAt?: string;
   truncation?: {
@@ -37,7 +39,11 @@ savedContent: {
 }
 ```
 
-不再公开顶层 `fullOutputPath`、`expiresAt`、`truncation`、`text`、`isPreview`。`bytes` 是保存的提取/解码/渲染文本的 UTF-8 字节数，不是 HTTP Content-Length；`truncated` 只表示保存文本已受限，文件不保证原网页全量。输出对象仍限 50 KiB，GitHub 根目录 README 仍限 8 KiB。内部 `FetchResponse` 和抓取/存储流程不变，搜索契约不变。
+不再公开顶层 `fullOutputPath`、`expiresAt`、`truncation`、`text`、`isPreview`。`bytes` 是保存的格式化/解码/仓库渲染文本的 UTF-8 字节数，不是 HTTP Content-Length；`lines` 和 `maxLineBytes` 描述保存文件的行布局。`truncated` 只表示保存文本已受限，文件不保证原网页全量。保存文本仍限 50 MiB，临时文件 TTL 仍为 24 小时，`expiresAt` 描述临时文件而非 clone 缓存。输出对象仍限 50 KiB，GitHub 根目录 README 仍限 8 KiB，搜索契约不变。
+
+`web_fetch` 仅接受 `url`，不再提供 `raw` 参数。HTTP 解码内容保留原格式，不再将 HTML 提取为纯文本；脚本、样式和其他 HTML 结构保留，仍提取 `title`，但不执行 JavaScript。HTML/XHTML、JSON（含 `+json`）和 Markdown 尝试通过 runtime dependency `prettier` 的 API（非 CLI）格式化；普通文本、XML 和其他支持的文本保持原文，格式化失败时保存解码原文。GitHub blob 的 HTML、JSON 和 Markdown 也格式化，clone scaffold 和仓库 listings 保持原样。
+
+格式化规则固定且不读取用户配置：`printWidth: 100`、`tabWidth: 2`、`useTabs: false`、`endOfLine: "lf"`、`proseWrap: "preserve"`、`htmlWhitespaceSensitivity: "css"`、`embeddedLanguageFormatting: "off"`。
 
 简单的 codemode 串联：
 

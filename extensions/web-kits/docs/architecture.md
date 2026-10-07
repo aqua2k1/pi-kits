@@ -44,7 +44,7 @@ Search
 Fetch
 ├── fetch/router.ts          -> GitHub then native HTTP dispatch
 ├── fetch/http.ts            -> Node fetch, timeout and streamed body
-├── fetch/content.ts         -> HTML/text decoding
+├── fetch/content.ts         -> decoding, title extraction and content formatting
 ├── fetch/spool.ts           -> bounded temporary result files
 ├── fetch/github-url.ts      -> GitHub URL parsing
 ├── fetch/github.ts          -> clone/API strategy
@@ -60,7 +60,7 @@ Shared
 ## Fetch call chain
 
 ```text
-web_fetch(url, raw)
+web_fetch(url)
 ├─ startup snapshot (readConfigSnapshot + resolveConfig)
 ├─ fetchWeb(request, config.fetch, runtime, signal)
 │  ├─ normalizeFetchRequest()
@@ -75,7 +75,8 @@ web_fetch(url, raw)
 │        ├─ Node global fetch() with Chrome-style HTTP headers
 │        ├─ follow redirects
 │        ├─ stream response into bounded spool
-│        ├─ decodeDocument()
+│        ├─ decodeDocument() + title extraction
+│        ├─ best-effort content formatting through Prettier API
 │        └─ saveText() -> content.txt; remove response.bin
 ├─ save final logical text as content.txt
 ├─ buildFetchOutput()
@@ -90,10 +91,37 @@ checks the status, and streams the response body to a temporary file. A
 response body larger than 50 MiB is cancelled. The transport remains Node's
 HTTP stack; these headers do not change its TLS or HTTP/2 fingerprint.
 
-Binary HTTP responses are rejected as unsupported, including with `raw: true`.
-The body is decoded as text, JSON, XML or HTML. HTML extraction removes script,
-style, noscript and template blocks, extracts the title, converts block tags to
-line breaks, and decodes entities. JavaScript is never executed.
+`web_fetch` accepts only `url`; the `raw` parameter has been removed. Binary HTTP
+responses are rejected as unsupported. Supported textual bodies are decoded and
+retain their original format rather than undergoing HTML-to-plain-text extraction.
+HTML structure, script, style, noscript and template blocks remain in the content;
+title extraction is retained separately. JavaScript is never executed.
+
+HTML/XHTML, JSON (including `+json` media types), and Markdown receive best-effort
+formatting via the runtime dependency `prettier` and its API, not a CLI subprocess.
+Plain text, XML and other supported text remain unchanged. If formatting fails,
+the decoded original is saved. The formatter does not read user configuration;
+its rules are fixed:
+
+```ts
+{
+  printWidth: 100,
+  tabWidth: 2,
+  useTabs: false,
+  endOfLine: "lf",
+  proseWrap: "preserve",
+  htmlWhitespaceSensitivity: "css",
+  embeddedLanguageFormatting: "off",
+}
+```
+
+Prettier runs in a separate cancellable worker with a fixed 5-second budget and
+V8 heap limits of 128 MiB old space / 32 MiB young space. The agent thread remains
+responsive; syntax errors, worker failures and exhausted budgets preserve the
+input. These heap limits are not a hard process-RSS cap. Cancellation terminates
+formatting, and fetch checks its signal before saving. No user configuration or
+additional plugins are loaded. GitHub API README parser selection uses the actual
+returned filename; unknown or non-Markdown filenames are not forced to Markdown.
 
 ## Temporary content
 
@@ -104,13 +132,15 @@ A successful text operation creates:
 ```
 
 The file contains the final logical content that corresponds to the tool result.
-For ordinary HTTP, `raw: true` stores decoded response text; normal HTML fetches
-store extracted text. GitHub repository handlers ignore `raw` and keep their
-repository-specific text rendering.
+For ordinary HTTP, it stores formatted or unchanged decoded text, with the
+original decoded content preserved on formatting failure. GitHub blobs receive
+formatting where supported; clone scaffolds and repository listings retain their
+repository-specific rendering. Final saved text is still limited to 50 MiB.
+Temporary files retain their fixed TTL (currently 24 hours).
 Every successful fetch returns metadata only, with no body, preview or summary.
 Use `read` on `savedContent.path` to access the saved text, regardless of size.
-The internal `FetchResponse`, fetching and storage flow remain unchanged;
-internal `fullOutputPath` is exposed publicly as `savedContent.path`.
+Internal `fullOutputPath` is exposed publicly as `savedContent.path`; layout
+metadata is measured from the final saved text after formatting and limits.
 
 For native HTTP, the raw response is first streamed through a bounded
 `response.bin` and is then converted to `content.txt`; the intermediate file is
@@ -140,7 +170,10 @@ The clone is cached under a hashed key so owner, repository and ref cannot creat
 local paths. The repository path is returned as `repositoryPath`; generated
 tree or file content is also saved to `content.txt`. Both API and clone paths
 render roots/trees as listings (with README content limited to 8 KiB for roots),
-and blobs as file text. Binary files produce a textual description rather than raw binary output;
+and blobs as file text. HTML, JSON and Markdown blobs receive best-effort
+Prettier formatting on both API and clone paths, falling back to original file
+text on failure. Clone scaffolds and repository listings (including their root
+README rendering) remain unchanged. Binary files produce a textual description rather than raw binary output;
 this differs from unsupported binary native HTTP responses.
 
 The clone does not recurse into submodules, install dependencies, run hooks,
@@ -189,6 +222,8 @@ Fetch public output is metadata-only: `url`, `finalUrl`, `source` (`native-http`
 savedContent: {
   path: string;
   bytes: number;
+  lines: number;
+  maxLineBytes: number;
   truncated: boolean;
   expiresAt?: string;
   truncation?: {
@@ -203,11 +238,14 @@ savedContent: {
 No body, preview or summary is returned. There are no top-level `fullOutputPath`,
 `expiresAt`, `truncation`, `text` or `isPreview` fields. Every successful result
 saves text; callers use `read` with `savedContent.path` to obtain it.
-`savedContent.bytes` counts the saved extracted/decoded/rendered text in UTF-8
+`savedContent.bytes` counts the saved formatted/decoded/repository-rendered text in UTF-8
 bytes, not HTTP `Content-Length` (which may be reported as `contentLength`).
 `savedContent.truncated` only indicates that the saved text was limited;
 `false` does not guarantee a complete original page, repository or browser render.
-Optional `savedContent.truncation` describes those stored-content limits.
+`savedContent.lines` follows built-in `read` numbering (including the empty final
+line after a trailing newline); `maxLineBytes` is the longest saved line's UTF-8
+byte count excluding its newline. Optional `savedContent.truncation` describes
+those stored-content limits.
 `savedContent.expiresAt` is a timestamp string for the spool, not the clone cache.
 The saved file is never a guarantee of the original source in full.
 

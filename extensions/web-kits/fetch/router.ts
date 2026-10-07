@@ -58,16 +58,13 @@ function parseHttpUrl(raw: string): URL {
   return url;
 }
 
-export function normalizeFetchRequest(request: {
-  url: string;
-  raw?: boolean;
-}): FetchRequest {
+export function normalizeFetchRequest(request: { url: string }): FetchRequest {
   const rawUrl = request.url.trim();
   if (!rawUrl || rawUrl.length > MAX_URL_LENGTH) {
     throw new WebFetchError("invalid-url", "The fetch URL is invalid.");
   }
   const url = parseHttpUrl(rawUrl);
-  return { url, raw: request.raw ?? false };
+  return { url };
 }
 
 export class WebFetchRouter {
@@ -95,7 +92,6 @@ export class WebFetchRouter {
     assertNotCancelled(signal);
     const stableRequest: FetchRequest = {
       url: new URL(request.url.toString()),
-      raw: request.raw,
     };
     const githubResponse = await this.github.fetch(stableRequest, signal);
     if (githubResponse) return githubResponse;
@@ -113,7 +109,7 @@ export class WebFetchRouter {
 }
 
 export async function fetchWeb(
-  request: { url: string; raw?: boolean },
+  request: { url: string },
   config: ResolvedWebFetchConfig,
   runtime: FetchRuntime = createFetchRuntime(),
   signal?: AbortSignal,

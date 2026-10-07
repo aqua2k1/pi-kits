@@ -6,11 +6,12 @@ import { dirname } from "node:path";
 import { test } from "node:test";
 import { createReadTool } from "@earendil-works/pi-coding-agent";
 import { buildFetchOutput } from "./format.ts";
+import { formatDocument } from "./formatters/index.ts";
 import { fetchDocument } from "./http.ts";
 
 async function verifyFetchAndRead(url: string, expected?: string) {
   const response = await fetchDocument(
-    { url: new URL(url), raw: false },
+    { url: new URL(url) },
     { timeoutMs: 30_000 },
   );
   try {
@@ -41,8 +42,10 @@ async function verifyFetchAndRead(url: string, expected?: string) {
       pages++;
       if (saved.maxLineBytes > 50 * 1_024) {
         assert.match(output.content[0].text, /Warning: a saved line/);
-        assert.match(body, /exceeds .* limit/);
-        break;
+        if (body.startsWith("[Line ")) {
+          assert.match(body, /exceeds .* limit/);
+          break;
+        }
       }
       const continuation = body.match(
         /\n\n\[Showing lines .*Use offset=(\d+) to continue\.\]$/,
@@ -104,10 +107,56 @@ test("real HTTP fetch and built-in read cover small, paginated, and oversized-li
   }
 });
 
+test("real HTTP formatting covers minified HTML, JSON, Markdown and failure fallback", async () => {
+  const cases = [
+    {
+      contentType: "text/html",
+      text: `<html><body>${"<p>中文 content with <b>structure</b>.</p>".repeat(3_001)}</body></html>`,
+    },
+    {
+      contentType: "application/json",
+      text: JSON.stringify(
+        Array.from({ length: 3_001 }, (_, i) => ({ record: i })),
+      ),
+    },
+    { contentType: "text/markdown", text: "# Heading\n\n-   item\n" },
+    { contentType: "application/json", text: '{"broken":' },
+  ];
+  const server = createServer((req, res) => {
+    const item = cases[Number(req.url?.slice(1))];
+    res.setHeader("Content-Type", item.contentType);
+    res.end(item.text);
+  });
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  try {
+    const address = server.address();
+    assert.ok(address && typeof address !== "string");
+    for (const [index, item] of cases.entries()) {
+      const expected = await formatDocument(item);
+      assert.equal(expected !== item.text, index !== 3);
+      const result = await verifyFetchAndRead(
+        `http://127.0.0.1:${address.port}/${index}`,
+        expected,
+      );
+      assert.equal(result.pages > 1, index < 2);
+    }
+  } finally {
+    await new Promise<void>((resolve, reject) => {
+      server.close((error) => (error ? reject(error) : resolve()));
+    });
+  }
+});
+
 test("live webpages fetch, layout metadata, and complete built-in read pagination", {
   skip: process.env.PI_KITS_LIVE_FETCH !== "1",
 }, async (t) => {
-  for (const url of ["https://example.com", "https://nodejs.org/api/fs.html"]) {
+  for (const url of [
+    "https://example.com",
+    "https://nodejs.org/api/fs.html",
+    "https://nodejs.org/api/fs.json",
+    "https://unpkg.com/prettier@3.9.9/README.md",
+  ]) {
     const result = await verifyFetchAndRead(url);
     assert.ok(result.bytes > 0);
     if (url.includes("nodejs.org")) assert.ok(result.pages > 1);

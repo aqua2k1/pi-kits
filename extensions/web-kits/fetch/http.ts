@@ -155,7 +155,13 @@ export async function fetchDocument(
       await readResponseToSpool(response, signal, spool);
       signal.throwIfAborted();
       const body = await readFile(spool.responsePath);
-      const document = decodeDocument(body, contentType, request.raw);
+      const document = await decodeDocument(
+        body,
+        contentType,
+        new URL(response.url || url).pathname,
+        signal,
+      );
+      signal.throwIfAborted();
       const bounded = await spool.saveText(document.text);
       return {
         text: bounded.text,
@@ -171,7 +177,7 @@ export async function fetchDocument(
         ...(document.truncated || bounded.truncated
           ? {
               truncation: {
-                totalBytes: declaredLength ?? spool.bytes,
+                totalBytes: document.totalBytes,
                 outputBytes: bounded.outputBytes,
               },
             }

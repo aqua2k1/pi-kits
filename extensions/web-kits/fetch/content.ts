@@ -4,6 +4,7 @@ import {
   MAX_GITHUB_README_BYTES,
 } from "../shared/limits.ts";
 import { WebFetchError } from "./errors.ts";
+import { formatDocument } from "./formatters/index.ts";
 import { limitUtf8Text } from "./spool.ts";
 
 const BINARY_MIME_PREFIXES = ["image/", "audio/", "video/"];
@@ -24,14 +25,6 @@ const BINARY_MIME_TYPES = new Set([
   "application/vnd.openxmlformats-officedocument.presentationml.presentation",
 ]);
 
-const SCRIPT_BLOCK = /<script\b[^>]*>[\s\S]*?<\/script\s*>/gi;
-const STYLE_BLOCK = /<style\b[^>]*>[\s\S]*?<\/style\s*>/gi;
-const NOSCRIPT_BLOCK = /<noscript\b[^>]*>[\s\S]*?<\/noscript\s*>/gi;
-const TEMPLATE_BLOCK = /<template\b[^>]*>[\s\S]*?<\/template\s*>/gi;
-const COMMENT_BLOCK = /<!--[\s\S]*?-->/g;
-const BLOCK_CLOSE =
-  /<\/(?:address|article|aside|blockquote|dd|div|dl|dt|figcaption|figure|footer|form|h[1-6]|header|hr|li|main|nav|ol|p|pre|section|table|td|th|tr|title|ul)>/gi;
-const BREAK_TAG = /<br\s*\/?>/gi;
 const ANY_TAG = /<[^>]*>/g;
 const TITLE_TAG = /<title\b[^>]*>([\s\S]*?)<\/title\s*>/i;
 const NAMED_ENTITY = /&(?:amp|lt|gt|quot|apos|#39|nbsp);/gi;
@@ -99,6 +92,8 @@ export interface DecodedDocument {
   title?: string;
   contentType?: string;
   truncated?: boolean;
+  /** UTF-8 size after formatting, before the saved-text limit. */
+  totalBytes: number;
 }
 
 function mimeType(contentType: string): string {
@@ -123,7 +118,7 @@ export function isSupportedTextType(contentType: string): boolean {
     mime === "application/xhtml+xml" ||
     mime === "application/json" ||
     mime === "application/xml" ||
-    mime === "application/manifest+json"
+    mime.endsWith("+json")
   );
 }
 
@@ -198,24 +193,12 @@ export function extractTitle(html: string): string | undefined {
   return title || undefined;
 }
 
-export function htmlToText(html: string): string {
-  const withoutNonContent = html
-    .replace(COMMENT_BLOCK, "")
-    .replace(SCRIPT_BLOCK, "")
-    .replace(STYLE_BLOCK, "")
-    .replace(NOSCRIPT_BLOCK, "")
-    .replace(TEMPLATE_BLOCK, "");
-  const withBreaks = withoutNonContent
-    .replace(BLOCK_CLOSE, "\n")
-    .replace(BREAK_TAG, "\n");
-  return normalizeText(decodeEntities(withBreaks.replace(ANY_TAG, " ")));
-}
-
-export function decodeDocument(
+export async function decodeDocument(
   bytes: Uint8Array,
   contentType: string,
-  raw: boolean,
-): DecodedDocument {
+  filePath?: string,
+  signal?: AbortSignal,
+): Promise<DecodedDocument> {
   const mime = mimeType(contentType);
   if (!isSupportedTextType(contentType)) {
     throw new WebFetchError(
@@ -233,21 +216,19 @@ export function decodeDocument(
   const looksLikeHtml =
     mime.includes("html") ||
     (!mime && /<!doctype\s+html|<(?:html|head|body|title|p)\b/i.test(body));
-  if (raw || !looksLikeHtml) {
-    const bounded = limitUtf8Text(body, MAX_FETCH_CONTENT_BYTES);
-    return {
-      text: bounded.text,
-      contentType: contentType || undefined,
-      truncated: bounded.truncated,
-    };
-  }
-  const extracted = htmlToText(body);
-  const bounded = limitUtf8Text(extracted, MAX_FETCH_CONTENT_BYTES);
+  const formatted = await formatDocument({
+    text: body,
+    contentType,
+    filePath,
+    signal,
+  });
+  const bounded = limitUtf8Text(formatted, MAX_FETCH_CONTENT_BYTES);
   return {
     text: bounded.text,
-    title: extractTitle(body),
+    title: looksLikeHtml ? extractTitle(body) : undefined,
     contentType: contentType || undefined,
     truncated: bounded.truncated,
+    totalBytes: bounded.totalBytes,
   };
 }
 

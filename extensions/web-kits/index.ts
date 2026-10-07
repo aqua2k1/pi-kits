@@ -84,13 +84,6 @@ const FetchParameters = Type.Object({
     description:
       "The HTTP(S) URL to fetch. Surrounding whitespace is trimmed; runtime URL validation remains authoritative.",
   }),
-  raw: Type.Optional(
-    Type.Boolean({
-      default: false,
-      description:
-        "Preserve decoded raw text for ordinary HTTP instead of extracting HTML text. Does not change GitHub repository rendering.",
-    }),
-  ),
 });
 
 export interface WebSearchToolDependencies {
@@ -170,7 +163,7 @@ export function registerWebFetchTool(
     renderCall: renderFetchCall,
     renderResult: renderFetchResult,
     description:
-      "Fetch a specific HTTP or HTTPS URL and save its decoded/extracted text to a local temporary file. Returns metadata only, not inline content; savedContent includes the path, UTF-8 bytes, lines, maxLineBytes, truncation state, and optional expiry. Use read to inspect savedContent.path. GitHub repository URLs may be shallow-cloned or read through gh api.",
+      "Fetch a specific HTTP or HTTPS URL and save its decoded text (HTML, JSON, and Markdown are formatted with fixed Prettier rules; other text formats or formatting failures preserve the decoded text) to a local temporary file. Returns metadata only, not inline content; savedContent includes the path, UTF-8 bytes, lines, maxLineBytes, truncation state, and optional expiry. Use read to inspect savedContent.path. GitHub repository URLs may be shallow-cloned or read through gh api.",
     promptSnippet: "Fetch a specific URL and save its content for reading",
     promptGuidelines: [
       "Use web_fetch directly for a known URL; use web_search first only when URL discovery is needed.",
@@ -185,7 +178,6 @@ export function registerWebFetchTool(
         const fetchConfig = dependencies.fetchConfig;
         const request: FetchWebRequest = {
           url: params.url,
-          raw: params.raw,
         };
         onUpdate?.({
           content: [

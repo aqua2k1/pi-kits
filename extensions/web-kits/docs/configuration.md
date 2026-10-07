@@ -102,6 +102,8 @@ intentionally does not duplicate that normalization/parser with a second regex.
 `recency_days` is provider-dependent best effort, not a strict publication-date
 guarantee.
 
+`web_fetch` accepts only `url`; the `raw` parameter has been removed.
+
 Fetch URL schema validation checks an HTTP(S) scheme and allows surrounding
 whitespace and uppercase schemes. Runtime trimming and URL parsing remain the
 authority, including rejection of credential-bearing URLs. This modest pattern
@@ -119,7 +121,21 @@ is not a URL parser or SSRF policy.
 | `web-kits.fetch.github.clonePath` | string | system temp directory | Root directory for shallow clones. |
 
 The final fetched text is always limited to 50 MiB. That hard limit is not
-configurable.
+configurable. Content formatting also has no user settings: the runtime
+`prettier` dependency is called through its API, not the CLI, without loading
+user configuration. Its fixed options are:
+
+```ts
+{
+  printWidth: 100,
+  tabWidth: 2,
+  useTabs: false,
+  endOfLine: "lf",
+  proseWrap: "preserve",
+  htmlWhitespaceSensitivity: "css",
+  embeddedLanguageFormatting: "off",
+}
+```
 
 ## GitHub authentication
 
@@ -197,34 +213,43 @@ execute repository code.
 - Serialized tool output is limited to 50 KiB, including all machine/text/details
   copies and JSON escaping. No fetched body, preview or summary is returned.
 - GitHub root README content remains limited to 8 KiB in the saved rendering.
-- For ordinary HTTP, `raw: false` extracts readable text from HTML.
-- For ordinary HTTP, `raw: true` preserves decoded response text, not bytes.
-- Binary ordinary HTTP responses are unsupported regardless of `raw`.
-- GitHub repository rendering is unchanged by `raw`: listings/README/file text
-  or a textual binary-file description are saved, not raw binary data.
+- Ordinary HTTP preserves decoded content in its original format, not extracted
+  plain text. HTML structure, scripts and styles are retained; title extraction
+  remains available.
+- HTML/XHTML, JSON (including `+json` media types), and Markdown receive
+  best-effort Prettier formatting with the fixed options above. Formatting
+  failure saves the decoded original instead.
+- Plain text, XML and other supported text remain unchanged.
+- Binary ordinary HTTP responses are unsupported.
+- GitHub HTML, JSON and Markdown blobs also receive best-effort formatting,
+  falling back to original file text on failure. Clone scaffolds and repository
+  listings remain unchanged; binary files still yield a textual description,
+  not raw binary data.
 - JavaScript is never executed.
 
 Both tools declare typed `outputSchema` and return meaningful `structuredContent`
 for codemode callers, who receive only that machine value. Search adds optional
 sanitized summary text; fetch returns `url`, `finalUrl`, `source`, optional
 `title`, `contentType`, `contentLength`, `repositoryPath`, and
-`savedContent: { path: string, bytes: number, truncated: boolean, expiresAt?: string,
+`savedContent: { path: string, bytes: number, lines: number, maxLineBytes: number,
+truncated: boolean, expiresAt?: string,
 truncation?: { totalBytes: number, outputBytes: number, totalLines?: number,
 outputLines?: number } }`. There are no top-level `fullOutputPath`, `expiresAt`,
 `truncation`, `text` or `isPreview` fields. `savedContent.bytes` counts saved
-extracted/decoded/rendered text in UTF-8 bytes, not HTTP `Content-Length`.
+formatted/decoded/repository-rendered text in UTF-8 bytes, not HTTP `Content-Length`.
 `savedContent.truncated` only means the saved text was limited; even `false`
 is not a guarantee of the complete original page. Fetch `url` is a compatibility
 alias of `finalUrl`; both contain the final redacted handler URL, not the original
 requested URL. See the [machine output contract](architecture.md#machine-output-contract)
 for all fields and budget behavior.
 
-Native HTTP streams a bounded `response.bin` before decoding/extraction and
-saving `content.txt`, then removes the intermediate file. GitHub-generated text
-is saved directly to `content.txt`. Internal `FetchResponse` and fetching/storage
-flows remain unchanged; internal `fullOutputPath` maps to public
-`savedContent.path`. Optional `savedContent.truncation` describes limits applied
-to the saved text, not an inline preview.
+Native HTTP streams a bounded `response.bin` before decoding, optional formatting
+and saving `content.txt`, then removes the intermediate file. GitHub-generated
+text is saved directly to `content.txt` after any blob formatting. Internal
+`fullOutputPath` maps to public `savedContent.path`. `lines` and `maxLineBytes`
+describe the final saved layout. Optional `savedContent.truncation` describes
+limits applied to the saved text, not an inline preview; `savedContent.expiresAt`
+refers to the temporary file's expiry, not the clone cache.
 
 ## Security assumption
 

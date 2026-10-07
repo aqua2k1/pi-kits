@@ -6,7 +6,6 @@ export type FetchSource = Static<typeof FetchSourceSchema>;
 
 export interface FetchRequest {
   readonly url: URL;
-  readonly raw: boolean;
 }
 
 export type FetchTruncation = Readonly<Static<typeof FetchTruncationSchema>>;

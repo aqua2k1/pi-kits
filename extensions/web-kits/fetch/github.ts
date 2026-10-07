@@ -16,6 +16,7 @@ import {
 } from "../shared/limits.ts";
 import { isBinaryFileName, limitReadme } from "./content.ts";
 import { assertNotCancelled, WebFetchError } from "./errors.ts";
+import { formatDocument } from "./formatters/index.ts";
 import { GhClient } from "./gh-client.ts";
 import { generateCloneContent } from "./github-content.ts";
 import {
@@ -156,7 +157,6 @@ export class GitHubHandler implements FetchHandler {
   ): Promise<FetchResponse | null> {
     const stableRequest: FetchRequest = {
       url: new URL(request.url.toString()),
-      raw: request.raw,
     };
     if (!this.config.enabled) return null;
     const info = parseGitHubUrl(stableRequest.url);
@@ -196,7 +196,8 @@ export class GitHubHandler implements FetchHandler {
       throw error;
     }
     if (cloned) {
-      const content = await generateCloneContent(cloned, info);
+      const content = await generateCloneContent(cloned, info, signal);
+      assertNotCancelled(signal);
       return this.storeResponse(
         stableRequest,
         content.text,
@@ -378,7 +379,12 @@ export class GitHubHandler implements FetchHandler {
       const binary = isBinaryFileName(info.path) || isBinaryBytes(bytes);
       const text = binary
         ? `Binary file (${formatSize(bytes.byteLength)}). Use a local clone to inspect it.`
-        : new TextDecoder("utf-8", { fatal: false }).decode(bytes);
+        : await formatDocument({
+            text: new TextDecoder("utf-8", { fatal: false }).decode(bytes),
+            filePath: info.path,
+            signal,
+          });
+      assertNotCancelled(signal);
       return this.storeResponse(
         request,
         text,
@@ -470,12 +476,26 @@ export class GitHubHandler implements FetchHandler {
     if (!result || typeof result.value !== "object" || result.value === null) {
       return undefined;
     }
-    const content = (result.value as Record<string, unknown>).content;
+    const value = result.value as Record<string, unknown>;
+    const content = value.content;
     if (typeof content !== "string") return undefined;
+    const filePath =
+      typeof value.path === "string"
+        ? value.path
+        : typeof value.name === "string"
+          ? value.name
+          : undefined;
     const decoded = new TextDecoder("utf-8", { fatal: false }).decode(
       decodeBase64(content),
     );
-    return limitReadme(decoded);
+    const formatted = await formatDocument({
+      text: decoded,
+      contentType: "text/plain",
+      filePath,
+      signal,
+    });
+    assertNotCancelled(signal);
+    return limitReadme(formatted);
   }
 
   private async storeResponse(
@@ -505,7 +525,7 @@ export class GitHubHandler implements FetchHandler {
         ...(truncated
           ? {
               truncation: {
-                totalBytes: contentLength ?? bounded.totalBytes,
+                totalBytes: Math.max(contentLength ?? 0, bounded.totalBytes),
                 outputBytes: bounded.outputBytes,
               },
             }

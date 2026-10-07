@@ -60,11 +60,11 @@ test("withFetchDeadline classifies timeout and parent cancellation", async () =>
   );
 });
 
-test("fetchDocument streams text to a temp file and extracts HTML", async () => {
+test("fetchDocument streams text to a temp file and formats HTML", async () => {
   const html = "<title>Example</title><p>Hello <b>world</b></p>";
   let init: RequestInit | undefined;
   const result = await fetchDocument(
-    { url: new URL("https://example.test/page"), raw: false },
+    { url: new URL("https://example.test/page") },
     {
       timeoutMs: 5_000,
       fetch: async (_url, requestInit) => {
@@ -95,7 +95,10 @@ test("fetchDocument streams text to a temp file and extracts HTML", async () => 
     );
     assert.equal(headers.get("accept-language"), "en-US,en;q=0.9");
     assert.equal(headers.get("authorization"), null);
-    assert.equal(result.text, "Example\nHello world");
+    assert.equal(
+      result.text,
+      "<title>Example</title>\n<p>Hello <b>world</b></p>\n",
+    );
     assert.equal(result.title, "Example");
     assert.equal(result.finalUrl, "https://example.test/final");
     assert.equal(result.source, "native-http");
@@ -107,7 +110,7 @@ test("fetchDocument streams text to a temp file and extracts HTML", async () => 
 
 test("fetchDocument accepts an empty text response", async () => {
   const result = await fetchDocument(
-    { url: new URL("https://example.test/empty"), raw: false },
+    { url: new URL("https://example.test/empty") },
     {
       timeoutMs: 5_000,
       fetch: async () =>
@@ -138,7 +141,7 @@ test("fetchDocument rejects an oversized streamed body and cleans up", async () 
   });
   await assert.rejects(
     fetchDocument(
-      { url: new URL("https://example.test/large"), raw: false },
+      { url: new URL("https://example.test/large") },
       {
         timeoutMs: 5_000,
         fetch: async () =>
@@ -157,7 +160,7 @@ test("fetchDocument rejects an oversized streamed body and cleans up", async () 
 test("fetchDocument classifies status and binary failures", async () => {
   await assert.rejects(
     fetchDocument(
-      { url: new URL("https://example.test/nope"), raw: false },
+      { url: new URL("https://example.test/nope") },
       {
         timeoutMs: 5_000,
         fetch: async () => new Response("secret", { status: 404 }),
@@ -168,7 +171,7 @@ test("fetchDocument classifies status and binary failures", async () => {
   );
   await assert.rejects(
     fetchDocument(
-      { url: new URL("https://example.test/image"), raw: false },
+      { url: new URL("https://example.test/image") },
       {
         timeoutMs: 5_000,
         fetch: async () =>
