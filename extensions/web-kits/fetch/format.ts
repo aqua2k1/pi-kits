@@ -30,6 +30,24 @@ function displayUrl(value: string): string {
   }
 }
 
+// Match read's line numbering, including an empty final line after a newline.
+function textLayout(text: string): { lines: number; maxLineBytes: number } {
+  let lines = 0;
+  let maxLineBytes = 0;
+  let start = 0;
+  while (true) {
+    const newline = text.indexOf("\n", start);
+    const end = newline === -1 ? text.length : newline;
+    lines++;
+    maxLineBytes = Math.max(
+      maxLineBytes,
+      Buffer.byteLength(text.slice(start, end), "utf8"),
+    );
+    if (newline === -1) return { lines, maxLineBytes };
+    start = newline + 1;
+  }
+}
+
 /** Fetch saves content; both model and machine outputs expose only metadata. */
 export function buildFetchOutput(response: FetchResponse): {
   content: { type: "text"; text: string }[];
@@ -51,6 +69,7 @@ export function buildFetchOutput(response: FetchResponse): {
     savedContent: {
       path: response.fullOutputPath,
       bytes: Buffer.byteLength(response.text, "utf8"),
+      ...textLayout(response.text),
       truncated: Boolean(truncation),
       ...(response.expiresAt ? { expiresAt: response.expiresAt } : {}),
       ...(truncation ? { truncation } : {}),
@@ -68,6 +87,8 @@ export function buildFetchOutput(response: FetchResponse): {
     `**Source:** ${response.source}`,
     `**Saved content:** ${response.fullOutputPath}`,
     `**Saved bytes:** ${details.savedContent.bytes}`,
+    `**Saved lines:** ${details.savedContent.lines}`,
+    `**Longest line bytes:** ${details.savedContent.maxLineBytes}`,
     `**Saved content truncated:** ${details.savedContent.truncated}`,
     ...(response.expiresAt ? [`**Expires:** ${response.expiresAt}`] : []),
     ...(response.repositoryPath
@@ -75,10 +96,17 @@ export function buildFetchOutput(response: FetchResponse): {
       : []),
     "",
     "Content is not returned inline. Use the `read` tool to inspect the saved file.",
+    "Read returns at most 2000 lines or 50 KiB per call. For full-file analysis, start at line 1 and follow each returned offset until no content remains; a single read is not proof of full coverage. For targeted questions, search first and read relevant ranges.",
+    ...(details.savedContent.maxLineBytes > 50 * 1_024
+      ? [
+          "Warning: a saved line exceeds read's 50 KiB limit. Line offsets cannot read that line; use UTF-8-safe byte chunking or structured processing via bash, not repeated line reads.",
+        ]
+      : []),
     ...(truncation
       ? [
           "",
           `[Saved content limited to ${truncation.outputBytes} of ${truncation.totalBytes} bytes.]`,
+          "The saved file itself is limited. Reading to its end cannot recover omitted source content.",
         ]
       : []),
   ];

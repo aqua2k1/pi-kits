@@ -47,6 +47,8 @@ test("small fetch output contains metadata and read guidance, never inline conte
   assert.deepEqual(output.structuredContent.savedContent, {
     path: "/tmp/pi-web-fetch-example/content.txt",
     bytes: 11,
+    lines: 2,
+    maxLineBytes: 5,
     truncated: false,
   });
 });
@@ -61,6 +63,8 @@ test("fetch output copies saved truncation details without claiming a complete s
   assert.deepEqual(output.details.savedContent, {
     path: input.fullOutputPath,
     bytes: 5,
+    lines: 1,
+    maxLineBytes: 5,
     truncated: true,
     truncation: { totalBytes: 100, outputBytes: 5 },
   });
@@ -125,6 +129,8 @@ for (const source of ["native-http", "github-gh", "github-clone"] as const) {
       savedContent: {
         path: input.fullOutputPath,
         bytes: 5,
+        lines: 1,
+        maxLineBytes: 5,
         truncated: true,
         expiresAt: input.expiresAt,
         truncation: input.truncation,
@@ -149,7 +155,13 @@ test("empty saved content has zero bytes and omits absent optional metadata", ()
     url: "https://example.com/",
     finalUrl: "https://example.com/",
     source: "native-http",
-    savedContent: { path: "/tmp/content.txt", bytes: 0, truncated: false },
+    savedContent: {
+      path: "/tmp/content.txt",
+      bytes: 0,
+      lines: 1,
+      maxLineBytes: 0,
+      truncated: false,
+    },
   });
   assert.match(output.content[0].text, /Saved bytes:\*\* 0/);
   assert.match(output.content[0].text, /Content is not returned inline/);
@@ -157,7 +169,7 @@ test("empty saved content has zero bytes and omits absent optional metadata", ()
 
 test("schema requires a saved file and explicit byte count and truncation state", () => {
   const metadata = buildFetchOutput(response("hello")).structuredContent;
-  for (const field of ["path", "bytes", "truncated"]) {
+  for (const field of ["path", "bytes", "lines", "maxLineBytes", "truncated"]) {
     const savedContent: Record<string, unknown> = { ...metadata.savedContent };
     delete savedContent[field];
     assert.equal(
@@ -172,6 +184,38 @@ test("schema requires a saved file and explicit byte count and truncation state"
     }),
     false,
   );
+});
+
+test("layout follows read line numbering and UTF-8 byte sizes", () => {
+  for (const [text, lines, maxLineBytes] of [
+    ["", 1, 0],
+    ["a\n", 2, 1],
+    ["\n\n", 3, 0],
+    ["中文🙂\nabc", 2, 10],
+    ["a\r\nb", 2, 2],
+  ] as const) {
+    const saved = buildFetchOutput(response(text)).details.savedContent;
+    assert.equal(saved.lines, lines);
+    assert.equal(saved.maxLineBytes, maxLineBytes);
+  }
+});
+
+test("guidance distinguishes read pagination, oversized lines, and saved truncation", () => {
+  for (const size of [50 * 1_024, 50 * 1_024 + 1]) {
+    const output = buildFetchOutput(response("x".repeat(size)));
+    assert.equal(output.details.savedContent.maxLineBytes, size);
+    assert.equal(
+      output.content[0].text.includes("Warning: a saved line"),
+      size > 50 * 1_024,
+    );
+    assert.match(output.content[0].text, /start at line 1.*returned offset/);
+    assert.doesNotMatch(output.content[0].text, /cannot recover omitted/);
+  }
+  const limited = buildFetchOutput({
+    ...response("x"),
+    truncation: { totalBytes: 100, outputBytes: 1 },
+  });
+  assert.match(limited.content[0].text, /cannot recover omitted/);
 });
 
 test("metadata that cannot fit the fetch budget throws instead of dropping fields", () => {

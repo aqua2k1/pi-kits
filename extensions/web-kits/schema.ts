@@ -50,6 +50,16 @@ export const SavedContentSchema = Type.Object({
     description:
       "UTF-8 byte length of the saved text, not the HTTP response size.",
   }),
+  lines: Type.Integer({
+    minimum: 1,
+    description:
+      "Saved file line count using read's numbering; includes an empty final line after a newline, and an empty file has one line.",
+  }),
+  maxLineBytes: Type.Integer({
+    minimum: 0,
+    description:
+      "Longest saved line in UTF-8 bytes, excluding the newline. Lines over 50 KiB cannot be returned by the built-in read tool.",
+  }),
   truncated: Type.Boolean({
     description: "True when content limits capped the saved text itself.",
   }),

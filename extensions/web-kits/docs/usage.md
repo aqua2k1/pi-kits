@@ -124,6 +124,68 @@ and a loopback HTTP server; they do not require live SearXNG/Codex credentials o
 GitHub access. Live `/web-tools test` diagnostics do require the configured
 provider and authentication; GitHub runtime operations require local `gh`/`git`.
 
+Run the opt-in live fetch/read integration test from the repository root:
+
+```bash
+PI_KITS_LIVE_FETCH=1 node --import tsx --test extensions/web-kits/fetch/read-integration.test.ts
+```
+
+It fetches `https://example.com` and `https://nodejs.org/api/fs.html`, validates
+saved layout metadata, and follows real built-in `read` offsets to reconstruct
+the complete saved text. The same test file always covers small files, line/byte
+pagination, and oversized UTF-8 lines over loopback HTTP without mocked tools.
+Live tests require internet access and intentionally fail on network errors.
+
+### Autonomous model black-box test
+
+```bash
+PI_KITS_MODEL_READ=1 node --import tsx --test extensions/web-kits/fetch/model-read.test.ts
+```
+
+This is a separate, paid model test, skipped in normal `npm test`. It launches
+fresh Pi CLI processes with the current extension, existing credentials, an
+isolated working directory, and only `web_fetch`, `read`, and `grep` exposed.
+Codemode, bash, other extensions, skills, and project instructions are disabled.
+Set `PI_KITS_TEST_MODEL` / `PI_KITS_TEST_PROVIDER` to override the inherited
+`PI_MODEL` / `PI_PROVIDER`; otherwise Pi uses its configured default. Override the
+CLI executable with `PI_KITS_TEST_PI` if needed. Set `PI_KITS_TEST_THINKING`
+to select thinking intensity (default `low`, e.g. `max` for the Luna comparison).
+
+A real loopback HTTP server serves 4501 records with randomized exception codes
+near the beginning, middle, and end. One natural-language task requests a full
+review; another requests only a retention setting. The harness never tells the
+model which tool, offset, or limit to use, and never sends follow-up prompts.
+It records JSONL events and reports under `/tmp/pi-kits-model-read-*`, checks the
+actual returned read ranges against the fixture, and checks the final answers.
+Full review requires all lines to be delivered through `read` and all exceptions
+to be reported; targeted lookup requires searching without a full-document read.
+`coveredLines` measures only `read` coverage, not lines visible through `grep`.
+
+Observed with `openai-codex/gpt-6.1-sol`, low thinking, one trial per task:
+
+- Full review: `web_fetch` followed by three autonomous reads covering 1–2000,
+  2001–4000, and 4001–4501; all three random exception codes reported.
+- Targeted lookup: `web_fetch` followed by `grep` with context 4, no `read`;
+  correctly answered 37 days, archived invoices only.
+
+These controlled-fixture results do not establish reliability across models,
+arbitrary websites, or unrestricted tool sets. A subsequent three-trial baseline
+comparison found both versions correct, with fewer candidate tool calls but no
+full-review token reduction on Sol. A further `gpt-6-luna` / `max` comparison
+found correct answers in both versions and direct targeted search in the
+candidate, avoiding the baseline's initial 2000-line read; see
+[A/B test results](read-ab-test.md). A further 48-session comparison across
+Luna low/medium/high/xhigh observed strict full-read coverage in 8/12 baseline
+versus 12/12 candidate sessions, with all exception codes found in both versions;
+see [thinking-level comparison](read-ab-levels.md).
+
+For paired runs, set `PI_KITS_TEST_EXTENSION` to each version's absolute extension
+entry point and reuse the same three comma-separated `PI_KITS_TEST_TOKENS`.
+Omitting these overrides loads the current version with random exception codes.
+`PI_KITS_TEST_SCENARIO=full` or `targeted` runs a single task. Full and targeted
+assertions are independent subtests, so a coverage failure does not prevent the
+other fresh model session from running.
+
 See [architecture](architecture.md), [configuration](configuration.md),
 and the [web-tools research notes](web-tools-research.md).
 
@@ -196,7 +258,8 @@ classified exceptions, not success-shaped error envelopes.
   Omitted provider data is not saved.
 - Fetch: `url`, `finalUrl`, `source`, optional `title`, `contentType`,
   `contentLength`, `repositoryPath`, and required
-  `savedContent: { path: string, bytes: number, truncated: boolean, expiresAt?: string,
+  `savedContent: { path: string, bytes: number, lines: number, maxLineBytes: number,
+  truncated: boolean, expiresAt?: string,
   truncation?: { totalBytes: number, outputBytes: number, totalLines?: number,
   outputLines?: number } }`. No top-level `fullOutputPath`, `expiresAt`,
   `truncation`, `text` or `isPreview` is returned. `savedContent.bytes` counts
@@ -222,7 +285,21 @@ const content = await tools.read({ path: fetched.savedContent.path });
 text(content);
 ```
 
-`read` may itself limit output; use its offset/limit parameters for longer files.
+`savedContent.lines` matches built-in `read` line numbering: an empty file has
+one line, and a trailing newline adds an empty final line. `maxLineBytes` measures
+the longest line in UTF-8 bytes, excluding the newline.
+
+Built-in `read` returns at most 2000 lines or 50 KiB per call. For full-file
+analysis, start at line 1 and follow the returned continuation offsets until
+complete. For targeted questions, search the file first and read relevant ranges;
+do not claim full coverage from a partial read. Reading to the saved file's end
+cannot recover source content omitted when `savedContent.truncated` is true.
+
+If `maxLineBytes` exceeds 50 KiB, `read` cannot return that line, even with line
+offsets. Use UTF-8-safe byte chunking or structured processing via bash instead.
+This extension does not override `read`, automatically read every page, or remove
+its output limits. Built-in `read` still loads the whole file internally on each
+call; its offset/limit parameters only restrict returned content.
 
 See [architecture](architecture.md#machine-output-contract) for truncation
 and URL provenance, and [configuration](configuration.md#tool-parameters)
