@@ -10,6 +10,7 @@ import {
   record,
 } from "../../../shared/ui/renderers.ts";
 import type { AgentSnapshot } from "../manager.ts";
+import { hasDisplayError } from "../policy.ts";
 import { agentHeader } from "./presentation.ts";
 
 export const subagentCallRenderer =
@@ -67,10 +68,7 @@ function snapshotSummary(
         : typeof snapshot.result === "string"
           ? snapshot.result
           : "",
-    isError:
-      snapshot.status === "error" ||
-      snapshot.status === "disconnected" ||
-      snapshot.sessionState === "disconnected",
+    isError: hasDisplayError(snapshot),
     truncated: snapshot.truncated,
   };
 }

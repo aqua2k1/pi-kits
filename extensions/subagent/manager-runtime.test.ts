@@ -807,13 +807,13 @@ test("normalized disconnect reports runtime errors; steering can be awaited with
 
 test("a definitive runtime rejection preserves an idle native UI and releases only the managed slot", async (t) => {
   const h = harness();
-  let nativeLocked = true;
+  let rejectSubmission = true;
   h.configure((session) => {
     session.deliver = async (command) => {
-      if (command.type === "task" && command.round && nativeLocked) {
-        // This typed rejection guarantees the task was never dispatched.
+      if (command.type === "task" && command.round && rejectSubmission) {
+        // A backend preflight rejection is not a TUI-liveness restriction.
         session.managed = false;
-        throw new RuntimeTaskRejectedError("Exit the native TUI before resume");
+        throw new RuntimeTaskRejectedError("Backend rejected submission");
       }
     };
   });
@@ -830,7 +830,7 @@ test("a definitive runtime rejection preserves an idle native UI and releases on
   manager.resume(first.id, { prompt: "Rejected continuation" });
   const rejected = await manager.result(first.id, true);
   assert.equal(rejected.status, "error");
-  assert.match(rejected.error ?? "", /Exit the native TUI/);
+  assert.match(rejected.error ?? "", /Backend rejected/);
   assert.equal(rejected.sessionState, "idle");
   assert.equal(rejected.terminalId, first.id);
   assert.equal(rejected.viewId, view.id);
@@ -840,13 +840,101 @@ test("a definitive runtime rejection preserves an idle native UI and releases on
   await until(() => h.sessions.length === 2);
   h.sessions[1].complete();
   assert.equal(manager.get(next.id).status, "completed");
-  nativeLocked = false;
-  session.terminal = undefined; // The user exited the TUI, not the manager.
-  manager.resume(first.id, { prompt: "Continue after native exit" });
+  rejectSubmission = false;
+  manager.resume(first.id, { prompt: "Continue with idle native TUI alive" });
   await until(() => session.commands.length === 3);
   assert.equal(manager.get(first.id).status, "running");
   assert.equal(session.commands[2].round, 3);
   session.complete(3);
+});
+
+test("startup disconnection cleans up even when the startup promise resolves", async (t) => {
+  const h = harness();
+  h.configure((session) => {
+    const start = session.start.bind(session);
+    session.start = async () => {
+      await start();
+      session.connected = false;
+      session.emit({ type: "disconnected", error: "Startup connection lost" });
+    };
+  });
+  const manager = new SubagentManager(h.mux, { runtimes: [h.runtime] });
+  t.after(() => manager.close());
+  const agent = manager.spawn({
+    ...task,
+    runtime: h.runtime.id,
+    keepAlive: true,
+  });
+  const failed = await manager.result(agent.id, true);
+  assert.equal(failed.status, "error");
+  assert.equal(failed.sessionState, "closed");
+  assert.match(failed.error ?? "", /disconnected during startup/);
+  assert.equal(h.sessions[0].closeCalls, 1);
+  assert.deepEqual(h.sessions[0].commands, []);
+});
+
+test("native work winning startup blocks initial managed dispatch without cancel or cleanup", async (t) => {
+  const h = harness();
+  h.configure((session) => {
+    const start = session.start.bind(session);
+    session.start = async () => {
+      await start();
+      session.emit({ type: "session_state", state: "interactive" });
+    };
+  });
+  const manager = new SubagentManager(h.mux, { runtimes: [h.runtime] });
+  t.after(() => manager.close());
+  const agent = manager.spawn({
+    ...task,
+    runtime: h.runtime.id,
+  });
+  const rejected = await manager.result(agent.id, true);
+  assert.equal(rejected.status, "error");
+  assert.equal(rejected.sessionState, "interactive");
+  assert.deepEqual(h.sessions[0].commands, []);
+  assert.equal(rejected.keepAlive, false);
+  assert.equal(rejected.viewId, undefined);
+  await delay(20); // Allow the queued auto-release operation to run.
+  assert.equal(h.sessions[0].closeCalls, 0);
+  assert.equal(manager.get(agent.id).sessionState, "interactive");
+  h.sessions[0].emit({
+    type: "session_update",
+    interactionId: "native-startup",
+    sequence: 1,
+    response: "Native reply",
+    outcome: "completed",
+  });
+  h.sessions[0].emit({ type: "session_state", state: "idle" });
+  await until(() => h.sessions[0].closeCalls === 1);
+  assert.equal(manager.get(agent.id).result, "Native reply");
+  assert.equal(manager.get(agent.id).sessionState, "closed");
+});
+
+test("auto-release rechecks native ownership after awaiting detached view inspection", async (t) => {
+  const h = harness();
+  h.runtime.capabilities.concurrentNativeInput = true;
+  const manager = new SubagentManager(h.mux, { runtimes: [h.runtime] });
+  t.after(() => manager.close());
+  const agent = manager.spawn({ ...task, runtime: h.runtime.id });
+  await until(() => h.sessions[0].commands.length === 1);
+  await manager.openView(agent.id);
+  const inspected = deferred();
+  let inspecting = false;
+  h.mux.inspect_view = async () => {
+    inspecting = true;
+    await inspected.promise;
+    return { alive: false };
+  };
+  h.sessions[0].complete();
+  await until(() => inspecting);
+  h.sessions[0].emit({ type: "session_state", state: "interactive" });
+  inspected.resolve();
+  await until(() => h.closedViews.length === 1);
+  await delay(20);
+  assert.equal(h.sessions[0].closeCalls, 0);
+  assert.equal(manager.get(agent.id).sessionState, "interactive");
+  h.sessions[0].emit({ type: "session_state", state: "idle" });
+  await until(() => h.sessions[0].closeCalls === 1);
 });
 
 test("initial task rejection retains the ready runtime and restores idle without cleanup", async (t) => {
@@ -1173,7 +1261,170 @@ test("a resumed round invalidates an in-flight finished-view lifecycle check", a
   assert.equal(manager.get(agent.id).result, "Result 2");
 });
 
-test("resume cannot dispatch while a non-concurrent native attachment is opening", async (t) => {
+test("steer requires the current connected managed running session, independently of views", async (t) => {
+  const h = harness();
+  h.runtime.capabilities.concurrentNativeInput = true;
+  const manager = new SubagentManager(h.mux, { runtimes: [h.runtime] });
+  t.after(() => manager.close());
+  const agent = manager.spawn({
+    ...task,
+    runtime: h.runtime.id,
+    keepAlive: true,
+  });
+  await until(() => h.sessions[0]?.commands.length === 1);
+  const session = h.sessions[0];
+  await manager.openView(agent.id);
+  manager.steer(agent.id, "managed guidance");
+  assert.equal(session.commands.at(-1)?.type, "steer");
+  for (const state of ["interactive", "idle"] as const) {
+    session.emit({ type: "session_state", state });
+    assert.throws(
+      () => manager.steer(agent.id, "forbidden"),
+      /connected running managed/,
+    );
+  }
+  session.emit({ type: "session_state", state: "running" });
+  session.connected = false;
+  assert.throws(
+    () => manager.steer(agent.id, "disconnected"),
+    /connected running managed/,
+  );
+  session.connected = true;
+  session.capabilities.steer = false;
+  assert.throws(
+    () => manager.steer(agent.id, "unsupported"),
+    /does not support/,
+  );
+  session.capabilities.steer = true;
+  session.complete();
+  assert.throws(
+    () => manager.steer(agent.id, "finished"),
+    /connected running managed/,
+  );
+});
+
+test("resume rechecks connection and native state after asynchronous inspect", async (t) => {
+  for (const race of ["interactive", "disconnect"] as const) {
+    await t.test(race, async (t) => {
+      const h = harness();
+      const manager = new SubagentManager(h.mux, { runtimes: [h.runtime] });
+      t.after(() => manager.close());
+      const agent = manager.spawn({
+        ...task,
+        runtime: h.runtime.id,
+        keepAlive: true,
+      });
+      await until(() => h.sessions[0]?.commands.length === 1);
+      const session = h.sessions[0];
+      session.complete();
+      const gate = deferred();
+      session.inspect = async () => {
+        await gate.promise;
+        return true;
+      };
+      manager.resume(agent.id, { prompt: "queued race" });
+      if (race === "interactive")
+        session.emit({ type: "session_state", state: "interactive" });
+      else session.connected = false;
+      gate.resolve();
+      const result = await manager.result(agent.id, true);
+      assert.equal(result.status, "error");
+      assert.equal(session.commands.length, 1);
+      assert.equal(session.closeCalls, 0);
+      if (race === "interactive")
+        assert.equal(result.sessionState, "interactive");
+    });
+  }
+});
+
+test("terminal presence never bypasses managed native-input capability", async (t) => {
+  const h = harness();
+  const manager = new SubagentManager(h.mux, { runtimes: [h.runtime] });
+  t.after(() => manager.close());
+  const agent = manager.spawn({
+    ...task,
+    runtime: h.runtime.id,
+    keepAlive: true,
+  });
+  await until(() => h.sessions[0]?.commands.length === 1);
+  const session = h.sessions[0];
+  session.terminal = { id: "already-existing" };
+  await assert.rejects(manager.openView(agent.id), /requires no managed task/);
+  assert.equal(session.attachmentCalls, 0);
+  session.complete();
+  await manager.openView(agent.id);
+  assert.equal(session.attachmentCalls, 1);
+});
+
+test("finished stopped and errored idle sessions resume but non-idle or disconnected sessions do not", async (t) => {
+  for (const outcome of ["completed", "stopped", "error"] as const) {
+    await t.test(outcome, async (t) => {
+      const h = harness();
+      const manager = new SubagentManager(h.mux, { runtimes: [h.runtime] });
+      t.after(() => manager.close());
+      const agent = manager.spawn({
+        ...task,
+        runtime: h.runtime.id,
+        keepAlive: true,
+      });
+      await until(() => h.sessions[0]?.commands.length === 1);
+      const session = h.sessions[0];
+      if (outcome === "stopped") manager.stop(agent.id);
+      session.complete(1, outcome === "error" ? "Task failed" : undefined);
+      assert.equal(manager.get(agent.id).status, outcome);
+      for (const state of ["running", "interactive"] as const) {
+        session.emit({ type: "session_state", state });
+        assert.throws(
+          () => manager.resume(agent.id, { prompt: "Blocked" }),
+          /idle session/,
+        );
+        assert.equal(manager.get(agent.id).round, 1);
+      }
+      session.emit({ type: "session_state", state: "idle" });
+      session.connected = false;
+      assert.throws(
+        () => manager.resume(agent.id, { prompt: "Blocked" }),
+        /retained, connected/,
+      );
+      session.connected = true;
+      manager.resume(agent.id, { prompt: "Continue" });
+      await until(
+        () =>
+          session.commands.filter((command) => command.type === "task")
+            .length === 2,
+      );
+      assert.equal(manager.get(agent.id).round, 2);
+      assert.equal(session.closeCalls, 0);
+    });
+  }
+});
+
+test("auto-release rechecks release ownership after awaited view inspection", async (t) => {
+  const h = harness();
+  h.runtime.capabilities.concurrentNativeInput = true;
+  const manager = new SubagentManager(h.mux, { runtimes: [h.runtime] });
+  t.after(() => manager.close());
+  const agent = manager.spawn({ ...task, runtime: h.runtime.id });
+  await until(() => h.sessions[0]?.commands.length === 1);
+  await manager.openView(agent.id);
+  const gate = deferred();
+  let inspecting = false;
+  h.mux.inspect_view = async () => {
+    inspecting = true;
+    await gate.promise;
+    return { alive: false };
+  };
+  h.sessions[0].complete();
+  await until(() => inspecting);
+  const releasing = manager.release(agent.id);
+  gate.resolve();
+  await releasing;
+  await delay(20);
+  assert.equal(h.sessions[0].closeCalls, 1);
+  assert.equal(manager.get(agent.id).sessionState, "closed");
+});
+
+test("idle resume dispatches during attachment but recheck rejects nonconcurrent native view", async (t) => {
   const h = harness();
   const manager = new SubagentManager(h.mux, { runtimes: [h.runtime] });
   t.after(() => manager.close());
@@ -1185,17 +1436,118 @@ test("resume cannot dispatch while a non-concurrent native attachment is opening
   await until(() => h.sessions[0]?.commands.length === 1);
   h.sessions[0].complete();
   const gate = deferred();
-  const attach = h.sessions[0].attachment.bind(h.sessions[0]);
+  let attaching = false;
   h.sessions[0].attachment = async () => {
+    attaching = true;
     await gate.promise;
-    return attach();
+    return { id: agent.id };
   };
   const opening = manager.openView(agent.id);
-  assert.throws(
-    () => manager.resume(agent.id, { prompt: "Unsafe" }),
-    /opening is still in progress/,
-  );
+  await until(() => attaching);
+  manager.resume(agent.id, { prompt: "Idle continuation" });
+  await until(() => h.sessions[0].commands.length === 2);
+  const rejected = assert.rejects(opening, /requires no managed task/);
   gate.resolve();
-  await opening;
-  assert.equal(h.sessions[0].commands.length, 1);
+  await rejected;
+  assert.deepEqual(h.opened, []);
+  assert.equal(manager.get(agent.id).status, "running");
+});
+
+test("open view rechecks current execution across inspect, focus, and open races", async (t) => {
+  for (const phase of [
+    "inspect",
+    "relative",
+    "focus",
+    "open",
+    "rollback-failure",
+  ] as const) {
+    await t.test(phase, async (t) => {
+      const h = harness();
+      const manager = new SubagentManager(h.mux, { runtimes: [h.runtime] });
+      t.after(() => manager.close());
+      const agent = manager.spawn({
+        ...task,
+        runtime: h.runtime.id,
+        keepAlive: true,
+      });
+      await until(() => h.sessions[0]?.commands.length === 1);
+      h.sessions[0].complete();
+      let otherView: string | undefined;
+      if (phase === "relative") {
+        const other = manager.spawn({
+          ...task,
+          runtime: h.runtime.id,
+          keepAlive: true,
+        });
+        await until(() => h.sessions[1]?.commands.length === 1);
+        h.sessions[1].complete();
+        otherView = (await manager.openView(other.id)).id;
+      }
+      const hasExisting = phase === "inspect" || phase === "focus";
+      const existing = hasExisting
+        ? await manager.openView(agent.id)
+        : undefined;
+      const gate = deferred();
+      let entered = false;
+      let focuses = 0;
+      let failClose = phase === "rollback-failure";
+      const originalClose = h.mux.close_view;
+      h.mux.close_view = async (view) => {
+        if (failClose) throw new Error("Close unavailable");
+        await originalClose(view);
+      };
+      const originalInspect = h.mux.inspect_view;
+      h.mux.inspect_view = async (view) => {
+        if (phase === "inspect" || phase === "relative") {
+          entered = true;
+          await gate.promise;
+        }
+        return originalInspect(view);
+      };
+      h.mux.focus_view = async () => {
+        focuses++;
+        if (phase === "focus") {
+          entered = true;
+          await gate.promise;
+        }
+      };
+      const originalOpen = h.mux.open_view;
+      h.mux.open_view = async (options) => {
+        if (phase === "open" || phase === "rollback-failure") {
+          entered = true;
+          await gate.promise;
+        }
+        return originalOpen(options);
+      };
+      const opening = manager.openView(agent.id);
+      const rejected = assert.rejects(opening, /requires no managed task/);
+      await until(() => entered);
+      manager.resume(agent.id, { prompt: "Race continuation" });
+      await until(() => h.sessions[0].commands.length === 2);
+      gate.resolve();
+      await rejected;
+      assert.equal(manager.get(agent.id).status, "running");
+      if (hasExisting) {
+        assert.equal(manager.get(agent.id).viewId, existing?.id);
+        assert.deepEqual(h.closedViews, []);
+        assert.equal(focuses, phase === "focus" ? 1 : 0);
+      } else if (phase === "relative") {
+        assert.equal(h.opened.length, 1);
+        assert.deepEqual(h.closedViews, []);
+        assert.equal(
+          manager.list().some((record) => record.viewId === otherView),
+          true,
+        );
+      } else if (failClose) {
+        assert.equal(manager.get(agent.id).viewId, `view-${agent.id}`);
+        failClose = false;
+        await manager.closeView(agent.id);
+        assert.deepEqual(h.closedViews, [`view-${agent.id}`]);
+        assert.equal(manager.get(agent.id).viewId, undefined);
+      } else {
+        assert.deepEqual(h.closedViews, [`view-${agent.id}`]);
+        assert.equal(manager.get(agent.id).viewId, undefined);
+      }
+    });
+  }
 });

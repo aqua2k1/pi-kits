@@ -14,6 +14,12 @@ function agent(id: string): AgentSnapshot {
     description: `Task ${id}`,
     status: "running",
     terminalId: `terminal-${id}`,
+    capabilities: {
+      nativeClone: false,
+      steer: true,
+      retainedSession: true,
+      concurrentNativeInput: true,
+    },
     activity: "read",
   };
 }
@@ -110,6 +116,21 @@ test("widget hits retain agent identity and reject removed or unavailable sessio
   h.update([{ ...agent("one"), sessionState: "closed" }]);
   h.mouse(4, 1);
   assert.deepEqual(opened, ["one"]);
+  h.widget.dispose();
+});
+
+test("widget does not treat an existing terminal as concurrent native-input permission", () => {
+  const opened: string[] = [];
+  const h = harness((id) => {
+    opened.push(id);
+  });
+  const snapshot = agent("one");
+  assert.ok(snapshot.capabilities);
+  snapshot.capabilities.concurrentNativeInput = false;
+  h.update([snapshot]);
+  h.renderer.render(80);
+  h.mouse(4, 1);
+  assert.deepEqual(opened, []);
   h.widget.dispose();
 });
 

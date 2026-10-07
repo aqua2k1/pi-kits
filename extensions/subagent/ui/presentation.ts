@@ -9,9 +9,16 @@ import {
   renderWidgetFrame,
   widgetContentBounds,
 } from "../../../shared/ui/widget.ts";
-import type { AgentSnapshot, AgentStatus } from "../manager.ts";
+import type { AgentSnapshot } from "../manager.ts";
+import {
+  hasDisplayError,
+  isDisplayActive as isBusy,
+  nativeViewHint,
+} from "../policy.ts";
 
 export { oneLine } from "../../../shared/ui/renderers.ts";
+export { isDisplayActive as isBusy } from "../policy.ts";
+export { isWorkingStatus as isWorking } from "../state.ts";
 
 export interface AgentSource {
   list(): AgentSnapshot[];
@@ -19,14 +26,6 @@ export interface AgentSource {
 }
 
 const frames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
-
-export function isWorking(status: AgentStatus): boolean {
-  return status === "starting" || status === "running" || status === "stopping";
-}
-
-export function isBusy(agent: AgentSnapshot): boolean {
-  return isWorking(agent.status) || agent.sessionState === "interactive";
-}
 
 export function agentDisplayStatus(agent: AgentSnapshot): string {
   return agent.sessionState === "interactive" ||
@@ -90,23 +89,14 @@ export function statusIcon(agent: AgentSnapshot, theme: Theme, now: number) {
     return theme.fg("accent", frames[Math.floor(now / 200) % frames.length]);
   }
   if (agent.status === "completed") return theme.fg("success", "✓");
-  if (agent.status === "error" || agent.status === "disconnected") {
+  if (hasDisplayError(agent)) {
     return theme.fg("error", "✗");
   }
   return theme.fg("dim", agent.status === "queued" ? "◦" : "■");
 }
 
 export function nativeViewAvailable(agent: AgentSnapshot): boolean {
-  if (agent.sessionState === "closed") return false;
-  if (agent.terminalId) return true;
-  return (
-    agent.capabilities?.retainedSession === true &&
-    ["running", "idle", "interactive"].includes(agent.sessionState ?? "") &&
-    !["queued", "starting", "disconnected"].includes(agent.status) &&
-    (agent.status !== "error" || agent.sessionState === "idle") &&
-    (!["running", "stopping"].includes(agent.status) ||
-      agent.capabilities.concurrentNativeInput)
-  );
+  return nativeViewHint(agent);
 }
 
 export interface AgentWidgetHit {

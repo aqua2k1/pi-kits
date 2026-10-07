@@ -1,5 +1,6 @@
 import type { ExtensionUIContext } from "@earendil-works/pi-coding-agent";
 import type { TUI, TuiMouseEvent } from "@earendil-works/pi-tui";
+import { hasDisplayError } from "../policy.ts";
 import {
   type AgentSource,
   type AgentWidgetHit,
@@ -81,12 +82,7 @@ export class SubagentStatusWidget {
     const interactive = agents.filter(
       (agent) => agent.sessionState === "interactive",
     ).length;
-    const errors = agents.filter(
-      (agent) =>
-        agent.status === "error" ||
-        agent.status === "disconnected" ||
-        agent.sessionState === "disconnected",
-    ).length;
+    const errors = agents.filter(hasDisplayError).length;
     const status = [
       `${running} active`,
       ...(interactive ? [`${interactive} interactive`] : []),

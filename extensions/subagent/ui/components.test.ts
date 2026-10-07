@@ -57,6 +57,12 @@ function agent(
     description: `任务 ${id}`,
     status,
     terminalId: `terminal-${id}`,
+    capabilities: {
+      nativeClone: false,
+      steer: true,
+      retainedSession: true,
+      concurrentNativeInput: true,
+    },
     startedAt: 1_000,
     turnCount: 3,
     toolUses: 2,
@@ -291,7 +297,14 @@ test("native view eligibility uses capabilities and live session state, not runt
         { capabilities, status: "stopping" },
         retainedSession && concurrentNativeInput,
       ]);
-      cases.push([{ capabilities, terminalId: "existing-terminal" }, true]);
+      cases.push([
+        { capabilities, terminalId: "existing-terminal" },
+        concurrentNativeInput,
+      ]);
+      cases.push([
+        { capabilities, status: "completed", terminalId: "existing-terminal" },
+        true,
+      ]);
     }
   }
   for (const [patch, available] of cases) {

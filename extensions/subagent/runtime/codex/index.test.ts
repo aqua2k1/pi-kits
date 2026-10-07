@@ -4,7 +4,9 @@ import { EventEmitter } from "node:events";
 import { access, readFile, rm, stat } from "node:fs/promises";
 import { PassThrough } from "node:stream";
 import test from "node:test";
+import { setTimeout as delay } from "node:timers/promises";
 import type { AgentDefinition } from "../../agents.ts";
+import { SubagentManager } from "../../manager.ts";
 import {
   type MuxAdapter,
   type StartOptions,
@@ -272,6 +274,104 @@ function nativeReply(
   });
 }
 
+test("native hydration publishes reply before idle and manager auto-release without a view", async (t) => {
+  for (const outcome of ["success", "failure", "invalid-page"] as const) {
+    await t.test(outcome, async (t) => {
+      const f = fixture();
+      const create = f.runtime.create.bind(f.runtime);
+      f.runtime.create = (options, host) =>
+        create(options, {
+          ...host,
+          emit(event) {
+            f.events.push(event);
+            host.emit(event);
+          },
+        });
+      const manager = new SubagentManager(f.mux, { runtimes: [f.runtime] });
+      t.after(() => manager.close());
+      const agent = manager.spawn({
+        runtime: "codex",
+        prompt: "Inspect",
+        description: "Inspect",
+        cwd: "/tmp",
+        keepAlive: false,
+      });
+      for (
+        let i = 0;
+        i < 400 && manager.get(agent.id).status !== "running";
+        i++
+      )
+        await delay(5);
+      assert.equal(manager.get(agent.id).status, "running");
+      finished(f);
+      nativeStarted(f, "native");
+      f.event("thread/status/changed", { status: { type: "active" } });
+      await tick();
+      assert.equal(manager.get(agent.id).status, "completed");
+      assert.equal(manager.get(agent.id).viewId, undefined);
+      assert.equal(f.closes, 0);
+      const gate = deferred<unknown>();
+      f.handlers.set("thread/items/list", () => gate.promise);
+      nativeReply(f, "native", "fallback", "commentary");
+      const start = f.events.length;
+      finished(f, "native", { itemsView: "notLoaded" });
+      f.event("thread/status/changed", { status: { type: "idle" } });
+      await tick();
+      assert.equal(f.closes, 0);
+      assert.equal(manager.get(agent.id).sessionState, "interactive");
+      assert.deepEqual(sessionUpdates(f), []);
+      if (outcome === "failure")
+        gate.reject(new Error("Hydration unavailable"));
+      else if (outcome === "invalid-page") gate.resolve({ data: null });
+      else
+        gate.resolve({
+          data: [
+            {
+              item: {
+                type: "agentMessage",
+                text: "native answer",
+                phase: "final_answer",
+              },
+            },
+          ],
+        });
+      for (
+        let i = 0;
+        i < 400 && manager.get(agent.id).sessionState !== "closed";
+        i++
+      )
+        await delay(5);
+      const snapshot = manager.get(agent.id);
+      assert.equal(snapshot.sessionState, "closed");
+      assert.equal(
+        snapshot.result,
+        outcome === "success" ? "native answer" : "fallback",
+      );
+      assert.equal(snapshot.resultSource, "user_interaction");
+      assert.equal(
+        snapshot.resultOutcome,
+        outcome === "success" ? "completed" : "error",
+      );
+      const sequence = f.events
+        .slice(start)
+        .filter(
+          (event) =>
+            event.type === "session_update" ||
+            (event.type === "session_state" && event.state === "idle"),
+        );
+      assert.deepEqual(
+        sequence.map((event) => event.type),
+        ["session_update", "session_state"],
+      );
+      assert.equal(f.closes, 1);
+      nativeReply(f, "native", "late answer");
+      finished(f, "native");
+      assert.equal(manager.get(agent.id).result, snapshot.result);
+      assert.equal(sessionUpdates(f).length, 1);
+    });
+  }
+});
+
 test("native results publish once only at actual completion, ignoring retry errors and stats", async (t) => {
   const f = fixture();
   t.after(() => f.session.close());
@@ -526,6 +626,37 @@ test("newer native starts suppress delayed hydration and late completion of olde
   assert.equal(sessionUpdates(f)[1].sequence, 4);
 });
 
+test("stale native hydration cannot publish idle over a newer turn or managed round", async (t) => {
+  for (const replacement of ["native", "managed"] as const) {
+    for (const failure of [false, true]) {
+      await t.test(
+        `${replacement}/${failure ? "failure" : "success"}`,
+        async (t) => {
+          const f = fixture();
+          t.after(() => f.session.close());
+          await f.session.start();
+          const gate = deferred<unknown>();
+          f.handlers.set("thread/items/list", () => gate.promise);
+          nativeStarted(f, "old");
+          f.event("thread/status/changed", { status: { type: "active" } });
+          finished(f, "old", { itemsView: "notLoaded" });
+          f.event("thread/status/changed", { status: { type: "idle" } });
+          if (replacement === "native") {
+            nativeStarted(f, "new");
+            f.event("thread/status/changed", { status: { type: "active" } });
+          } else await f.session.send({ type: "task", prompt: "managed" });
+          const start = f.events.length;
+          if (failure) gate.reject(new Error("Old hydration failed"));
+          else gate.resolve({ data: [] });
+          await tick();
+          assert.deepEqual(f.events.slice(start), []);
+          assert.deepEqual(sessionUpdates(f), []);
+        },
+      );
+    }
+  }
+});
+
 test("accepted managed dispatch suppresses old native hydration", async (t) => {
   const f = fixture();
   t.after(() => f.session.close());
@@ -572,9 +703,12 @@ test("rejected managed preflight preserves a pending native reply", async (t) =>
   f.handlers.set("thread/items/list", () => hydration.promise);
   nativeStarted(f, "native");
   finished(f, "native", { itemsView: "notLoaded" });
+  f.handlers.set("thread/read", () => ({
+    thread: { status: { type: "active" } },
+  }));
   await assert.rejects(
     async () => await f.session.send({ type: "task", prompt: "rejected" }),
-    /native Codex TUI/,
+    /not idle/,
   );
   hydration.resolve({
     data: [
@@ -1526,7 +1660,7 @@ test("resume uses same thread without overriding native model or effort", async 
   );
 });
 
-test("native attachment retains backend on detach, blocks managed sends until terminal exits", async (t) => {
+test("native attachment retains backend on detach and allows idle managed sends", async (t) => {
   const definition = agent();
   const f = fixture({ agent: definition });
   t.after(() => f.session.close());
@@ -1539,9 +1673,11 @@ test("native attachment retains backend on detach, blocks managed sends until te
   assert.deepEqual(f.starts[0].argv.slice(-2), ["resume", "thread"]);
   assert.equal(f.starts[0].argv.includes(f.token), false);
   await f.mux.close_view({ id: "view" });
-  await assert.rejects(async () => {
-    await f.session.send({ type: "task", prompt: "blocked" });
-  }, /Exit the native/);
+  await f.session.send({ type: "task", prompt: "allowed with live TUI" });
+  assert.equal(f.session.terminal, terminal);
+  assert.deepEqual(f.destroyed, []);
+  finished(f);
+  await tick();
   await f.session.send({ type: "cancel" });
   assert.equal(
     f.calls.some((call) => call.method === "turn/interrupt"),
@@ -1550,9 +1686,10 @@ test("native attachment retains backend on detach, blocks managed sends until te
   assert.equal(f.closes, 0);
   f.setAlive(false);
   await f.session.send({ type: "task", prompt: "allowed" });
+  assert.deepEqual(f.destroyed, []);
+  const next = await f.session.attachment();
   assert.deepEqual(f.destroyed, [terminal]);
   f.setAlive(true);
-  const next = await f.session.attachment();
   assert.equal(f.session.capabilities.concurrentNativeInput, true);
   finished(f);
   await tick();
@@ -1736,7 +1873,7 @@ test("forced guardian request still waits for the eventual exit event", async (t
   assert.deepEqual(f.destroyed, [terminal]);
 });
 
-test("failed native destroy retains opaque handle and forbids submit", async (t) => {
+test("failed native destroy retains opaque handle without restricting idle submit", async (t) => {
   const f = fixture();
   t.after(() => f.session.close());
   await f.session.start();
@@ -1746,55 +1883,32 @@ test("failed native destroy retains opaque handle and forbids submit", async (t)
   f.mux.destroy = async () => {
     throw new Error("ownership cleanup failed");
   };
-  await assert.rejects(async () => {
-    await f.session.send({ type: "task", prompt: "go" });
-  }, /cleanup failed/);
+  await assert.rejects(f.session.attachment(), /cleanup failed/);
   assert.equal(f.session.terminal, terminal);
+  await f.session.send({ type: "task", prompt: "go" });
   assert.equal(
     f.calls.some((call) => call.method === "turn/start"),
-    false,
+    true,
   );
   f.mux.destroy = destroy;
 });
 
-test("attachment reservation and final terminal inspector prevent managed send race", async (t) => {
+test("idle managed task can dispatch while native attachment is opening", async (t) => {
   const f = fixture();
   t.after(() => f.session.close());
   await f.session.start();
-  const terminal = await f.session.attachment();
-  let inspections = 0;
-  f.mux.inspect = async () => ({ alive: ++inspections > 1 });
-  // Exit first terminal; make a new live terminal observable at the final inspector.
-  f.mux.destroy = async () => {
-    f.destroyed.push(terminal);
-  };
-  const read = f.handlers;
-  let waitingAttachment: Promise<TerminalHandle> | undefined;
-  read.set("thread/read", async () => {
-    waitingAttachment = f.session.attachment();
-    assert.equal(
-      f.starts.length,
-      1,
-      "Do not attach during submission preflight",
-    );
-    return { thread: { status: { type: "idle" } } };
-  });
-  await f.session.send({ type: "task", prompt: "go" });
-  // Handle has been destroyed, so no following/moved handle is inspected.
-  assert.equal(inspections, 1);
-  await must(waitingAttachment);
-  finished(f);
-  await tick();
-  f.mux.inspect = async () => ({ alive: false });
   const pending = deferred<TerminalHandle>();
   f.mux.start = async () => pending.promise;
   const attaching = f.session.attachment();
   await tick();
-  await assert.rejects(async () => {
-    await f.session.send({ type: "task", prompt: "race" });
-  }, /in progress/);
-  pending.resolve({ id: "replacement" });
+  await f.session.send({ type: "task", prompt: "idle continuation" });
+  assert.equal(
+    f.calls.some((call) => call.method === "turn/start"),
+    true,
+  );
+  pending.resolve({ id: "native-opening" });
   await attaching;
+  assert.equal(f.session.terminal?.id, "native-opening");
 });
 
 test("native ongoing turn remains protected even after TUI exit; child exit/disconnect is surfaced", async (t) => {
@@ -1926,6 +2040,9 @@ test("pre-dispatch rejection is typed, emits no disconnect, and can be retried; 
   t.after(() => f.session.close());
   await f.session.start();
   await f.session.attachment();
+  f.handlers.set("thread/read", () => ({
+    thread: { status: { type: "active" } },
+  }));
   await assert.rejects(async () => {
     await f.session.send({ type: "task", prompt: "blocked", round: 1 });
   }, RuntimeTaskRejectedError);
@@ -1934,7 +2051,7 @@ test("pre-dispatch rejection is typed, emits no disconnect, and can be retried; 
     false,
   );
   assert.equal(f.session.connected, true);
-  f.setAlive(false);
+  f.handlers.delete("thread/read");
   f.handlers.set("turn/start", () => {
     throw new Error("ambiguous network failure");
   });
@@ -2170,9 +2287,12 @@ test("failed attachment startup cleanup outside close retains opaque ownership",
   };
   await assert.rejects(f.session.attachment(), /startup cleanup failed/);
   assert.equal(f.session.terminal, terminal);
-  await assert.rejects(async () => {
-    await f.session.send({ type: "task", prompt: "must stay blocked" });
-  }, /Exit the native/);
+  await f.session.send({
+    type: "task",
+    prompt: "idle task with owned terminal",
+  });
+  finished(f);
+  await tick();
   await assert.rejects(f.session.close(), /startup cleanup failed/);
   assert.equal(f.session.terminal, terminal);
   f.mux.destroy = destroy;
@@ -2207,10 +2327,10 @@ test("server request rejection policy is off for native/preflight and on only fo
   assert.equal(f.shouldRejectServerRequest(), false);
   read.resolve({ thread: { status: { type: "idle" } } });
   await tick();
-  assert.equal(f.shouldRejectServerRequest(), true);
+  assert.equal(await f.shouldRejectServerRequest(), true);
   response.resolve({ turn: { id: "headless-turn" } });
   await sending;
-  assert.equal(f.shouldRejectServerRequest(), true);
+  assert.equal(await f.shouldRejectServerRequest(), true);
   finished(f, "headless-turn");
   await tick();
   assert.equal(f.shouldRejectServerRequest(), false);

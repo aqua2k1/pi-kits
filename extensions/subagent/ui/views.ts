@@ -184,11 +184,11 @@ export class SubagentViewsPanel {
             "muted",
             agent.sessionState === "closed"
               ? "Runtime released; result retained, resume unavailable"
-              : agent.terminalId
-                ? `${agent.id.slice(0, 8)} · ${agentDisplayStatus(agent)} · ${agent.sessionState === "interactive" ? "User interaction" : agentStats(agent)}`
-                : nativeViewAvailable(agent)
-                  ? "Native view available; Enter to open"
-                  : "Terminal not ready; waiting…",
+              : nativeViewAvailable(agent)
+                ? agent.terminalId
+                  ? `${agent.id.slice(0, 8)} · ${agentDisplayStatus(agent)} · ${agent.sessionState === "interactive" ? "User interaction" : agentStats(agent)}`
+                  : "Native view available; Enter to open"
+                : "Terminal not ready; waiting…",
           ),
           width,
         ),

@@ -564,21 +564,7 @@ class CodexSession implements RuntimeSession {
     // answer, but resume headless rejection if the native terminal has exited.
     return this.nativeAlive().then((alive) => headless() && !alive);
   }
-  private async preflightNativeAlive(): Promise<boolean> {
-    try {
-      return await this.nativeAlive();
-    } catch (cause) {
-      throw new RuntimeTaskRejectedError(
-        "Native Codex terminal inspection/cleanup failed",
-        { cause },
-      );
-    }
-  }
   private async exclusiveCheck(): Promise<void> {
-    if (await this.preflightNativeAlive())
-      throw new RuntimeTaskRejectedError(
-        "Exit the native Codex TUI before submitting a managed task/resume",
-      );
     const { thread } = await this.requireConnected().request<StartupResponse>(
       "thread/read",
       { threadId: this.threadId, includeTurns: false },
@@ -593,11 +579,12 @@ class CodexSession implements RuntimeSession {
         provider: thread.modelProvider,
         thinkingLevel: thread.reasoningEffort,
       });
-    // Final asynchronous inspector, immediately followed by the synchronous RPC send.
-    if (await this.preflightNativeAlive())
-      throw new RuntimeTaskRejectedError(
-        "Exit the native Codex TUI before submitting a managed task/resume",
-      );
+  }
+  private managedForRound(round: number | undefined): ManagedTurn | undefined {
+    const managed = this.managed;
+    return managed && (round === undefined || round === managed.round)
+      ? managed
+      : undefined;
   }
   async send(command: RuntimeCommand): Promise<void> {
     try {
@@ -610,23 +597,15 @@ class CodexSession implements RuntimeSession {
     }
     const rpc = this.requireConnected();
     if (command.type === "cancel") {
-      const managed = this.managed;
-      if (
-        !managed ||
-        (command.round !== undefined && command.round !== managed.round)
-      )
-        return;
+      const managed = this.managedForRound(command.round);
+      if (!managed) return;
       managed.cancel = true;
       await this.interrupt(managed);
       return;
     }
     if (command.type === "steer") {
-      const managed = this.managed;
-      if (
-        !managed?.id ||
-        managed.finishing ||
-        (command.round !== undefined && command.round !== managed.round)
-      )
+      const managed = this.managedForRound(command.round);
+      if (!managed?.id || managed.finishing)
         throw new Error("No matching managed Codex turn to steer");
       await rpc.request("turn/steer", {
         threadId: this.threadId,
@@ -644,9 +623,9 @@ class CodexSession implements RuntimeSession {
       );
     if (Buffer.byteLength(command.prompt) > RESULT_LIMIT)
       throw new RuntimeTaskRejectedError("Codex task exceeds 64 KiB");
-    if (this.managed || this.attachmentPromise)
+    if (this.managed)
       throw new RuntimeTaskRejectedError(
-        "Codex managed task or native attachment already in progress",
+        "Codex managed task already in progress",
       );
     const round = command.round ?? this.round + 1;
     if (!Number.isSafeInteger(round) || round <= this.round)
@@ -759,7 +738,12 @@ class CodexSession implements RuntimeSession {
       this.nativeTurnId = undefined;
     if (!managed) {
       this.nativeNotification(method, params);
-      if (method === "thread/status/changed")
+      // Backend idle is not publication completion: hydration still owns the
+      // native result. completeNative publishes idle after session_update.
+      if (
+        method === "thread/status/changed" &&
+        !(params.status?.type === "idle" && this.nativeInteraction?.finishing)
+      )
         this.emit("session_state", {
           state: params.status?.type === "active" ? "interactive" : "idle",
           activity:
@@ -970,6 +954,16 @@ class CodexSession implements RuntimeSession {
       ...(error === undefined ? {} : { error }),
     };
     this.emit(update.type, { ...update });
+    interaction.finishing = false;
+    // Emission can synchronously start a new round/turn or close the session.
+    // Never let an old hydration overwrite that newer lifecycle.
+    if (
+      this.connected &&
+      this.nativeInteraction === interaction &&
+      !this.managed &&
+      !this.nativeTurnId
+    )
+      this.emit("session_state", { state: "idle" });
   }
   private cacheItem(managed: ManagedTurn, item: NativeItem | undefined): void {
     if (!item || typeof item.id !== "string") return;
@@ -1066,8 +1060,14 @@ class CodexSession implements RuntimeSession {
     this.stats(managed);
     this.managed = undefined;
     this.emit("session_state", {
-      state: this.nativeTurnId ? "interactive" : "idle",
-      activity: this.nativeTurnId ? "Native Codex turn" : undefined,
+      state:
+        this.nativeTurnId || this.nativeInteraction?.finishing
+          ? "interactive"
+          : "idle",
+      activity:
+        this.nativeTurnId || this.nativeInteraction?.finishing
+          ? "Native Codex turn"
+          : undefined,
       round: managed.round,
       turnId: managed.id,
     });

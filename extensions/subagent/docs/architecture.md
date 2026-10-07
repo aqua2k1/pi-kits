@@ -75,7 +75,7 @@ Codex app-server 与其原生 TUI 是不同资源；不要把“关闭视图”�
 | `spawn(SpawnOptions)` | 同步解析、校验并入队，返回当前快照；排到执行槽后启动资源 |
 | `resume(id, ResumeOptions)` | 仅复用已完成轮次、仍连接且 idle 的保留会话；不重新启动后端 |
 | `result(id, wait?, signal?)` | 可等待调用时的轮次完成；取消等待不等于取消子任务 |
-| `steer(id, message)` | 仅对 running 且支持 steer 的 runtime 发送；可等待异步投递 |
+| `steer(id, message)` | 仅对 connected、sessionState running 且支持 steer 的当前托管任务发送；interactive 禁止；可等待异步投递 |
 | `stop(id)` | 返回即时快照，取消/强制清理可能仍在进行；不是完成屏障 |
 | `openView(id)` / `closeView(id)` | 打开或聚焦 attachment / 脱离视图；manager 决定布局并串行化视图操作 |
 | `release(id)` | 仅释放已完成任务的执行资源，保留 record 和结果；之后不能续跑或开视图 |
@@ -89,6 +89,49 @@ Codex app-server 与其原生 TUI 是不同资源；不要把“关闭视图”�
 
 清理失败不能当成成功：manager 保留失败资源及必要的并发槽，直到清理完成。
 展示或通知回调失败不得改变任务执行结果。
+
+### 状态与 policy 边界
+
+[state.ts](../state.ts) 是 runtime-neutral 的类型与分类单一来源：受管 `AgentStatus`、
+后端 `BackendSessionState/SessionState`、terminal/working 分类。Pi protocol 的
+`WorkerSessionState` 名称只是兼容导出，manager 不再从 Pi 协议取得后端状态类型。
+[policy.ts](../policy.ts) 是 extension 内部的纯判断模块，不注册命令、工具或事件，
+不存储状态，也不是新的 readiness 系统、操作网关或 CAS。
+
+- `resumeBlocker` 按 closed/released → unfinished → cleanup → connected/retained → idle
+  返回有序错误原因；不拿受管 status 代替 execution.finished。终态、甚至 disconnected
+  的受管 status 本身不排除已完成且仍 connected/idle 的会话。
+- `steerBlocker` 要求真实 running 的受管轮次和后端、unfinished、dispatched、connected，
+  然后检查当前 session 的 steer capability；展示 active 不能作为操作权限。
+- `dispatchBlocker` 仅共享启动/续跑投递前的小型规则。新 round 本来就是 unfinished，
+  不能复用 resume 的完成前提。startup 断连仍是普通 Error 并清理；busy 和排队续跑
+  复检失败仍是 RuntimeTaskRejectedError，不因此取消原生任务。
+- `nativeViewBlocker` 使用真实 finished、当前 session capability 和清理所有权。
+  `nativeViewHint` 仅供 UI：snapshot 缺少 finished、连接与清理事实，terminalId 也不能
+  绕过非终态轮次的 concurrentNativeInput 检查；最终权限仍由 manager 判断。
+  openView 在 attachment、视图探测、focus/open 的 await 后复用相同 policy 复检，
+  不阻止 idle resume。open 已开始后失去权限，只回滚本次新建视图；关闭失败保留
+  自有 view，供 close/release/stop 重试，不关闭原已存在或其他 agent 的视图。
+- `canAutoRelease` 共享同步资格；manager 保留 round identity，并在排队执行及 await
+  liveView 后重新读取资格。keepAlive、interactive、release/dispose 改变不能被旧检查覆盖。
+- `isDisplayActive/hasDisplayError` 用于标题、widget、renderer 与面板的展示意图；
+  active 包含原生 interactive，不表示可 resume、steer 或打开可写视图。
+
+审视后保留的局部判断：简单状态转换（queued/starting/stopping、idle 更新）、释放的
+finished 前提、队列并发计数、完成通知 claims、round/sequence identity 和 stale-event
+过滤仍在 manager，因为它们是转换/所有权而不是重复权限。stop 的 queued 或 reused
+但未 dispatched 分支与发送失败分类含义不同，不合并成万能 isBusy。view 轮询的计时资格
+也不同于自动释放资格，不能因 interactive 禁止释放就停止追踪现存视图。
+Pi transport 的 socket/authentication/closed、worker 的 active/preparing/started/canceling
+与 generation 仍属 Pi；重复的 native preflight 用 `nativeInputPending`，同时观察 host idle，
+保留 await auth 后的复检。Codex 的 thread idle、turnId/finishing、native hydration、
+submission 等仍属 Codex。原生 finishing/hydration 期间推迟 backend idle 发布；
+成功或失败的 session_update 必须先于 idle/autoRelease。完成后用既有 interaction
+identity、managed 和 nativeTurnId 复检，旧 hydration 不得覆盖新 turn/round；
+manager/Pi 仍保留原生结束后的自动释放语义。控制命令的重复 round 选择由本地 `managedForRound` 统一，
+不把内部执行流程搬到 manager，也不扩大已接受的 interactive 映射限制。
+入口和共享 panel 的 disposed/finished/opening 是 UI 或注册生命周期，不混入 subagent policy。
+表驱动组合验证见 [policy.test.ts](../policy.test.ts)，竞态和清理契约见 manager/runtime 测试。
 
 ## 3. Runtime 工厂：`AgentRuntime`
 
@@ -131,10 +174,14 @@ Spawn：
 
 Resume：
 
-1. 检查旧轮次已完成、session 仍连接、支持保留且 idle，没有释放/清理冲突。
+1. 检查旧轮次已完成、session 仍连接、支持保留且 idle，没有释放/清理冲突。TUI 存活、视图打开/正在打开/脱离不影响提交资格；running 只能 steer 当前托管任务，interactive 禁止托管 resume/steer。
 2. 调用 `parseCallConfig(freshCall, retainedConfig, "resume")`，不复用旧轮次参数。
 3. 递增 `round`，预检新命令并入队；不调用 `prepareSpawn`，不重新 `create/start`。
-4. 执行时再次检查 `connected`、`inspect()` 和 idle，再解析、发送新 task。
+4. 执行时再次检查 `connected`、`inspect()` 和 idle，再解析、发送新 task。复检后的状态变化仍依赖底层并发处理，本次不新增网关或 CAS。
+
+Codex 保持原有状态映射及 managed 占用、thread idle、连接、turn identity 检查。
+已知缺陷：它不能可靠将原生忙碌转换为 `interactive`，Manager 无法保证在原生忙碌时识别并阻止操作。
+`nativeAlive` 仍用于原生请求路由及终端清理，不再决定 task/resume 提交资格。
 
 `parseTask` 在预检和真实投递时都可能执行，不能依赖“只调用一次”。
 Resume 不再次调用工厂 `validate`，因此会话设置不变、每轮必需参数等规则由调用解析器负责。

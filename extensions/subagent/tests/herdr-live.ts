@@ -468,15 +468,13 @@ try {
   await manager.closeView(codex.id);
   assert.equal(manager.get(codex.id).viewId, undefined);
   manager.resume(codex.id, {
-    prompt: "This must not be submitted while the native TUI is alive.",
+    prompt: "Reply with exactly MANAGED_WITH_IDLE_TUI. Do not use tools.",
   });
-  const rejected = await until(
-    codex.id,
-    (snapshot) => snapshot.status === "error",
-  );
-  assert.match(rejected.error ?? "", /native Codex TUI/);
+  const resumedWithTui = await completed(codex.id, native.resultRevision);
+  assert.equal(resumedWithTui.status, "completed");
+  assert.equal(resumedWithTui.result?.trim(), "MANAGED_WITH_IDLE_TUI");
+  assert.equal(resumedWithTui.round, 5);
   assert.equal(manager.get(codex.id).sessionState, "idle");
-  assert.deepEqual(resultMetadata(rejected), resultMetadata(native));
   assert.equal(
     completions.filter((snapshot) => snapshot.id === codex.id).length,
     5,
@@ -488,7 +486,7 @@ try {
   console.log(
     JSON.stringify({
       check: "native-ownership-and-detach",
-      status: rejected.status,
+      status: resumedWithTui.status,
     }),
   );
 
@@ -497,7 +495,7 @@ try {
   await herdr(["pane", "send-keys", pane, "ctrl+c"]);
   await new Promise((resolve) => setTimeout(resolve, 1200));
   const beforeFinal = manager.get(codex.id);
-  assert.deepEqual(resultMetadata(beforeFinal), resultMetadata(native));
+  assert.deepEqual(resultMetadata(beforeFinal), resultMetadata(resumedWithTui));
   manager.resume(codex.id, {
     prompt:
       "Reply with exactly the remembered key from the beginning. Do not use tools.",

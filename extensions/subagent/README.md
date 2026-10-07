@@ -5,7 +5,9 @@
 通过 Pi 或 Codex runtime 执行独立任务，默认后台运行，Herdr 提供原生终端视图。
 支持自定义 Markdown agent、引导、取消及显式保留会话续跑；父上下文克隆仅支持 Pi → Pi。
 Codex 使用独立 app-server，默认 workspace-write sandbox、never 审批策略。
-Codex 运行中也可打开可交互原生视图；新一轮受管任务仍需先退出原生 TUI，关闭视图仅脱离。
+所有 runtime 统一要求上轮结束、会话 idle 且 connected 才能 resume；running 仅支持 steer 当前托管任务，interactive 禁止托管 resume/steer。
+TUI 存活、视图打开/正在打开/脱离不影响提交资格。Codex 运行中也可打开原生视图，关闭视图仅脱离。
+已知缺陷：Codex 不能可靠将原生忙碌映射为 interactive，Manager 无法保证识别并阻止此时的操作，详见[使用文档](docs/usage.md)。
 提供六个工具：`subagent`、`resume_subagent`、`list_subagent_types`、
 `get_subagent_result`、`steer_subagent`、`stop_subagent`。
 TUI 使用 `/subagent:views` 管理终端视图，编辑器上方显示实时任务状态。

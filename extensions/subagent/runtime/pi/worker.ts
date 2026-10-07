@@ -6,6 +6,7 @@ import type {
   MessageEndEvent,
 } from "@earendil-works/pi-coding-agent";
 
+import { nativeInputPending } from "../../state.ts";
 import type { SessionUpdate } from "../index.ts";
 import {
   MAX_COMMAND_BYTES,
@@ -414,7 +415,7 @@ export function registerWorkerBridge(
 
   function complete(): void {
     if ((!active && !preparing) || !context) return;
-    if (active || (sessionState !== "interactive" && context.isIdle())) {
+    if (active || !nativeInputPending(sessionState, context.isIdle())) {
       reportSession("idle");
     }
     send({
@@ -492,7 +493,7 @@ export function registerWorkerBridge(
     if (
       command.type === "task" &&
       !active &&
-      (sessionState === "interactive" || !context.isIdle())
+      nativeInputPending(sessionState, context.isIdle())
     ) {
       lastRound = Math.max(lastRound, command.round ?? 1);
       // Non-agent operations (e.g. manual compaction) may have no agent_settled.
@@ -547,7 +548,7 @@ export function registerWorkerBridge(
       if (generation !== current) return;
       // Auth can yield to native input or non-agent operations. Commit only
       // while still idle, with no await between this check and submission.
-      if (sessionState === "interactive" || !ctx.isIdle()) {
+      if (nativeInputPending(sessionState, ctx.isIdle())) {
         throw new Error(
           "Subagent is busy with user interaction; wait until idle.",
         );

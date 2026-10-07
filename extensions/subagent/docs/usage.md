@@ -182,6 +182,11 @@ spawn. Omitted description retains the current task name.
 The original agent's `run_in_background` setting takes precedence; otherwise
 resume defaults to background, just like spawn.
 
+A live TUI, an open/opening view, or detachment does not affect submission eligibility.
+Running sessions support only steering the current managed task, not resume.
+Steer requires that task to be connected, running, and supported by the session;
+`interactive` sessions reject both managed resume and steer.
+
 Resume requires a finished managed task and an idle, retained, connected worker;
 completed, cooperatively stopped, and errored rounds may resume only while retained
 by `keep_alive` or an open native view. Interactive,
@@ -192,11 +197,12 @@ completion notification. The latest reply and its metadata remain available unti
 a newer reply is published. Earlier results remain in tool history and Pi's session
 file. Foreground waits are bound to their round even if another round starts.
 
-Resumed rounds enter the same FIFO concurrency queue as new tasks. If native
-work starts while queued, dispatch fails rather than taking over the user.
-The worker checks idle at receipt and again before submission after async auth
-preflight; native startup invalidates any pending reservation. Canceling
-a queued/preflight resume never aborts native work. All workers, including native/user sessions, remain owned by the parent agent.
+Resumed rounds enter the same FIFO concurrency queue as new tasks. Dispatch
+rechecks connection and idle state after asynchronous inspection. If the runtime
+reports interactive while queued, dispatch is rejected without canceling native
+work. This policy assumes the backend handles concurrency after these checks;
+it does not add a gateway or CAS. Canceling a queued/preflight resume never
+aborts native work. All workers, including native/user sessions, remain owned by the parent agent.
 Control-connection loss closes the runtime and its views even when a resumed
 round has not acknowledged receipt. Unresponsive managed cancellation also
 closes the runtime after its timeout. The concurrency claim is released only
@@ -301,10 +307,20 @@ native turns update the latest reply independently of managed task completion an
 `stop_subagent`. Interactive requests are left to a live native TUI rather than
 being rejected by the headless client.
 
-Because Codex can treat `turn/start` on an active turn as steering, **exit the
-native TUI before submitting a new managed round**. Closing/detaching the Herdr
-view does not exit the native TUI and does not release this submission guard.
-This guard does not restrict opening a pane for an already-running task.
+An idle Codex thread may accept a managed task/resume while its native TUI
+remains alive, including while a view is open, opening, or detached. The adapter
+retains its existing managed-occupancy, thread-idle, connection and turn-identity
+checks. Terminal liveness still controls native request routing and cleanup,
+not submission eligibility. Opening a pane for an already-running task remains
+allowed.
+
+**Known defect — native busy-state recognition:** Codex retains its existing
+state mapping and cannot reliably convert native activity to `interactive`.
+Manager therefore cannot guarantee it will recognize or block operations while
+native work is busy. A thread-idle preflight is not an atomic concurrency guarantee:
+Codex may treat `turn/start` on an active turn as steering. This change assumes
+backend concurrency handling; it neither proves nor adds arbitration, a gateway,
+CAS, source tracking, approval buffering, or a native RPC allowlist.
 
 Parent shutdown/reload, deletion, or control-connection loss closes both the
 owned app-server and any owned native terminal. The app-server runs under a
@@ -483,7 +499,7 @@ If npm's augmented PATH resolves an older Codex installation, select the tested
 binary explicitly with `PI_KITS_CODEX_BIN=/absolute/path/to/codex`. The script
 checks Pi execution, Codex results, history-preserving continuation, live steer,
 confirmed interruption, native TUI interaction, detach/ownership protection,
-and managed continuation after exiting the TUI. Successful completion prints
+and managed continuation while an idle native TUI remains alive. Successful completion prints
 `HERDR_LIVE_OK`. This uses model quota; normal `npm test` uses isolated fakes.
 
 ## Configuration compatibility and source references

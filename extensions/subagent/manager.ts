@@ -2,6 +2,13 @@ import { randomUUID } from "node:crypto";
 import type { WorkerExtensionSource } from "@pi-kits/config";
 import type { AgentDefinition } from "./agents.ts";
 import type { MuxAdapter, ViewHandle } from "./mux/index.ts";
+import {
+  canAutoRelease,
+  dispatchBlocker,
+  nativeViewBlocker,
+  resumeBlocker,
+  steerBlocker,
+} from "./policy.ts";
 import { CodexRuntime } from "./runtime/codex/index.ts";
 import { RuntimeTaskRejectedError } from "./runtime/errors.ts";
 import type {
@@ -16,24 +23,16 @@ import type {
 } from "./runtime/index.ts";
 import type { ParentSessionSnapshot } from "./runtime/pi/clone.ts";
 import { PiRuntime } from "./runtime/pi/index.ts";
+import { MAX_COMMAND_BYTES, MAX_RESULT_BYTES } from "./runtime/pi/protocol.ts";
+
 import {
-  isWorkerSessionState,
-  MAX_COMMAND_BYTES,
-  MAX_RESULT_BYTES,
-  type WorkerSessionState,
-} from "./runtime/pi/protocol.ts";
+  type AgentStatus,
+  isBackendSessionState,
+  type SessionState,
+} from "./state.ts";
 
-export type AgentStatus =
-  | "queued"
-  | "starting"
-  | "running"
-  | "stopping"
-  | "disconnected"
-  | "completed"
-  | "stopped"
-  | "error";
-
-export type SessionState = WorkerSessionState | "disconnected" | "closed";
+export type { AgentStatus, SessionState } from "./state.ts";
+export { isTerminalStatus } from "./state.ts";
 
 export interface AgentSnapshot {
   id: string;
@@ -145,9 +144,6 @@ export interface ManagerOptions {
   onComplete?: (snapshot: AgentSnapshot) => void;
   onSessionUpdate?: (snapshot: AgentSnapshot, update: SessionUpdate) => void;
 }
-
-const terminalStatus = (status: AgentStatus) =>
-  status === "completed" || status === "stopped" || status === "error";
 
 /** Owns managed rounds and view placement; runtimes own execution resources. */
 export class SubagentManager {
@@ -291,40 +287,8 @@ export class SubagentManager {
   resume(id: string, options: ResumeOptions): AgentSnapshot {
     if (this.disposed) throw new Error("Subagent manager is closed.");
     const record = this.record(id);
-    if (record.releaseRequested || record.snapshot.sessionState === "closed") {
-      throw new Error(
-        "Subagent runtime is closed/released; no connected worker remains.",
-      );
-    }
-    if (!record.execution.finished) {
-      throw new Error("Only a finished managed task can be resumed.");
-    }
-    if (
-      record.openingViews &&
-      !record.runtime.capabilities.concurrentNativeInput
-    ) {
-      throw new Error(
-        "Native view opening is still in progress; resume is unavailable.",
-      );
-    }
-    if (record.terminating) {
-      throw new Error(
-        "Worker cleanup is still in progress; resume is unavailable.",
-      );
-    }
-    if (
-      !record.session?.connected ||
-      !record.session.capabilities.retainedSession
-    ) {
-      throw new Error(
-        "Resume requires a retained, connected runtime; no automatic restart.",
-      );
-    }
-    if (record.snapshot.sessionState !== "idle") {
-      throw new Error(
-        "Resume requires an idle session; wait for native/user interaction to settle.",
-      );
-    }
+    const blocker = resumeBlocker(record);
+    if (blocker) throw new Error(blocker);
     const callConfig = record.runtime.parseCallConfig?.(
       options.runtimeParams ?? {},
       record.options.runtimeConfig ?? {},
@@ -396,12 +360,8 @@ export class SubagentManager {
   steer(id: string, message: string): void | Promise<void> {
     if (!message.trim()) throw new Error("Steering message must not be blank.");
     const record = this.record(id);
-    if (record.snapshot.status !== "running") {
-      throw new Error("Only a running subagent can be steered.");
-    }
-    if (!record.runtime.capabilities.steer) {
-      throw new Error("This runtime does not support steering.");
-    }
+    const blocker = steerBlocker(record);
+    if (blocker) throw new Error(blocker);
     const sent = this.send(record, { type: "steer", message });
     // Legacy callers may ignore the return value; parents can await delivery.
     if (sent) void sent.catch(() => undefined);
@@ -462,42 +422,28 @@ export class SubagentManager {
     const record = this.record(id);
     record.openingViews = (record.openingViews ?? 0) + 1;
     return this.viewOperation(async () => {
-      if (this.disposed) throw new Error("Subagent manager is closed.");
-      if (
-        record.releaseRequested ||
-        record.snapshot.sessionState === "closed" ||
-        record.terminating ||
-        (record.session && this.closedSessions.has(record.session))
-      ) {
-        throw new Error("Subagent runtime is closed/released.");
-      }
-      if (!record.session) {
+      this.checkNativeView(record);
+      // Keep TypeScript narrowing at the resource boundary, after ordered policy.
+      if (!record.session)
         throw new Error("Subagent terminal is not ready yet.");
-      }
-      if (
-        !record.execution.finished &&
-        !record.session.capabilities.concurrentNativeInput
-      ) {
-        throw new Error(
-          "Native attachment requires no managed task; wait for this round to finish.",
-        );
-      }
       const terminal = await record.session.attachment();
-      if (this.disposed || record.releaseRequested) {
-        throw new Error("Subagent runtime is closed/released.");
-      }
+      this.checkNativeView(record);
       const existing = await this.liveView(record);
+      this.checkNativeView(record);
       if (existing) {
         await this.adapter.focus_view(existing);
+        this.checkNativeView(record);
         return existing;
       }
       let relativeTo: ViewHandle | undefined;
       for (const previous of [...this.views.values()].reverse()) {
         relativeTo = await this.liveView(previous);
+        this.checkNativeView(record);
         if (relativeTo) break;
       }
       // Layout policy belongs here, not in any adapter: first right of the
       // parent, every subsequent view below the last surviving attachment.
+      this.checkNativeView(record);
       const view = await this.adapter.open_view(
         relativeTo
           ? { terminal, direction: "down", relativeTo }
@@ -505,15 +451,34 @@ export class SubagentManager {
       );
       record.view = view;
       this.views.set(view.id, record);
-      this.scheduleViewCheck(record);
       this.changed();
-      if (this.disposed || record.releaseRequested) {
-        throw new Error("Subagent runtime is closed/released.");
+      try {
+        this.checkNativeView(record);
+      } catch (error) {
+        // Only roll back the view created by this operation. Record ownership
+        // first so a failed close remains available for cleanup retries.
+        try {
+          await this.adapter.close_view(view);
+          this.forgetView(record);
+        } catch {
+          this.scheduleViewCheck(record);
+        }
+        throw error;
       }
+      this.scheduleViewCheck(record);
       return view;
     }).finally(() => {
       record.openingViews = (record.openingViews ?? 1) - 1;
     });
+  }
+
+  private checkNativeView(record: AgentRecord): void {
+    if (this.disposed) throw new Error("Subagent manager is closed.");
+    const blocker = nativeViewBlocker(
+      record,
+      Boolean(record.session && this.closedSessions.has(record.session)),
+    );
+    if (blocker) throw new Error(blocker);
   }
 
   closeView(id: string): Promise<void> {
@@ -600,27 +565,20 @@ export class SubagentManager {
   }
 
   private autoRelease(record: AgentRecord): void {
-    if (
-      this.disposed ||
-      record.releaseRequested ||
-      record.snapshot.keepAlive ||
-      !record.execution.finished ||
-      record.snapshot.sessionState === "closed"
-    )
-      return;
+    if (!canAutoRelease(record, this.disposed)) return;
     const execution = record.execution;
     void this.viewOperation(async () => {
       if (
-        this.disposed ||
-        record.releaseRequested ||
         record.execution !== execution ||
-        !execution.finished ||
-        record.snapshot.sessionState === "closed"
+        !canAutoRelease(record, this.disposed)
       )
         return;
       if (await this.liveView(record)) {
         this.scheduleViewCheck(record);
-      } else if (record.execution === execution && execution.finished) {
+      } else if (
+        record.execution === execution &&
+        canAutoRelease(record, this.disposed)
+      ) {
         // Do not await release from inside the serialized view operation.
         void this.release(record.snapshot.id).catch(() => undefined);
       }
@@ -808,9 +766,9 @@ export class SubagentManager {
       }
       if (record.execution !== execution || execution.finished || this.disposed)
         return;
-      if (record.snapshot.sessionState !== "idle") {
-        throw new Error(
-          "Subagent became busy with native/user interaction while resume was queued.",
+      if (dispatchBlocker(record, "resume")) {
+        throw new RuntimeTaskRejectedError(
+          "Subagent became unavailable or busy with native/user interaction while resume was queued.",
         );
       }
       record.snapshot.status = "running";
@@ -869,10 +827,17 @@ export class SubagentManager {
         await this.terminate(record, "stopped");
         return;
       }
-      record.snapshot.status = "running";
-      if (record.snapshot.sessionState !== "interactive") {
-        record.snapshot.sessionState = "running";
+      const blocker = dispatchBlocker(record, "startup");
+      if (blocker === "disconnected") {
+        throw new Error("Subagent runtime disconnected during startup.");
       }
+      if (blocker === "busy") {
+        throw new RuntimeTaskRejectedError(
+          "Managed dispatch requires an idle session; native/user work must settle first.",
+        );
+      }
+      record.snapshot.status = "running";
+      record.snapshot.sessionState = "running";
       record.snapshot.activity = "Thinking…";
       this.changed();
       record.execution.dispatched = true;
@@ -1023,7 +988,7 @@ export class SubagentManager {
     if (event.type === "session_state") {
       if (
         typeof event.state !== "string" ||
-        !isWorkerSessionState(event.state)
+        !isBackendSessionState(event.state)
       ) {
         throw new Error("Invalid worker session state");
       }
@@ -1043,6 +1008,7 @@ export class SubagentManager {
           ? event.activity.slice(0, 4096)
           : undefined;
       this.changed();
+      if (event.state === "idle") this.autoRelease(record);
       return;
     }
     if (
@@ -1361,8 +1327,4 @@ async function waitFor<T>(
       signal.removeEventListener("abort", abort);
     });
   });
-}
-
-export function isTerminalStatus(status: AgentStatus): boolean {
-  return terminalStatus(status);
 }
