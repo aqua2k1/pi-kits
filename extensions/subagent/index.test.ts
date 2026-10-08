@@ -753,6 +753,9 @@ test("views copy command writes the full ID through Pi clipboard support", async
     DISPLAY: undefined,
     WAYLAND_DISPLAY: undefined,
     TERMUX_VERSION: undefined,
+    // WSL otherwise tries PowerShell before the headless OSC 52 fallback.
+    // Select the terminal route without touching the host clipboard.
+    WT_SESSION: "pi-kits-clipboard-test",
   });
   const capture = registrations();
   registerSubagents(capture.pi, {} as MuxAdapter);
