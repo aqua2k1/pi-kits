@@ -69,7 +69,7 @@ export default function (pi: ExtensionAPI) {
       };
     }),
     description:
-      "Open a file, URL, or directory with the system's default application. Use this to open HTML files in a browser, PDFs in a reader, directories in a file manager, etc.",
+      "Open a file, URL, or directory with the system's default application.",
     parameters: Type.Object({
       target: Type.String({
         description: "The file path, URL, or directory to open",

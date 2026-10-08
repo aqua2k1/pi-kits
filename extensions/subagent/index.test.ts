@@ -362,7 +362,7 @@ test("opaque runtime configuration is forwarded on spawn and resume", async (t) 
     assert.equal(configSchema.additionalProperties, true);
     assert.match(
       configSchema.description ?? "",
-      /review_target.*every spawn and resume call/,
+      /Options interpreted by the selected runtime/,
     );
     assert.match(
       configSchema.properties.review_target.description ?? "",

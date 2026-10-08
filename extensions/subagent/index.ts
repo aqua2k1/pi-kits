@@ -38,7 +38,7 @@ const runtimeConfig = Type.Optional(
     {
       additionalProperties: true,
       description:
-        "Options interpreted by the selected runtime. For Codex native review (runtime_args: review), supply runtime_config.review_target on every spawn and resume call. Session settings are fixed at launch; discover other options in agent configuration and runtime documentation.",
+        "Options interpreted by the selected runtime. Session settings are fixed at launch; discover other options in agent configuration and runtime documentation.",
     },
   ),
 );

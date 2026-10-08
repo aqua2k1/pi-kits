@@ -163,7 +163,7 @@ export function registerWebFetchTool(
     renderCall: renderFetchCall,
     renderResult: renderFetchResult,
     description:
-      "Fetch a specific HTTP or HTTPS URL and save its decoded text (HTML, JSON, and Markdown are formatted with fixed Prettier rules; other text formats or formatting failures preserve the decoded text) to a local temporary file. Returns metadata only, not inline content; savedContent includes the path, UTF-8 bytes, lines, maxLineBytes, truncation state, and optional expiry. Use read to inspect savedContent.path. GitHub repository URLs may be shallow-cloned or read through gh api.",
+      "Fetch a specific HTTP or HTTPS URL and save its decoded text (HTML, JSON, and Markdown are formatted with fixed Prettier rules; other text formats or formatting failures preserve the decoded text) to a local temporary file. Returns metadata only, not inline content. GitHub repository URLs may be shallow-cloned or read through gh api.",
     promptSnippet: "Fetch a specific URL and save its content for reading",
     promptGuidelines: [
       "Use web_fetch directly for a known URL; use web_search first only when URL discovery is needed.",

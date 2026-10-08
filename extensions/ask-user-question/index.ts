@@ -58,7 +58,7 @@ export default function askUserQuestionExtension(pi: ExtensionAPI): void {
       "Batch related clarification questions into one call. Keep the questionnaire concise.",
       "Put a recommended option first and append (Recommended) to its label.",
       "Do not add a custom-answer option; users can provide custom answers to every question.",
-      "Set multiSelect: true when multiple answers are valid; selecting at least one option is required.",
+      "Set multiSelect: true when multiple answers are valid.",
     ],
     exposure: "model-only",
     executionMode: "sequential",
