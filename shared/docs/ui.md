@@ -8,6 +8,13 @@
 交互意图。采用语义协议而非通用控件 DSL，按实际需求渐进迁移。
 这是目标架构；以下内容描述当前实现。
 
+## 通用 UI 协议
+
+`@pi-kits/shared/ui/protocol` 提供独立于 Pi/TUI 的节点、视图快照与语义事件校验。
+当前支持 group/content/field/action；尚未迁移现有扩展或实现前端适配器。
+接口与边界见 [协议 API](../ui/docs/protocol.md)，场景映射见
+[协议设计草案](../ui/docs/protocol-design.md)。
+
 ## Shared terminal UI
 
 Reusable UI lives in `shared/ui/`, independently of the tool schema and
