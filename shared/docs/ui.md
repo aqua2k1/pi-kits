@@ -1,5 +1,13 @@
 # 共享 UI
 
+## 项目目标
+
+[UI 项目目标](../ui/docs/goals.md)单独记录目标与验收方向；
+[UI 协议与适配边界](../ui/docs/architecture.md)记录设计与演进策略：
+将 UI 协议与 TUI/WebUI/GUI 差异集中在 `shared/ui/`，扩展只表达业务数据与
+交互意图。采用语义协议而非通用控件 DSL，按实际需求渐进迁移。
+这是目标架构；以下内容描述当前实现。
+
 ## Shared terminal UI
 
 Reusable UI lives in `shared/ui/`, independently of the tool schema and
