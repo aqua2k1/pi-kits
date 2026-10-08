@@ -6,6 +6,7 @@
     "./desktop-open": "./desktop-open.ts",
     "./notifications": "./notifications/index.ts",
     "./ui/protocol": "./ui/protocol/index.ts",
+    "./ui/session": "./ui/session/index.ts",
     "./ui/renderers": "./ui/renderers.ts",
     "./ui/tabs": "./ui/tabs.ts",
     "./ui/panel": "./ui/panel.ts",

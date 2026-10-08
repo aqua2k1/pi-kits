@@ -14,6 +14,8 @@
 当前支持 group/content/field/action；尚未迁移现有扩展或实现前端适配器。
 接口与边界见 [协议 API](../ui/docs/protocol.md)，场景映射见
 [协议设计草案](../ui/docs/protocol-design.md)。
+`@pi-kits/shared/ui/session` 提供快照更新、串行事件处理、关闭与适配器清理，
+进程内契约见 [session API](../ui/docs/session.md)。
 
 ## Shared terminal UI
 
