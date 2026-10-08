@@ -9,6 +9,8 @@ export interface UICloseResult {
 }
 
 export interface UIMount {
+  /** Background interaction loop; rejection fails the session, resolution does not close it. */
+  completion?: Promise<void>;
   /** Restore the host and release all adapter resources. Called exactly once. */
   dispose(): void | Promise<void>;
 }

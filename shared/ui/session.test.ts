@@ -420,6 +420,115 @@ test("unsubscribe during notification is safe; listener failure closes with erro
   unsubscribe();
 });
 
+test("background completion rejection closes and disposes exactly once", async () => {
+  const completion = deferred();
+  const mounted = deferred();
+  const failure = new Error("background");
+  let disposals = 0;
+  const { session } = harness({
+    adapter: {
+      mount() {
+        mounted.resolve();
+        return {
+          completion: completion.promise,
+          dispose: () => void disposals++,
+        };
+      },
+    },
+  });
+  await mounted.promise;
+  completion.reject(failure);
+  assert.deepEqual(await session.closed, { status: "error", error: failure });
+  session.close();
+  assert.equal(disposals, 1);
+});
+
+test("closed waits for completion settlement even after dispose", async () => {
+  const completion = deferred();
+  const disposed = deferred();
+  const mounted = deferred();
+  const { session } = harness({
+    adapter: {
+      mount() {
+        mounted.resolve();
+        return {
+          completion: completion.promise,
+          dispose: () => disposed.resolve(),
+        };
+      },
+    },
+  });
+  await mounted.promise;
+  session.close();
+  await disposed.promise;
+  await pending(session.closed);
+  completion.resolve();
+  assert.deepEqual(await session.closed, { status: "completed" });
+});
+
+test("normal completion resolution does not automatically close session", async () => {
+  const completion = deferred();
+  const mounted = deferred();
+  const { session } = harness({
+    adapter: {
+      mount() {
+        mounted.resolve();
+        return { completion: completion.promise, dispose() {} };
+      },
+    },
+  });
+  await mounted.promise;
+  completion.resolve();
+  await completion.promise;
+  await pending(session.closed);
+  assert.equal(session.signal.aborted, false);
+  await session.dispatch(dismiss());
+  session.close();
+  assert.deepEqual(await session.closed, { status: "completed" });
+});
+
+test("completion preserves first failure and already-aborted status", async () => {
+  for (const aborted of [false, true]) {
+    const completion = deferred();
+    const mounted = deferred();
+    const controller = new AbortController();
+    const failure = new Error("first");
+    const later = new Error("late completion");
+    let disposals = 0;
+    const { session } = harness({
+      signal: controller.signal,
+      adapter: {
+        mount() {
+          mounted.resolve();
+          return {
+            completion: completion.promise,
+            dispose() {
+              disposals++;
+              completion.reject(later);
+              throw failure;
+            },
+          };
+        },
+      },
+      onEvent: () => fail(failure),
+      onClosed: () => fail(new Error("last")),
+    });
+    await mounted.promise;
+    if (aborted) controller.abort();
+    else {
+      await assert.rejects(
+        session.dispatch(dismiss()),
+        (error) => error === failure,
+      );
+    }
+    assert.deepEqual(await session.closed, {
+      status: aborted ? "aborted" : "error",
+      error: failure,
+    });
+    assert.equal(disposals, 1);
+  }
+});
+
 test("public session dependency graph has no host imports or global registrations", () => {
   const visited = new Set<string>();
   function inspect(url: string) {

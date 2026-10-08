@@ -84,6 +84,11 @@ export function createUISession(
       rememberFailure(error);
     }
     try {
+      await mount?.completion;
+    } catch (error) {
+      rememberFailure(error);
+    }
+    try {
       await options.onClosed?.(result());
     } catch (error) {
       rememberFailure(error);
@@ -200,6 +205,12 @@ export function createUISession(
         mount = await options.adapter.mount(port);
         if (!mount || typeof mount.dispose !== "function") {
           throw new Error("UI adapter must return a disposable mount.");
+        }
+        if (mount.completion) {
+          void mount.completion.catch((error) => {
+            rememberFailure(error);
+            finish("error", error);
+          });
         }
         if (!closing) await options.onOpen?.();
       }

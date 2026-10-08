@@ -11,11 +11,13 @@
 ## 通用 UI 协议
 
 `@pi-kits/shared/ui/protocol` 提供独立于 Pi/TUI 的节点、视图快照与语义事件校验。
-当前支持 group/content/field/action；尚未迁移现有扩展或实现前端适配器。
+当前支持 group/content/field/action；尚未迁移现有扩展。
 接口与边界见 [协议 API](../ui/docs/protocol.md)，场景映射见
 [协议设计草案](../ui/docs/protocol-design.md)。
 `@pi-kits/shared/ui/session` 提供快照更新、串行事件处理、关闭与适配器清理，
 进程内契约见 [session API](../ui/docs/session.md)。
+`@pi-kits/shared/ui/adapters/pi-dialog` 使用 Pi select/input 提供明确的顺序对话降级，
+适配语义与 RPC 限制见 [Pi 对话适配器](../ui/docs/pi-dialog.md)。
 
 ## Shared terminal UI
 

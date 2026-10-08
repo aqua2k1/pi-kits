@@ -3,7 +3,8 @@
 状态：场景盘点后的设计草案，不是冻结的 API。第一阶段已实现
 `group/content/field/action`、视图快照与事件校验，见 [协议 API](protocol.md)。
 进程内 session 与适配器契约已实现，见 [session API](session.md)。
-集合、host 和真实前端适配器仍待实现。
+Pi 基础对话顺序降级已实现，见 [Pi 对话适配器](pi-dialog.md)。
+集合、host 和自定义 TUI/Web/GUI renderer 仍待实现。
 目标见 [goals.md](goals.md)，架构边界见 [architecture.md](architecture.md)。
 
 ## 三层结构

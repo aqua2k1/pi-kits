@@ -1,7 +1,8 @@
 # UI 交互 session 与适配器契约
 
 `@pi-kits/shared/ui/session` 实现一个视图、业务控制器和适配器之间的会话绑定。
-它不注册 Pi 处理器、不持有全局宿主，也没有实现 Pi/TUI/Web 适配器。
+它不注册 Pi 处理器、不持有全局宿主。Pi 基础对话的实现见
+[Pi 对话适配器](pi-dialog.md)，自定义 TUI/Web 适配器仍待实现。
 节点与事件见 [协议 API](protocol.md)。
 
 ## 接口
@@ -37,13 +38,17 @@ UISession：
 - `close("completed" | "dismissed")` 发起正常关闭；重复关闭无效。
 - `signal` 在任何关闭时中止，供适配器与控制器停止工作。
 - `closed` 在挂载结算、正在处理的事件结束、适配器清理和关闭回调完成后，
-  解析为 `{ status, error? }`。它不 reject，也不携带业务最终结果。
+  解析为 `{ status, error? }`。若有后台 completion 也会等待它结算。
+  它不 reject，也不携带业务最终结果。
 
 业务结果继续由业务控制器或用例拥有；dismiss 是交互意图，不自动终止业务。
 
 ## 适配器
 
-UIAdapter 实现 `mount(port)`，返回或异步返回 `{ dispose() }`。
+UIAdapter 实现 `mount(port)`，返回或异步返回 `{ dispose(), completion? }`。
+completion 用于后台交互循环：reject 会使会话失败，正常 resolve 不自动关闭。
+closed 会等待 completion 结算；dispose 必须停止循环，不能等待 closed。
+不需要后台循环的同步组件可以省略 completion。
 UIPort 只暴露 getSnapshot、subscribe、dispatch 和 signal，不暴露 publish/close。
 因此 renderer 只发送语义事件，不直接改变业务状态或完成业务。
 
@@ -88,6 +93,7 @@ onClosed 在挂载与事件结算、清理后调用，即使从未打开也会�
 
 ## 未实现的能力
 
-没有宿主自动选择、能力协商、连接授权、远端传输、事件去重或业务适配器。
+没有宿主自动选择、能力协商、连接授权、远端传输或事件去重。
 本模块的 AbortSignal 和 controller 回调是进程内接口，不属于 wire 协议。
-内存适配器仅在测试中验证契约；真实前端仍需独立实现和端到端验证。
+内存适配器仅在测试中验证契约；已有 Pi 基础对话适配器，真实 TUI/Web/GUI
+renderer 与远端生命周期仍需独立实现和端到端验证。
