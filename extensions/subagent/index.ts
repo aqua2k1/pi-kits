@@ -1,4 +1,6 @@
 import { randomUUID } from "node:crypto";
+import { statSync } from "node:fs";
+import { resolve } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import {
   copyToClipboard,
@@ -169,6 +171,13 @@ export function registerSubagents(
               "Task instructions, relevant context, and expected output; not a system prompt. Required unless the selected runtime accepts instructions through runtime_config.",
           }),
         ),
+        cwd: Type.Optional(
+          Type.String({
+            minLength: 1,
+            description:
+              "Working directory; defaults to the parent working directory. Relative paths resolve against the parent directory. Must be an existing directory; retained on resume.",
+          }),
+        ),
         runtime_config: runtimeConfig,
         keep_alive: Type.Optional(
           Type.Boolean({
@@ -205,6 +214,17 @@ export function registerSubagents(
       }),
       async execute(_id, params, signal, _onUpdate, ctx) {
         signal?.throwIfAborted();
+        const cwd = resolve(ctx.cwd, params.cwd ?? ".");
+        try {
+          if (!statSync(cwd).isDirectory()) {
+            throw new Error("Not a directory.");
+          }
+        } catch (cause) {
+          throw new Error(
+            `Invalid subagent cwd: ${cwd}. Must be an existing directory.`,
+            { cause },
+          );
+        }
         const agent = params.subagent_type
           ? resolveAgentDefinition(ctx.cwd, params.subagent_type)
           : undefined;
@@ -218,7 +238,7 @@ export function registerSubagents(
           prompt: params.prompt ?? "",
           runtimeParams: params.runtime_config,
           description: params.description,
-          cwd: ctx.cwd,
+          cwd,
           model:
             params.model ??
             (runtime === "pi" && ctx.model

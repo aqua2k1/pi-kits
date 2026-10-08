@@ -18,6 +18,17 @@ import type { RuntimeEvent, RuntimeOptions } from "../index.ts";
 import { type CodexDependencies, CodexRuntime } from "./index.ts";
 import type { CodexRpc } from "./transport.ts";
 
+test("Codex forwards task cwd to the backend, thread and native mux terminal", async (t) => {
+  const cwd = "/tmp/child workspace";
+  const f = fixture({ cwd });
+  t.after(() => f.session.close());
+  await f.session.start();
+  assert.equal(f.backendCwd, cwd);
+  assert.equal(params(f, "thread/start").cwd, cwd);
+  await f.session.attachment();
+  assert.equal(f.starts[0].cwd, cwd);
+});
+
 const tick = () => new Promise<void>((resolve) => setImmediate(resolve));
 function must<T>(value: T | undefined): T {
   assert.notEqual(value, undefined);
@@ -61,6 +72,7 @@ function fixture(
   let notification!: (method: string, params: Record<string, unknown>) => void;
   let disconnected!: (error: Error) => void;
   let argv: string[] = [];
+  let backendCwd: string | undefined;
   let authToken = "";
   let closes = 0;
   let connectTimeoutMs = 0;
@@ -165,8 +177,9 @@ function fixture(
     async address() {
       return "ws://127.0.0.1:12345";
     },
-    spawn(_executable, args) {
+    spawn(_executable, args, cwd) {
       argv = args;
+      backendCwd = cwd;
       const emitter = new EventEmitter();
       const child = Object.assign(emitter, {
         stdout: new PassThrough(),
@@ -219,6 +232,9 @@ function fixture(
     destroyed,
     get argv() {
       return argv;
+    },
+    get backendCwd() {
+      return backendCwd;
     },
     get token() {
       return authToken;

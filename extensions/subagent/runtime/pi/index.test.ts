@@ -96,6 +96,12 @@ test("Pi CLI uses normalized session tools, denies, model and thinking for unnam
   ]);
 });
 
+test("Pi forwards the task cwd to mux startup", async (t) => {
+  const cwd = "/tmp/child workspace";
+  const { started } = await launch(t, { cwd });
+  assert.equal(started.cwd, cwd);
+});
+
 test("Pi CLI sets the native session name when provided", async (t) => {
   const { started } = await launch(t, {
     sessionName: "Sub · explorer · Inspect auth",

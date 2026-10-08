@@ -44,6 +44,8 @@ Codex app-server 与其原生 TUI 是不同资源；不要把“关闭视图”�
 - `PI_KITS_SUBAGENT_WORKER === "1"` 时不注册父协调器，避免 worker 递归注册。
 - 使用 `@pi-kits/config` 读取配置；仅在启用且 `mux === "herdr"`、环境检查通过时注册。
 - 将工具的 `runtime_config` 作为原始调用参数交给 runtime 分区解析。
+- 将 spawn-only 顶层 `cwd`（默认父 `ctx.cwd`）相对父目录解析为绝对路径，并在调用 manager 前验证存在且为目录；无效不创建 worker。Agent 定义仍以父 `ctx.cwd` 查找。
+- 解析后的 `cwd` 沿 manager/runtime/mux 既有链路传递，并暴露在 `AgentSnapshot` 和工具结果中；resume 保留创建时目录，不提供 cwd 参数或 frontmatter 配置。
 - 将视图面板返回的操作映射到 manager，并处理复制、确认删除等 UI 行为。
 - `session_shutdown` 时销毁 widget 并关闭 manager；清理失败最多尝试三次，不提前丢弃所有权。
 

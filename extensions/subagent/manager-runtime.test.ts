@@ -141,6 +141,38 @@ function harness(id: RuntimeId = "codex") {
   };
 }
 
+test("cwd reaches runtime validation, creation and task parsing and is retained on resume", async (t) => {
+  const h = harness();
+  const cwd = "/tmp/child workspace";
+  const parsed: string[] = [];
+  h.runtime.parseTask = (command, options) => {
+    parsed.push(options.cwd);
+    return command;
+  };
+  const manager = new SubagentManager(h.mux, { runtimes: [h.runtime] });
+  t.after(() => manager.close());
+  const started = manager.spawn({
+    ...task,
+    runtime: h.runtime.id,
+    cwd,
+    keepAlive: true,
+  });
+  assert.equal(started.cwd, cwd);
+  await until(() => h.sessions[0]?.commands.length === 1);
+  assert.equal(h.validated[0].cwd, cwd);
+  assert.equal(h.sessions[0].options.cwd, cwd);
+  h.sessions[0].complete();
+  assert.equal((await manager.result(started.id, true)).cwd, cwd);
+  const resumed = manager.resume(started.id, { prompt: "Continue" });
+  assert.equal(resumed.cwd, cwd);
+  await until(() => h.sessions[0].commands.length === 2);
+  h.sessions[0].complete(2);
+  assert.equal((await manager.result(started.id, true)).cwd, cwd);
+  assert.equal(manager.list()[0].cwd, cwd);
+  assert.equal(h.sessions.length, 1);
+  assert.deepEqual(parsed, [cwd, cwd, cwd, cwd]);
+});
+
 test("runtime parsers own configuration and per-round tasks without manager runtime branches", async (t) => {
   const h = harness("custom-parser");
   h.runtime.parseConfig = (raw) => ({

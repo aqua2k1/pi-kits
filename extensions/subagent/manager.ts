@@ -37,6 +37,8 @@ export { isTerminalStatus } from "./state.ts";
 export interface AgentSnapshot {
   id: string;
   description: string;
+  /** Absolute working directory fixed at spawn and retained across rounds. */
+  cwd?: string;
   status: AgentStatus;
   round?: number;
   inheritedContext?: boolean;
@@ -249,6 +251,7 @@ export class SubagentManager {
         runtimeName: runtime.displayName,
         capabilities: { ...runtime.capabilities },
         description: options.description,
+        cwd: options.cwd,
         status: "queued",
         round: 1,
         inheritedContext: Boolean(options.parentSession),

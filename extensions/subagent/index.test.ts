@@ -424,6 +424,120 @@ test("opaque runtime configuration is forwarded on spawn and resume", async (t) 
   await capture.hookHandlers.get("session_shutdown")?.();
 });
 
+test("cwd resolves against the parent while agent definitions stay parent-scoped", async (t) => {
+  const agentDir = useAgentDir(t);
+  const cwd = join(agentDir, "parent");
+  const child = join(cwd, "child workspace");
+  for (const [root, role] of [
+    [cwd, "Parent role"],
+    [child, "Child role"],
+  ]) {
+    const agents = join(root, ".pi", "agent", "agents");
+    mkdirSync(agents, { recursive: true });
+    writeFileSync(join(agents, "review.md"), role);
+  }
+  const capture = registrations();
+  const spawned: SpawnOptions[] = [];
+  capture.pi.getThinkingLevel = () => "low";
+  t.mock.method(SubagentManager.prototype, "spawn", (options: SpawnOptions) => {
+    spawned.push(options);
+    return {
+      id: "child",
+      description: options.description,
+      cwd: options.cwd,
+      status: "queued",
+    };
+  });
+  registerSubagents(capture.pi, {} as MuxAdapter);
+  const spawn = capture.definitions.get("subagent");
+  const resume = capture.definitions.get("resume_subagent");
+  assert.ok(spawn && resume);
+  const properties = (
+    resume.parameters as unknown as {
+      properties: Record<string, unknown>;
+    }
+  ).properties;
+  assert.equal(properties.cwd, undefined);
+  for (const [input, expected] of [
+    [undefined, cwd],
+    [".", cwd],
+    ["child workspace", child],
+    ["child workspace/../child workspace", child],
+    [child, child],
+    ["..", agentDir],
+  ] as const) {
+    const params = {
+      subagent_type: "review",
+      prompt: "Inspect",
+      description: "Inspect",
+      cwd: input,
+    };
+    assert.equal(Value.Check(spawn.parameters, params), true);
+    const result = await spawn.execute("call", params, undefined, undefined, {
+      cwd,
+      mode: "print",
+    } as ExtensionToolContext);
+    assert.equal(spawned.at(-1)?.cwd, expected);
+    assert.equal(spawned.at(-1)?.agent?.systemPrompt, "Parent role");
+    assert.equal((result.details as AgentSnapshot).cwd, expected);
+    const content = result.content[0];
+    assert.equal(content.type, "text");
+    assert.equal(JSON.parse(content.text).cwd, expected);
+  }
+  for (const input of ["", null, 42]) {
+    assert.equal(
+      Value.Check(spawn.parameters, {
+        description: "Inspect",
+        cwd: input,
+      }),
+      false,
+    );
+  }
+  await capture.hookHandlers.get("session_shutdown")?.();
+});
+
+test("invalid cwd rejects before manager spawn or worker creation, including the default", async (t) => {
+  const cwd = useAgentDir(t);
+  writeFileSync(join(cwd, "file"), "not a directory");
+  const capture = registrations();
+  t.mock.method(SubagentManager.prototype, "spawn", () => {
+    assert.fail("Invalid cwd must not reach manager spawn");
+  });
+  const mux = new Proxy({} as MuxAdapter, {
+    get() {
+      assert.fail("Invalid cwd must not create workers");
+    },
+  });
+  registerSubagents(capture.pi, mux);
+  const spawn = capture.definitions.get("subagent");
+  assert.ok(spawn);
+  for (const [parent, input] of [
+    [cwd, "missing"],
+    [cwd, "file"],
+    [cwd, "file/nested"],
+    [join(cwd, "missing"), undefined],
+    [join(cwd, "file"), undefined],
+  ] as const) {
+    await assert.rejects(
+      spawn.execute(
+        "call",
+        {
+          prompt: "Inspect",
+          description: "Inspect",
+          cwd: input,
+        },
+        undefined,
+        undefined,
+        {
+          cwd: parent,
+          mode: "print",
+        } as ExtensionToolContext,
+      ),
+      /Invalid subagent cwd: .*Must be an existing directory/,
+    );
+  }
+});
+
 test("keep_alive is validated and forwarded only at session creation", async (t) => {
   const agentDir = useAgentDir(t);
   const agents = join(agentDir, "agents");

@@ -12,6 +12,8 @@ TUI 存活、视图打开/正在打开/脱离不影响提交资格。Codex 运�
 `get_subagent_result`、`steer_subagent`、`stop_subagent`。
 TUI 使用 `/subagent:views` 管理终端视图，编辑器上方显示实时任务状态。
 不支持调度、worktree、跨进程恢复或自动重连；worker 不是沙箱。
+`subagent` 顶层可选 `cwd` 指定已有目录，默认父目录，相对路径基于父目录解析；
+结果返回绝对 `cwd`，续跑保留。Agent 定义仍在父目录查找，详见[工作目录](docs/usage.md#working-directory)。
 
 Runtime 专属字段统一放在 `runtime_config` 下；`model`、`thinking`、Markdown 正文仍为通用配置。
 字段作用域、未知/外来字段忽略、agent 与调用的逐键优先级及续跑继承规则，

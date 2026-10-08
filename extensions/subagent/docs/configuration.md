@@ -69,7 +69,7 @@ and [JSON Schema](../../../pi-kits.schema.json).
 There are **no embedded agent definitions or installed templates**. Create your
 own Markdown files in these directories:
 
-1. `<cwd>/.pi/agent/agents/*.md` — project, highest priority.
+1. `<parent ctx.cwd>/.pi/agent/agents/*.md` — project, highest priority.
 2. `$PI_CODING_AGENT_DIR/agents/*.md` — global, normally `~/.pi/agent/agents/`.
 
 The filename without `.md` is the type name, matching `gotgenes/pi-subagents`.
@@ -112,6 +112,11 @@ Call `list_subagent_types` to discover names, then:
 Pass this object to `subagent`. Omitting `subagent_type` retains the existing
 ad-hoc task behavior; it does not select an embedded or fallback named agent.
 Unknown and disabled names are rejected before creating a worker.
+The spawn-only top-level `cwd` selects the task working directory, not the agent
+lookup directory. It defaults to the parent's `ctx.cwd`, resolves relative paths
+against that directory, and must name an existing directory. Snapshots/results
+expose its absolute value; resume retains it. `cwd` is not an agent frontmatter
+field or a `runtime_config` setting. See [Working directory](usage.md#working-directory).
 
 Supported YAML frontmatter fields use the reference extension's snake_case names:
 

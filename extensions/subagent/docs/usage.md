@@ -69,6 +69,21 @@ environment, the entry registers no tools, hooks, or commands.
 | `steer_subagent` | Send guidance to a running task. |
 | `stop_subagent` | Cancel a queued or running task. |
 
+### Working directory
+
+`subagent` accepts an optional top-level `cwd`. Omit it to use the parent's
+`ctx.cwd`; relative paths resolve against that parent directory, not the process
+working directory. The resolved absolute path must exist and be a directory;
+invalid paths fail before creating a worker. No directory or worktree is created.
+
+For example, pass `{"description":"Inspect sibling","prompt":"Inspect the code",
+"cwd":"../other-project"}` to `subagent` to run in an existing sibling project.
+Agent definitions are still discovered using the parent's `ctx.cwd`, not the
+task directory. Runtime/project context discovery uses the task directory.
+Task snapshots and tool results expose the resolved absolute `cwd`.
+`resume_subagent` retains it even if the parent's directory changes; there is no
+resume parameter or agent frontmatter setting for `cwd`.
+
 Use `/subagent:views <id> open` to open a view attached to an existing Pi
 terminal. Placement is automatic: the first view opens right of the parent Pi,
 and each subsequent view opens below the last surviving view, forming a right-side
@@ -168,7 +183,7 @@ not a native attachment and does not retain runtimes.
 Use `resume_subagent` with `agent_id`, a new `prompt` (or an explicit
 `runtime_config.review_target` for native review), optional `description`,
 `runtime_config`, and `run_in_background`. It keeps the same ID, process,
-terminal, view, session file/history (including native conversations), and
+terminal, view, working directory, session file/history (including native conversations), and
 original agent instructions. Agent files are not re-read. Runtime task settings
 reset on every round; no review target is inherited. The retained runtime's own
 session settings cannot change on resume, although redundant values that
