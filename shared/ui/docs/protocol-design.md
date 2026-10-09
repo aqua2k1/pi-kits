@@ -4,7 +4,9 @@
 `group/content/field/action`、视图快照与事件校验，见 [协议 API](protocol.md)。
 进程内 session 与适配器契约已实现，见 [session API](session.md)。
 Pi 基础对话顺序降级已实现，见 [Pi 对话适配器](pi-dialog.md)。
-集合、host 和自定义 TUI/Web/GUI renderer 仍待实现。
+问卷非 TUI 路径已接入业务控制器、共享协议/session 与中立 [UIHost](host.md)，
+具体适配器绑定留在共享目录，原 TUI 暂时保留。
+集合和自定义 TUI/Web/GUI renderer 仍待实现。
 目标见 [goals.md](goals.md)，架构边界见 [architecture.md](architecture.md)。
 
 ## 三层结构

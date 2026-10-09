@@ -11,6 +11,7 @@ import type {
   ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
 import { getKeybindings, type TUI } from "@earendil-works/pi-tui";
+import { bindUIHost, UIHostBusyError } from "@pi-kits/shared/ui/host";
 import {
   DOCKED_PANEL_CLOSED,
   DOCKED_PANEL_OPENED,
@@ -37,7 +38,11 @@ type LifecycleEvent =
   | DockedPanelOpenedEvent
   | DockedPanelClosedEvent;
 
-function capture(t: TestContext, config?: unknown) {
+function capture(
+  t: TestContext,
+  config?: unknown,
+  onEvent?: (name: string, data: LifecycleEvent) => void,
+) {
   useAgentDir(t, config);
   let tool: ToolDefinition<typeof AskUserParameters, AskUserResult> | undefined;
   let handler: ((event: unknown, ctx: ExtensionContext) => void) | undefined;
@@ -49,6 +54,7 @@ function capture(t: TestContext, config?: unknown) {
   const pi = {
     events: {
       emit(name: string, data: LifecycleEvent) {
+        onEvent?.(name, data);
         events.push({ name, data });
       },
     },
@@ -145,18 +151,7 @@ test("tool rejects no UI and executes in an RPC-style dialog host", async (t) =>
     } as ExtensionToolContext),
     /UI unavailable/,
   );
-  const ctx = {
-    hasUI: true,
-    mode: "rpc",
-    ui: {
-      async select(_title: string, rows: string[]) {
-        return rows[0];
-      },
-      async input() {
-        throw new Error("Unexpected input");
-      },
-    },
-  } as unknown as ExtensionToolContext;
+  const ctx = rpcContext(rpcAnswerSelect());
   const response = await tool.execute("id", params, undefined, undefined, ctx);
   assert.equal(response.details.cancelled, false);
   assert.equal(response.details.answers[0].answer, "A");
@@ -166,12 +161,53 @@ const questions = {
   questions: [{ question: "Choose?", options: [{ label: "A" }] }],
 };
 
-function rpcContext(select: () => Promise<string | undefined>) {
+function rpcContext(select: ExtensionUIContext["select"]) {
   return {
     hasUI: true,
     mode: "rpc",
-    ui: { select },
+    ui: {
+      select,
+      async input() {
+        throw new Error("Unexpected input");
+      },
+    },
   } as unknown as ExtensionToolContext;
+}
+
+function rpcAnswerSelect(): ExtensionUIContext["select"] {
+  let calls = 0;
+  let previousSignal: AbortSignal | undefined;
+  return async (title, rows, opts) => {
+    const signal = opts?.signal;
+    assert.ok(signal);
+    assert.equal(signal.aborted, false);
+    const step = calls++;
+    assert.ok(step < 3, "Unexpected dialog after final confirmation");
+    if (step === 1) {
+      assert.equal(signal, previousSignal);
+      assert.match(title, /^Selected option\nCurrent value: $/);
+    } else {
+      assert.match(title, /^\[1\/1\] Choose\?/);
+      if (step === 0) {
+        assert.match(title, /Confirm answer \(disabled\)/);
+        assert.ok(!rows.some((row) => row.includes("Confirm answer")));
+      } else {
+        assert.ok(
+          previousSignal?.aborted,
+          "Published view interrupts old dialog",
+        );
+        assert.notEqual(signal, previousSignal);
+        assert.match(title, /Selected option: A/);
+      }
+    }
+    previousSignal = signal;
+    const label = ["Edit: Selected option", "1. A", "Confirm answer"][step];
+    const row = rows.find((row) =>
+      step === 1 ? row === label : row.endsWith(label),
+    );
+    assert.ok(row, `Missing dialog choice: ${label}`);
+    return row;
+  };
 }
 
 function interceptNotifications(t: TestContext) {
@@ -190,16 +226,25 @@ function interceptNotifications(t: TestContext) {
 
 for (const cancelled of [false, true]) {
   test(`question hooks bracket RPC dialogs (${cancelled ? "cancelled" : "answered"})`, async (t) => {
-    const { tool, events } = capture(t);
+    const dialogSignals: AbortSignal[] = [];
+    const { tool, events } = capture(t, undefined, (name) => {
+      if (name === ASK_USER_QUESTION_END) {
+        assert.equal(dialogSignals.length, cancelled ? 1 : 3);
+        assert.ok(dialogSignals.every((signal) => signal.aborted));
+      }
+    });
     assert.ok(tool);
-    const ctx = rpcContext(async () => {
+    const answerSelect = rpcAnswerSelect();
+    const ctx = rpcContext(async (title, rows, opts) => {
+      assert.ok(opts?.signal);
+      dialogSignals.push(opts.signal);
       assert.deepEqual(events, [
         {
           name: ASK_USER_QUESTION_START,
           data: { toolCallId: "id", mode: "rpc", questionCount: 1 },
         },
       ]);
-      return cancelled ? undefined : "1. A";
+      return cancelled ? undefined : answerSelect(title, rows, opts);
     });
     const response = await tool.execute(
       "id",
@@ -208,6 +253,10 @@ for (const cancelled of [false, true]) {
       undefined,
       ctx,
     );
+    assert.equal(dialogSignals.length, cancelled ? 1 : 3);
+    assert.ok(dialogSignals.every((signal) => signal.aborted));
+    assert.equal(response.details.cancelled, cancelled);
+    assert.equal(response.details.answers.length, cancelled ? 0 : 1);
     assert.deepEqual(events[1], {
       name: ASK_USER_QUESTION_END,
       data: {
@@ -228,10 +277,23 @@ for (const aborted of [false, true]) {
     assert.ok(tool);
     const controller = new AbortController();
     const failure = new Error("host failure");
-    const ctx = rpcContext(async () => {
+    let calls = 0;
+    let dialogSignal: AbortSignal | undefined;
+    const ctx = rpcContext(async (title, rows, opts) => {
+      assert.equal(++calls, 1);
+      assert.match(title, /^\[1\/1\] Choose\?/);
+      const edit = rows.find((row) => row.endsWith("Edit: Selected option"));
+      assert.ok(edit);
+      dialogSignal = opts?.signal;
+      assert.ok(dialogSignal);
+      assert.notEqual(dialogSignal, controller.signal);
+      assert.equal(dialogSignal.aborted, false);
+      assert.equal(events.length, 1);
+      assert.equal(events[0].name, ASK_USER_QUESTION_START);
       if (aborted) {
         controller.abort();
-        return "1. A";
+        assert.equal(dialogSignal.aborted, true);
+        return edit;
       }
       throw failure;
     });
@@ -239,6 +301,8 @@ for (const aborted of [false, true]) {
       tool.execute("id", questions, controller.signal, undefined, ctx),
       aborted ? { name: "AbortError" } : failure,
     );
+    assert.equal(calls, 1);
+    if (aborted) assert.ok(dialogSignal?.aborted);
     assert.deepEqual(
       events.map((event) => event.name),
       [ASK_USER_QUESTION_START, ASK_USER_QUESTION_END],
@@ -251,6 +315,80 @@ for (const aborted of [false, true]) {
     });
   });
 }
+
+test("host open failure is not inferred from request cancellation", async (t) => {
+  const controller = new AbortController();
+  const { tool, events } = capture(t, undefined, (name) => {
+    if (name === ASK_USER_QUESTION_START) {
+      controller.abort(new Error("request cancelled at start"));
+    }
+  });
+  assert.ok(tool);
+  const ctx = rpcContext(async (_title, _rows, options) => {
+    const signal = options?.signal;
+    assert.ok(signal);
+    await new Promise<void>((resolve) => {
+      if (signal.aborted) resolve();
+      else signal.addEventListener("abort", () => resolve(), { once: true });
+    });
+    return undefined;
+  });
+  const owner = bindUIHost(ctx);
+  t.after(() => owner.dispose());
+  const occupied = owner.open(
+    {
+      id: "occupied",
+      revision: 0,
+      root: { kind: "content", id: "body", format: "text", body: "Busy" },
+    },
+    { onEvent() {} },
+  );
+  await assert.rejects(
+    tool.execute("id", questions, controller.signal, undefined, ctx),
+    UIHostBusyError,
+  );
+  assert.deepEqual(events[1].data, {
+    toolCallId: "id",
+    mode: "rpc",
+    questionCount: 1,
+    status: "error",
+  });
+  assert.equal(occupied.signal.aborted, false);
+});
+
+test("host context abort preserves reason and lifecycle status", async (t) => {
+  const { tool, events } = capture(t);
+  assert.ok(tool);
+  const controller = new AbortController();
+  const reason = new Error("bound context aborted");
+  const ctx = {
+    ...rpcContext(async () => {
+      controller.abort(reason);
+      return undefined;
+    }),
+    signal: controller.signal,
+  };
+  await assert.rejects(
+    tool.execute("id", questions, undefined, undefined, ctx),
+    (error) => error === reason,
+  );
+  assert.deepEqual(
+    events.map((event) => event.name),
+    [ASK_USER_QUESTION_START, ASK_USER_QUESTION_END],
+  );
+  assert.deepEqual(events[1].data, {
+    toolCallId: "id",
+    mode: "rpc",
+    questionCount: 1,
+    status: "aborted",
+  });
+  events.length = 0;
+  await assert.rejects(
+    tool.execute("id", questions, undefined, undefined, ctx),
+    (error) => error === reason,
+  );
+  assert.deepEqual(events, []);
+});
 
 test("no UI or pre-aborted calls do not emit hooks or notify", async (t) => {
   const { tool, events } = capture(t);
@@ -357,7 +495,7 @@ test("RPC questions emit hooks without desktop notifications", async (t) => {
     questions,
     undefined,
     undefined,
-    rpcContext(async () => "1. A"),
+    rpcContext(rpcAnswerSelect()),
   );
   assert.equal(events.length, 2);
   assert.deepEqual(notifications, []);

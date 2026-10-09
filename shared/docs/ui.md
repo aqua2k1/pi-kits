@@ -11,13 +11,16 @@
 ## 通用 UI 协议
 
 `@pi-kits/shared/ui/protocol` 提供独立于 Pi/TUI 的节点、视图快照与语义事件校验。
-当前支持 group/content/field/action；尚未迁移现有扩展。
+当前支持 group/content/field/action；问卷的非 TUI 路径已使用通用协议，
+其他扩展与原问卷 TUI 尚未迁移。
 接口与边界见 [协议 API](../ui/docs/protocol.md)，场景映射见
 [协议设计草案](../ui/docs/protocol-design.md)。
 `@pi-kits/shared/ui/session` 提供快照更新、串行事件处理、关闭与适配器清理，
 进程内契约见 [session API](../ui/docs/session.md)。
 `@pi-kits/shared/ui/adapters/pi-dialog` 使用 Pi select/input 提供明确的顺序对话降级，
 适配语义与 RPC 限制见 [Pi 对话适配器](../ui/docs/pi-dialog.md)。
+`@pi-kits/shared/ui/host` 统一绑定宿主、创建适配器并协调资源生命周期，
+业务只接收中立 UIHost，见 [host API](../ui/docs/host.md)。
 
 ## Shared terminal UI
 
@@ -67,8 +70,12 @@ Questionnaire data, state transitions, keys, question/option text, tab labels,
 review/confirmation, and custom `Input` focus/IME handling remain in
 `extensions/ask-user-question/ui/`. `tui.ts` adapts those to the shared session;
 `index.ts` wires callbacks to `pi.events`. `core.ts` owns schemas, answer types,
-answer construction and native non-TUI dialogs. UI depends on the business core
-and shared design primitives, not the other way around. Shared files are library
+answer construction and tool responses, with no Pi UI dependency. The non-TUI
+`controller.ts` projects business state into generic protocol nodes and handles
+semantic events; `interaction.ts` runs through the neutral UIHost interface.
+The extension entry binds/disposes the host; adapter construction stays in shared UI.
+The original TUI remains separate during migration. UI depends on the business
+core and shared design primitives, not the other way around. Shared files are library
 exports only, never Pi extension manifest entries.
 
 ## 工具结果渲染

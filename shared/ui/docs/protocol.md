@@ -2,8 +2,10 @@
 
 第一阶段已实现节点、完整视图快照和语义事件校验。
 进程内会话与适配器契约见 [session.md](session.md)，Pi 基础对话适配见
-[pi-dialog.md](pi-dialog.md)；尚无 host、自定义 TUI/Web/GUI renderer 或现有
-扩展迁移。总体设计见 [protocol-design.md](protocol-design.md)。
+[pi-dialog.md](pi-dialog.md)。问卷非 TUI 路径已通过业务控制器使用通用协议；
+共享 [host](host.md) 已隔离具体适配器绑定；自定义 TUI/Web/GUI renderer
+仍待实现，其他扩展未迁移。
+总体设计见 [protocol-design.md](protocol-design.md)。
 
 ## 导入
 

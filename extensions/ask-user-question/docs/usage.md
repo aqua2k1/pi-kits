@@ -22,8 +22,9 @@ the structured `details` still carries `cancelled: true` and any earlier answers
 In Pi's fullscreen terminal mode, tabs can also be clicked with the mouse. Regular
 terminal mode leaves mouse input to the terminal, so use keyboard navigation there.
 Enable fullscreen using Pi's `tuiMode: "fullscreen"` setting if needed; this is a Pi
-setting, not a `pi-kits.json` option. RPC uses native select/input dialogs sequentially
-and does not support tabs or review. Shift+Up/Down scroll long question details;
+setting, not a `pi-kits.json` option. RPC uses the shared generic UI protocol with
+native select/input dialogs sequentially and does not support tabs or review.
+Shift+Up/Down scroll long TUI question details;
 The panel owns keyboard input while open. While typing a
 custom answer, use Left/Right, Ctrl+B/F or Home/End to move the cursor.
 
@@ -37,9 +38,25 @@ must be checked. Checks survive switching tabs and can be revised. A custom answ
 replaces the checkbox answer rather than combining with it; Space types normally
 inside the custom-answer editor. Single-select remains the default.
 
-RPC multi-select uses a native input dialog: enter option numbers such as `1,3`
-or a custom answer. Invalid numeric selections and blank input are retried.
-Use `text: 123` to submit a numeric custom answer rather than option numbers.
+### Sequential dialogs (RPC)
+
+Each question has an Edit menu for its option field and an explicit Confirm answer
+action. Editing only changes a draft; confirming records the answer and advances.
+The final question's confirmation completes the call, without an extra review step.
+An empty choice or blank custom answer cannot be confirmed.
+
+For multi-select, toggle options in the selection dialog and choose Done to update
+the draft, then Confirm answer. Write custom answer switches to a text field;
+Choose options switches back without losing either draft. Custom text is preserved
+verbatim, including whitespace around non-blank text and numeric-looking answers.
+The old comma-separated input and `text:` prefix convention is no longer used:
+`123` is simply custom text, and `text: 123` remains that literal text.
+
+Cancelling an inner edit returns to the question menu. Close or cancelling the
+question menu cancels the questionnaire and retains only previously confirmed
+answers. The lifecycle hooks still finish after the shared session has cleaned up.
+The Pi RPC protocol cannot send an agent-side dialog-close message; abort clears
+backend pending requests but may leave the old dialog visible in a client.
 
 ```json
 {

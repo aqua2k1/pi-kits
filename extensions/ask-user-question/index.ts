@@ -1,5 +1,11 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { readPiKitsConfig } from "@pi-kits/config";
+import {
+  bindUIHost,
+  classifyUIFailure,
+  type UIFailureStatus,
+  type UIHost,
+} from "@pi-kits/shared/ui/host";
 import { notify } from "../../shared/notifications/index.ts";
 import {
   DOCKED_PANEL_CLOSED,
@@ -16,7 +22,6 @@ import {
   AskUserParameters,
   type AskUserResult,
   AskUserResultSchema,
-  askQuestions,
   buildResponse,
 } from "./core.ts";
 import {
@@ -25,6 +30,7 @@ import {
   type AskUserQuestionEndEvent,
   type AskUserQuestionStartEvent,
 } from "./events.ts";
+import { askQuestions } from "./interaction.ts";
 
 export default function askUserQuestionExtension(pi: ExtensionAPI): void {
   const { askUserQuestion, notify: notifyConfig } = readPiKitsConfig();
@@ -68,11 +74,12 @@ export default function askUserQuestionExtension(pi: ExtensionAPI): void {
       if (!ctx.hasUI)
         throw new Error("UI unavailable; ask in plain chat instead.");
       signal?.throwIfAborted();
-      const ask =
+      const askTui =
         ctx.mode === "tui"
           ? (await import("./tui.ts")).askTabbedQuestions
-          : askQuestions;
+          : undefined;
       signal?.throwIfAborted();
+      if (!askTui) ctx.signal?.throwIfAborted();
       const start: AskUserQuestionStartEvent = {
         toolCallId: id,
         mode: ctx.mode,
@@ -80,6 +87,8 @@ export default function askUserQuestionExtension(pi: ExtensionAPI): void {
       };
       let end: AskUserQuestionEndEvent = { ...start, status: "error" };
       pi.events.emit(ASK_USER_QUESTION_START, start);
+      let host: UIHost | undefined;
+      let failureStatus: UIFailureStatus | undefined;
       try {
         if (ctx.mode === "tui" && notifyConfig.enabled) {
           notify("Pi", "Waiting for your answer.");
@@ -88,20 +97,27 @@ export default function askUserQuestionExtension(pi: ExtensionAPI): void {
           panelId: "ask-user-question",
           instanceId: id,
         };
-        const result: AskUserResult = await ask(
-          ctx.ui,
-          params,
-          signal,
-          ctx.mode === "tui"
-            ? {
-                onOpen: () => pi.events.emit(DOCKED_PANEL_OPENED, panel),
-                onClosed: (status) => {
-                  const closed: DockedPanelClosedEvent = { ...panel, status };
-                  pi.events.emit(DOCKED_PANEL_CLOSED, closed);
-                },
+        let result: AskUserResult;
+        if (askTui) {
+          result = await askTui(ctx.ui, params, signal, {
+            onOpen: () => pi.events.emit(DOCKED_PANEL_OPENED, panel),
+            onClosed: (status) => {
+              if (status === "aborted" || status === "error")
+                failureStatus = status;
+              const closed: DockedPanelClosedEvent = { ...panel, status };
+              pi.events.emit(DOCKED_PANEL_CLOSED, closed);
+            },
+          });
+        } else {
+          host = bindUIHost(ctx);
+          result = await askQuestions(host, params, signal, id, {
+            onClosed(outcome) {
+              if (outcome.status === "aborted" || outcome.status === "error") {
+                failureStatus = outcome.status;
               }
-            : undefined,
-        );
+            },
+          });
+        }
         end = {
           ...start,
           status: result.cancelled ? "cancelled" : "answered",
@@ -111,10 +127,12 @@ export default function askUserQuestionExtension(pi: ExtensionAPI): void {
       } catch (error) {
         end = {
           ...start,
-          status: signal?.aborted ? "aborted" : "error",
+          status:
+            failureStatus ?? (askTui ? classifyUIFailure(signal) : "error"),
         };
         throw error;
       } finally {
+        if (host) await host.dispose();
         pi.events.emit(ASK_USER_QUESTION_END, end);
       }
     },
