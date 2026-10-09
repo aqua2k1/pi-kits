@@ -1,6 +1,6 @@
 # pi-kits
 
-为 [Pi](https://pi.dev) 提供工作区工具、交互问答、提交工作流、用量统计、Web 工具和 Gruvbox 主题。
+为 [Pi](https://pi.dev) 提供工作区工具、交互问答、提交与会话交接工作流、用量统计、Web 工具和 Gruvbox 主题。
 
 ## 安装
 
@@ -20,6 +20,7 @@ pi install https://github.com/aqua2k1/pi-kits.git
 | [provider-usage](extensions/provider-usage/README.md) | 显示服务商余额与额度 |
 | [stats](extensions/stats/README.md) | 生成 Token 和费用统计报告 |
 | [commit](extensions/commit/README.md) | 生成并确认 Conventional Commits 提交 |
+| [handoff](extensions/handoff/README.md) | 克隆会话并生成交接摘要 |
 | [notify](extensions/notify/README.md) | 任务完成桌面通知 |
 | [ask-user-question](extensions/ask-user-question/README.md) | 单选、多选和自定义回答 |
 | [subagent](extensions/subagent/README.md) | Pi/Codex 独立任务与原生终端视图；须配置 Herdr mux 并在 Herdr 内运行 |
