@@ -23,6 +23,7 @@ import {
   agentHeader,
   agentStats,
   nativeViewAvailable,
+  oneLine,
 } from "./presentation.ts";
 
 export type ViewAction = "open" | "focus" | "close" | "copy" | "delete";
@@ -31,8 +32,22 @@ export interface ViewChoice {
   action: ViewAction;
 }
 
+export interface ViewActionResult {
+  message?: string;
+  closePanel?: boolean;
+}
+
+/** A choice still needs execution; an empty result means the action already ran. */
+export interface ViewPanelResult {
+  choice?: ViewChoice;
+}
+
 export class SubagentViewsPanel {
   private selectedId?: string;
+  private selectedIndex = 0;
+  private deleteId?: string;
+  private busy = false;
+  private message?: string;
   private finished = false;
   private disposed = false;
   private readonly unsubscribe: () => void;
@@ -43,7 +58,10 @@ export class SubagentViewsPanel {
     private readonly theme: Theme,
     private readonly keys: KeybindingsManager,
     private readonly source: AgentSource,
-    private readonly done: (choice: ViewChoice | undefined) => void,
+    private readonly done: (result: ViewPanelResult | undefined) => void,
+    private readonly onAction: (
+      choice: ViewChoice,
+    ) => Promise<ViewActionResult>,
     initialId?: string,
   ) {
     this.selectedId = initialId ?? source.list()[0]?.id;
@@ -54,10 +72,12 @@ export class SubagentViewsPanel {
 
   private selected() {
     const agents = this.source.list();
-    const index = Math.max(
-      0,
-      agents.findIndex((agent) => agent.id === this.selectedId),
-    );
+    const found = agents.findIndex((agent) => agent.id === this.selectedId);
+    const index =
+      found >= 0
+        ? found
+        : Math.max(0, Math.min(this.selectedIndex, agents.length - 1));
+    this.selectedIndex = index;
     this.selectedId = agents[index]?.id;
     return { agents, index, agent: agents[index] };
   }
@@ -78,11 +98,36 @@ export class SubagentViewsPanel {
 
   invalidate(): void {}
 
+  private async act(choice: ViewChoice): Promise<void> {
+    if (this.busy) return;
+    this.busy = true;
+    this.message = "Working…";
+    this.tui.requestRender();
+    try {
+      const result = await this.onAction(choice);
+      if (this.finished) return;
+      this.message = result.message;
+      if (result.closePanel) {
+        this.finished = true;
+        this.done({});
+      }
+    } catch (error) {
+      this.message = oneLine(
+        error instanceof Error ? error.message : String(error),
+      );
+    } finally {
+      this.busy = false;
+      if (!this.finished) this.tui.requestRender();
+    }
+  }
+
   private confirm(): void {
     const { agent } = this.selected();
     if (!agent || !nativeViewAvailable(agent)) return;
     this.finished = true;
-    this.done({ agentId: agent.id, action: agent.viewId ? "focus" : "open" });
+    this.done({
+      choice: { agentId: agent.id, action: agent.viewId ? "focus" : "open" },
+    });
   }
 
   private move(delta: number): void {
@@ -92,34 +137,64 @@ export class SubagentViewsPanel {
     this.tui.requestRender();
   }
 
+  private handleDeleteConfirmation(data: string, agentId: string): void {
+    if (this.keys.matches(data, "tui.select.cancel") || data === "n") {
+      this.deleteId = undefined;
+      this.tui.requestRender();
+      return;
+    }
+    if (!this.keys.matches(data, "tui.select.confirm")) return;
+
+    this.deleteId = undefined;
+    if (this.source.list().some((agent) => agent.id === agentId)) {
+      void this.act({ agentId, action: "delete" });
+    }
+    this.tui.requestRender();
+  }
+
+  private handleAgentShortcut(data: string): void {
+    const { agent } = this.selected();
+    if (!agent) return;
+
+    switch (data) {
+      case "y":
+        void this.act({ agentId: agent.id, action: "copy" });
+        return;
+      case "c":
+        if (agent.viewId) {
+          void this.act({ agentId: agent.id, action: "close" });
+        }
+        return;
+      case "d":
+        this.deleteId = agent.id;
+        this.message = undefined;
+        this.tui.requestRender();
+        return;
+    }
+  }
+
   handleInput(data: string): void {
     if (this.finished || data.startsWith("\x1b[<")) return;
+    if (this.deleteId) {
+      this.handleDeleteConfirmation(data, this.deleteId);
+      return;
+    }
     if (this.keys.matches(data, "tui.select.cancel")) {
       this.cancel();
       return;
     }
-    if (this.keys.matches(data, "tui.select.confirm")) {
-      this.confirm();
-      return;
-    }
-    if (data === "y" || data === "d") {
-      const { agent } = this.selected();
-      if (!agent) return;
-      this.finished = true;
-      this.done({
-        agentId: agent.id,
-        action: data === "y" ? "copy" : "delete",
-      });
-      return;
-    }
-    if (this.keys.matches(data, "tui.select.up")) this.move(-1);
+    if (this.busy) return;
+
+    if (this.keys.matches(data, "tui.select.confirm")) this.confirm();
+    else if (this.keys.matches(data, "tui.select.up")) this.move(-1);
     else if (this.keys.matches(data, "tui.select.down")) this.move(1);
     else if (this.keys.matches(data, "tui.select.pageUp")) this.move(-5);
     else if (this.keys.matches(data, "tui.select.pageDown")) this.move(5);
+    else this.handleAgentShortcut(data);
   }
 
   handleMouse(event: TuiMouseEvent): TuiMouseEventResult | undefined {
-    if (this.finished) return;
+    if (this.finished || this.busy || this.deleteId) return;
     if (event.type === "wheel" && event.wheelDelta) {
       this.move(event.wheelDelta);
       return { handled: true };
@@ -151,9 +226,16 @@ export class SubagentViewsPanel {
     );
     const lines = frame.heading([], 0);
     const { agents, index, agent } = this.selected();
-    const description = agent
-      ? agentHeader(agent, this.theme)
-      : "No subagents in this session";
+    const deleting = agents.find((item) => item.id === this.deleteId);
+    const description = this.deleteId
+      ? `Delete ${oneLine(deleting?.description ?? "subagent")} (${oneLine(this.deleteId)})?`
+      : agent
+        ? agentHeader(agent, this.theme)
+        : "No subagents in this session";
+    const hint = this.deleteId
+      ? "Delete subagent? Enter confirm · Esc cancel"
+      : (this.message ??
+        "Enter open/focus · y copy ID · c close view · d delete · Esc close");
     const items = agents.map((item) => ({
       value: item.id,
       label: agentHeader(item, this.theme),
@@ -166,8 +248,13 @@ export class SubagentViewsPanel {
       return frame.finish([
         ...lines,
         ...frame.compactBody({
-          progress: agent ? agentDisplayStatus(agent) : "No agents",
-          title: [description],
+          progress:
+            this.deleteId || this.message
+              ? hint
+              : agent
+                ? agentDisplayStatus(agent)
+                : "No agents",
+          title: [this.deleteId || this.message ? hint : description],
           detail: [],
           kind: "value",
           active: () => [
@@ -182,13 +269,15 @@ export class SubagentViewsPanel {
         truncateToWidth(
           this.theme.fg(
             "muted",
-            agent.sessionState === "closed"
-              ? "Runtime released; result retained, resume unavailable"
-              : nativeViewAvailable(agent)
-                ? agent.terminalId
-                  ? `${agent.id.slice(0, 8)} · ${agentDisplayStatus(agent)} · ${agent.sessionState === "interactive" ? "User interaction" : agentStats(agent)}`
-                  : "Native view available; Enter to open"
-                : "Terminal not ready; waiting…",
+            this.deleteId
+              ? "Closes terminal and removes record. Session files are retained."
+              : agent.sessionState === "closed"
+                ? "Runtime released; result retained, resume unavailable"
+                : nativeViewAvailable(agent)
+                  ? agent.terminalId
+                    ? `${agent.id.slice(0, 8)} · ${agentDisplayStatus(agent)} · ${agent.sessionState === "interactive" ? "User interaction" : agentStats(agent)}`
+                    : "Native view available; Enter to open"
+                  : "Terminal not ready; waiting…",
           ),
           width,
         ),
@@ -221,29 +310,30 @@ export class SubagentViewsPanel {
       }));
       lines.push(...rendered);
     }
-    lines.push(
-      this.theme.fg(
-        "muted",
-        "Enter: open/focus · y: copy ID · d: delete · Esc: close",
-      ),
-    );
-    return frame.finish(
-      lines,
-      "↑↓ select · Enter open/focus · y copy ID · d delete · Esc close",
-    );
+    lines.push(this.theme.fg("muted", hint));
+    return frame.finish(lines, hint);
   }
 }
 
 export function showSubagentViews(
   ui: Pick<ExtensionUIContext, "custom">,
   source: AgentSource,
+  onAction: (choice: ViewChoice) => Promise<ViewActionResult>,
   initialId?: string,
   lifecycle?: DockedPanelLifecycle,
-): Promise<ViewChoice | undefined> {
+): Promise<ViewPanelResult | undefined> {
   return runDockedPanel(
     ui,
     (tui, theme, keys, done) =>
-      new SubagentViewsPanel(tui, theme, keys, source, done, initialId),
+      new SubagentViewsPanel(
+        tui,
+        theme,
+        keys,
+        source,
+        done,
+        onAction,
+        initialId,
+      ),
     { lifecycle, isCancelled: (result) => result === undefined },
   );
 }

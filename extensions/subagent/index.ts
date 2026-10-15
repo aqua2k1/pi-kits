@@ -435,17 +435,40 @@ export function registerSubagents(
         if (!action) {
           const instanceId = randomUUID();
           const payload = { panelId: "subagent:views", instanceId };
-          const choice = await showSubagentViews(ctx.ui, current, id, {
-            onOpen: () => pi.events.emit(DOCKED_PANEL_OPENED, payload),
-            onClosed: (closeStatus) =>
-              pi.events.emit(DOCKED_PANEL_CLOSED, {
-                ...payload,
-                status: closeStatus,
-              }),
-          });
-          if (!choice) return;
-          id = choice.agentId;
-          action = choice.action;
+          const result = await showSubagentViews(
+            ctx.ui,
+            current,
+            async ({ agentId, action }) => {
+              switch (action) {
+                case "copy":
+                  await copyToClipboard(current.get(agentId).id);
+                  return { closePanel: true };
+
+                case "delete":
+                  await current.remove(agentId);
+                  return {};
+
+                case "close":
+                  await current.closeView(agentId);
+                  return {};
+
+                default:
+                  throw new Error(`Unsupported panel action: ${action}`);
+              }
+            },
+            id,
+            {
+              onOpen: () => pi.events.emit(DOCKED_PANEL_OPENED, payload),
+              onClosed: (closeStatus) =>
+                pi.events.emit(DOCKED_PANEL_CLOSED, {
+                  ...payload,
+                  status: closeStatus,
+                }),
+            },
+          );
+          if (!result?.choice) return;
+          id = result.choice.agentId;
+          action = result.choice.action;
         }
         if (!id) return;
         if (action === "copy") {

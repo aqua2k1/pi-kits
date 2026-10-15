@@ -317,7 +317,11 @@ Manager 已满足此接口。展示层应读取快照、订阅刷新并在销毁
 它不注册命令、生命周期或 mux 操作。
 
 [SubagentViewsPanel](../ui/views.ts) 同样读取 `AgentSource`，返回
-`ViewChoice { agentId, action }`（或取消）。入口执行 open/focus/close/copy/delete，
+`ViewPanelResult`：`choice` 是交给入口执行的 open/focus，空对象表示动作已执行，
+`undefined` 表示取消。copy/close/delete 通过独立的异步 `onAction` 回调执行，
+回调返回 `{ message?, closePanel? }`，面板只处理反馈和关闭请求，不判断动作名称。
+复制成功后关闭，关闭视图及删除后保留面板；面板内确认删除、阻止重复提交，并展示失败供重试。
+删除后按原位置选择相邻项，空列表也保持打开。入口负责实际资源操作，
 面板本身不拥有执行资源；关闭面板不等于关闭子 agent 视图。
 
 ## 8. 新增实现：接入与验证清单

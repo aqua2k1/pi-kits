@@ -23,7 +23,9 @@ import { SubagentStatusWidget } from "./status-widget.ts";
 import {
   SubagentViewsPanel,
   showSubagentViews,
+  type ViewActionResult,
   type ViewChoice,
+  type ViewPanelResult,
 } from "./views.ts";
 
 const theme = {
@@ -86,8 +88,15 @@ function headlessAgent(): AgentSnapshot {
   };
 }
 
-function panel(source: Source, initialId?: string, rows = 24) {
-  let result: ViewChoice | undefined;
+function panel(
+  source: Source,
+  initialId?: string,
+  rows = 24,
+  onAction: (
+    choice: ViewChoice,
+  ) => Promise<ViewActionResult> = async () => ({}),
+) {
+  let result: ViewPanelResult | undefined;
   let completions = 0;
   let renders = 0;
   const tui = {
@@ -105,11 +114,15 @@ function panel(source: Source, initialId?: string, rows = 24) {
       result = choice;
       completions += 1;
     },
+    onAction,
     initialId,
   );
   return {
     component,
     get result() {
+      return result?.choice;
+    },
+    get panelResult() {
       return result;
     },
     get completions() {
@@ -136,7 +149,7 @@ test("views uses a single agent list and Enter immediately opens the selected vi
   assert.equal(source.listeners.size, 0);
 });
 
-test("copy/delete return the full selected ID even before a terminal exists", () => {
+test("copy/delete keep the panel open and preserve full IDs without terminals", async () => {
   for (const [key, action] of [
     ["y", "copy"],
     ["d", "delete"],
@@ -144,18 +157,226 @@ test("copy/delete return the full selected ID even before a terminal exists", ()
     const source = new Source();
     const id = "12345678-full-subagent-id";
     source.agents = [{ ...agent(id, "queued"), terminalId: undefined }];
-    const h = panel(source);
+    const actions: ViewChoice[] = [];
+    const h = panel(source, undefined, 24, async (choice) => {
+      actions.push(choice);
+      return {};
+    });
     h.component.handleInput(key);
+    if (key === "d") {
+      assert.equal(actions.length, 0);
+      assert.match(h.component.render(120).join("\n"), /Enter confirm/);
+      h.component.handleInput("\r");
+    }
     h.component.handleInput(key);
-    assert.deepEqual(h.result, { agentId: id, action });
+    assert.deepEqual(actions, [{ agentId: id, action }]);
+    assert.equal(h.completions, 0);
+    await Promise.resolve();
+    h.component.handleInput("\x1b");
     assert.equal(h.completions, 1);
     h.component.dispose();
     assert.equal(source.listeners.size, 0);
   }
-  const h = panel(new Source());
+});
+
+test("callbacks can close the panel without returning an action for execution", async () => {
+  for (const key of ["y", "c"]) {
+    const source = new Source();
+    source.agents = [{ ...agent("one"), viewId: "view-one" }];
+    let calls = 0;
+    const h = panel(source, undefined, 24, async () => {
+      calls += 1;
+      return { closePanel: true };
+    });
+    h.component.handleInput(key);
+    assert.equal(h.completions, 0);
+    await Promise.resolve();
+    assert.equal(h.completions, 1);
+    assert.deepEqual(h.panelResult, {});
+    h.component.handleInput(key);
+    h.component.handleInput("\x1b");
+    assert.equal(calls, 1);
+    assert.equal(h.completions, 1);
+    h.component.dispose();
+  }
+});
+
+test("failed copy stays open and closes only after a successful retry", async () => {
+  const source = new Source();
+  source.agents = [agent("one")];
+  let calls = 0;
+  const h = panel(source, undefined, 24, async () => {
+    calls += 1;
+    if (calls === 1) throw new Error("Clipboard unavailable");
+    return { closePanel: true };
+  });
   h.component.handleInput("y");
-  h.component.handleInput("d");
+  await Promise.resolve();
   assert.equal(h.completions, 0);
+  assert.match(h.component.render(100).join("\n"), /Clipboard unavailable/);
+  h.component.handleInput("y");
+  await Promise.resolve();
+  assert.equal(calls, 2);
+  assert.equal(h.completions, 1);
+  assert.deepEqual(h.panelResult, {});
+  h.component.dispose();
+});
+
+test("late callback completion does not finish a cancelled panel twice", async () => {
+  const source = new Source();
+  source.agents = [agent("one")];
+  let resolve!: (result: ViewActionResult) => void;
+  const h = panel(
+    source,
+    undefined,
+    24,
+    () =>
+      new Promise((done) => {
+        resolve = done;
+      }),
+  );
+  h.component.handleInput("y");
+  h.component.handleInput("\x1b");
+  resolve({ closePanel: true });
+  await Promise.resolve();
+  assert.equal(h.completions, 1);
+  assert.equal(h.panelResult, undefined);
+  h.component.dispose();
+});
+
+test("inline feedback comes from the callback, not the action name", async () => {
+  const source = new Source();
+  source.agents = [{ ...agent("one"), viewId: "view-one" }];
+  let feedback: string | undefined = "Custom operation feedback";
+  const h = panel(source, undefined, 24, async () => ({ message: feedback }));
+  for (const key of ["c", "y"]) {
+    h.component.handleInput(key);
+    await Promise.resolve();
+    assert.match(
+      h.component.render(100).join("\n"),
+      /Custom operation feedback/,
+    );
+    assert.equal(h.completions, 0);
+  }
+  feedback = undefined;
+  h.component.handleInput("y");
+  await Promise.resolve();
+  const rendered = h.component.render(100).join("\n");
+  assert.doesNotMatch(
+    rendered,
+    /Custom operation feedback|Copied subagent ID|Working/,
+  );
+  h.component.dispose();
+});
+
+test("consecutive deletion selects the next neighbor and keeps an empty panel", async () => {
+  const source = new Source();
+  source.agents = [agent("one"), agent("two"), agent("three")];
+  const actions: ViewChoice[] = [];
+  const h = panel(source, "two", 24, async (choice) => {
+    actions.push(choice);
+    source.update(source.agents.filter((item) => item.id !== choice.agentId));
+    return {};
+  });
+  for (const id of ["two", "three", "one"]) {
+    h.component.handleInput("d");
+    h.component.handleInput("\r");
+    await Promise.resolve();
+    h.component.render(100);
+    assert.equal(actions.at(-1)?.agentId, id);
+    assert.equal(h.completions, 0);
+  }
+  assert.match(h.component.render(100).join("\n"), /No subagents/);
+  h.component.handleInput("d");
+  h.component.handleInput("y");
+  assert.equal(actions.length, 3);
+  h.component.dispose();
+});
+
+test("delete confirmation cancels locally and blocks mouse actions", () => {
+  const source = new Source();
+  source.agents = [agent("one")];
+  const h = panel(source);
+  const lines = h.component.render(100);
+  const y = lines.findLastIndex((line) => line.includes("任务 one"));
+  h.component.handleInput("d");
+  h.component.handleInput("d");
+  h.component.handleMouse({
+    type: "click",
+    button: "left",
+    x: 4,
+    y,
+  } as TuiMouseEvent);
+  h.component.handleInput("\x1b");
+  assert.equal(h.completions, 0);
+  assert.doesNotMatch(h.component.render(100).join("\n"), /Enter confirm/);
+  h.component.handleInput("\x1b");
+  assert.equal(h.completions, 1);
+  h.component.dispose();
+});
+
+test("delete confirmation ignores navigation and cancels without dispatching an action", () => {
+  const source = new Source();
+  source.agents = [agent("one"), agent("two")];
+  const actions: ViewChoice[] = [];
+  const h = panel(source, undefined, 24, async (choice) => {
+    actions.push(choice);
+    return {};
+  });
+  h.component.handleInput("d");
+  h.component.handleInput("\x1b[B");
+  h.component.handleInput("y");
+  h.component.handleInput("n");
+  assert.equal(actions.length, 0);
+  assert.equal(h.completions, 0);
+  h.component.handleInput("\r");
+  assert.deepEqual(h.result, { agentId: "one", action: "open" });
+  h.component.dispose();
+});
+
+test("confirming deletion of an agent removed by a live update does nothing", () => {
+  const source = new Source();
+  source.agents = [agent("one"), agent("two")];
+  const actions: ViewChoice[] = [];
+  const h = panel(source, undefined, 24, async (choice) => {
+    actions.push(choice);
+    return {};
+  });
+  h.component.handleInput("d");
+  source.update([agent("two")]);
+  h.component.handleInput("\r");
+  assert.equal(actions.length, 0);
+  assert.equal(h.completions, 0);
+  h.component.handleInput("\r");
+  assert.deepEqual(h.result, { agentId: "two", action: "open" });
+  h.component.dispose();
+});
+
+test("close view stays open, blocks duplicate actions and permits retry on failure", async () => {
+  const source = new Source();
+  source.agents = [{ ...agent("one"), viewId: "view-one" }];
+  let reject!: (error: Error) => void;
+  const actions: ViewChoice[] = [];
+  const h = panel(source, undefined, 24, (choice) => {
+    actions.push(choice);
+    return new Promise<ViewActionResult>((_resolve, fail) => {
+      reject = fail;
+    });
+  });
+  h.component.handleInput("c");
+  h.component.handleInput("c");
+  h.component.handleInput("\r");
+  assert.deepEqual(actions, [{ agentId: "one", action: "close" }]);
+  assert.equal(h.completions, 0);
+  reject(new Error("Close failed"));
+  await Promise.resolve();
+  assert.match(h.component.render(100).join("\n"), /Close failed/);
+  h.component.handleInput("c");
+  assert.equal(actions.length, 2);
+  h.component.handleInput("\x1b");
+  reject(new Error("Late failure"));
+  await Promise.resolve();
+  assert.equal(h.completions, 1);
   h.component.dispose();
 });
 
@@ -466,30 +687,46 @@ test("queued clicks stay in the agent list until the terminal is ready", () => {
   h.component.dispose();
 });
 
-test("showSubagentViews uses shared session cleanup and cancellation lifecycle", async () => {
-  const source = new Source();
-  source.agents = [agent()];
-  const events: string[] = [];
-  const ui = {
-    custom<T>(factory: Parameters<ExtensionUIContext["custom"]>[0]) {
-      return new Promise<T>((resolve) => {
-        const component = factory(
-          { terminal: { rows: 24 }, requestRender() {} } as unknown as TUI,
-          theme,
-          getKeybindings() as Parameters<typeof factory>[2],
-          resolve as (value: unknown) => void,
-        ) as Component;
-        queueMicrotask(() => component.handleInput?.("\x1b"));
-      });
-    },
-  } as Pick<ExtensionUIContext, "custom">;
-  const result = await showSubagentViews(ui, source, undefined, {
-    onOpen: () => events.push("opened"),
-    onClosed: (status) => events.push(status),
-  });
-  assert.equal(result, undefined);
-  assert.deepEqual(events, ["opened", "cancelled"]);
-  assert.equal(source.listeners.size, 0);
+test("showSubagentViews distinguishes cancellation from an executed action and cleans up both", async () => {
+  for (const [input, status] of [
+    ["\x1b", "cancelled"],
+    ["y", "completed"],
+  ]) {
+    const source = new Source();
+    source.agents = [agent()];
+    const events: string[] = [];
+    let calls = 0;
+    const ui = {
+      custom<T>(factory: Parameters<ExtensionUIContext["custom"]>[0]) {
+        return new Promise<T>((resolve) => {
+          const component = factory(
+            { terminal: { rows: 24 }, requestRender() {} } as unknown as TUI,
+            theme,
+            getKeybindings() as Parameters<typeof factory>[2],
+            resolve as (value: unknown) => void,
+          ) as Component;
+          queueMicrotask(() => component.handleInput?.(input));
+        });
+      },
+    } as Pick<ExtensionUIContext, "custom">;
+    const result = await showSubagentViews(
+      ui,
+      source,
+      async () => {
+        calls += 1;
+        return { closePanel: true };
+      },
+      undefined,
+      {
+        onOpen: () => events.push("opened"),
+        onClosed: (status) => events.push(status),
+      },
+    );
+    assert.deepEqual(result, status === "completed" ? {} : undefined);
+    assert.equal(calls, status === "completed" ? 1 : 0);
+    assert.deepEqual(events, ["opened", status]);
+    assert.equal(source.listeners.size, 0);
+  }
 });
 
 test("status widget stays above editor while working and expires completed rows", () => {
