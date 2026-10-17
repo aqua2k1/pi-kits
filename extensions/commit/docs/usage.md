@@ -1,19 +1,36 @@
-# Commit 使用说明
+# 使用
 
-## Commit workflow
+## /commit
 
-`/commit` lists and confirms staged files, chooses a model (a fuzzy picker in
-TUI, plain selection in RPC), and generates a Conventional Commits message using
-a tool-less `pi -p` child process. Review the generated message, regenerate it,
-cancel, or submit it with `git commit -m`.
+```text
+/commit
+```
 
-`pi --commit` dispatches `/commit` only during startup. Pi shuts down only after
-a successful startup-triggered commit; cancellations and failures do not exit.
-Non-interactive modes do not execute the commit flow.
+命令在当前工作目录的 Git 仓库中执行，要求交互界面、已有暂存变更，以及 PATH 中的 `git` 和 `pi`。
 
-Model memory is stored in `commit.lastModel` inside
-`<agent-dir>/pi-kits.json`, honoring `PI_CODING_AGENT_DIR` (including `~`
-expansion). Updates preserve other configuration fields. Legacy
-`extensions/commit/last_model.json` is ignored and never migrated or modified.
+1. 确认暂存文件列表；重命名以「旧路径 → 新路径」展示。
+2. 选择生成模型。候选来自模型注册表，首项依次取配置模型、已记忆模型、当前会话模型；配置与记忆的字段见[配置](configuration.md)。
+3. 等待生成。生成提示词要求 Conventional Commits 格式，规则位于 [core.ts](../core.ts) 的 `COMMIT_SYSTEM_PROMPT`。
+4. 审阅消息并选择操作：
 
-`commit.model` 优先于已记忆模型和当前模型；`thinking` 控制生成思考级别，`timeoutMs` 默认 120000。`rememberModel: false` 禁止读写 `lastModel`。完成通知遵循 `notify.enabled`。
+| 操作 | 结果 |
+|---|---|
+| 提交 | 使用完整消息执行 `git commit -m` |
+| 重新生成 | 保留所选模型，重新读取暂存区 diff 并生成 |
+| 取消 | 结束流程，保留暂存变更 |
+
+TUI 模型选择器支持输入模糊过滤、↑↓ 选择、回车确认和 Esc 取消；RPC 使用普通选择框。
+
+TUI 审阅只展示消息前 15 行，提交使用完整消息；RPC 在选择框标题中展示完整消息。
+
+文件确认或模型选择取消时流程结束；暂存区为空时显示提示；生成失败或超时时显示错误并结束。
+
+生成完成通知由 `notify.enabled` 控制；共享通知能力见[共享库](../../../shared/README.md)。
+
+## pi --commit
+
+```sh
+pi --commit
+```
+
+启动标志在 `session_start` 原因为 `startup` 时派发一次 [`/commit`](#commit)。这次流程提交成功后调用 Pi 关闭接口；取消或失败时保留会话。
