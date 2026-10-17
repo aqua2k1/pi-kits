@@ -1,6 +1,6 @@
 # stats
 
-`/stats` 聚合本地会话的 Token（输入、输出、缓存读取与缓存写入之和）和费用，展示终端面板及浏览器报告（[实现](core.ts)、[入口](index.ts)）。
+`/stats` 聚合本地会话的 Token（输入、输出、缓存读取与缓存写入之和）和费用，展示终端面板及浏览器报告。
 
 ## 安装
 
@@ -18,7 +18,7 @@ pi install https://github.com/aqua2k1/pi-kits.git
 /stats
 ```
 
-终端用户界面（TUI）展示统计面板；按 Enter 打开浏览器报告（[入口](index.ts)、[面板](tui.ts)）。
+终端交互界面（TUI）展示统计面板；按 Enter 打开浏览器报告。
 
 ## 文档
 

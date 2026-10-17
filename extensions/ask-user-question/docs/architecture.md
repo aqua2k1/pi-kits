@@ -1,37 +1,70 @@
 # 架构
 
-[index.ts](../index.ts) 注册工具并按界面模式分派：[core.ts](../core.ts) 处理契约与原生对话框，[tui.ts](../tui.ts) 将终端问卷接入[共享 UI](../../../shared/docs/ui.md)。界面术语与操作见[使用](usage.md)，配置读取见[共享配置](../../../shared/config/README.md)。
+入口注册顺序执行的问卷工具，按界面模式选择终端面板或原生对话框。两条路径共用回答契约和结果构造；共享面板负责宿主恢复与清理，详见[共享 UI](../../../shared/docs/ui.md)。
+
+## 模块关系
+
+```mermaid
+flowchart LR
+  entry["index.ts<br/>注册与分派"] --> core["core.ts<br/>契约与原生对话框"]
+  entry --> events["events.ts<br/>问卷事件契约"]
+  entry --> tui["tui.ts<br/>终端适配"]
+  tui --> component["ui/component.ts<br/>渲染与输入焦点"]
+  component --> keys["ui/keys.ts<br/>按键映射"]
+  component --> state["ui/state.ts<br/>草稿与确认"]
+  state --> core
+```
 
 ## 文件地图
 
 | 文件 | 职责 |
 |---|---|
-| [index.ts](../index.ts) | 配置开关、工具注册、界面分派、通知与事件转发 |
-| [core.ts](../core.ts) | 输入和输出契约、回答构造、原生对话框流程、工具响应 |
-| [events.ts](../events.ts) | 问卷生命周期事件常量与载荷契约 |
-| [tui.ts](../tui.ts) | 将问卷组件适配到共享停靠会话 |
-| [ui/state.ts](../ui/state.ts) | 草稿、勾选、确认、审阅与取消的状态转换 |
-| [ui/keys.ts](../ui/keys.ts) | 将键盘输入映射为问卷动作 |
-| [ui/component.ts](../ui/component.ts) | 渲染问题与审阅页、管理输入焦点及鼠标命中 |
-| [package.json](../package.json) | 扩展入口、资源名、依赖和测试脚本 |
+| `index.ts` | 配置开关、工具注册、活动工具协调、界面分派、通知与事件转发 |
+| `core.ts` | 输入与输出契约、回答构造、原生对话框、工具响应 |
+| `events.ts` | 问卷开始与结束事件的名称和载荷 |
+| `tui.ts` | 将问卷组件接入共享停靠会话 |
+| `ui/component.ts` | 渲染问题与审阅页、输入焦点及鼠标命中 |
+| `ui/keys.ts` | 将键盘输入映射为问卷动作 |
+| `ui/state.ts` | 草稿、勾选、确认、审阅与取消的状态转换 |
 
 ## 数据流
 
-1. 入口读取配置，启用时注册工具与每轮代理开始前的活动工具协调处理器。
-2. 执行先检查界面和中止信号，再选用终端适配器或原生对话框流程。
-3. 入口发送问卷开始事件；终端路径按通知开关发送等待回答通知。
-4. 终端组件将键鼠输入转为状态动作；原生对话框按题收集回答，两条路径共用回答构造。
-5. 提交或取消返回问卷结果，入口构造工具响应并在结束事件中携带结果；中止和错误通过异常传播。
+```mermaid
+sequenceDiagram
+  participant Model as 模型
+  participant Entry as index.ts
+  participant Panel as 终端问卷面板
+  participant State as ui/state.ts
+  participant Core as core.ts
+  Model->>Entry: ask_user_question 参数
+  Entry->>Panel: 开始事件后打开问卷
+  Panel->>State: 键鼠动作与草稿
+  State->>Core: 构造多选答案
+  Core-->>State: 排序后的多选结果
+  State-->>Panel: 已确认答案与提交结果
+  Panel-->>Entry: 完成并清理面板
+  Entry->>Core: 构造工具响应
+  Core-->>Entry: 文本与结构化结果
+  Entry-->>Model: 结束事件后返回结果
+```
+
+RPC 改由 `core.ts` 逐题收集并在最后一题后返回；取消保留已确认答案，中止和交互错误抛出异常。无界面或交互前已中止的调用在开始事件前结束。
 
 ## 约束
 
-- 输入、输出契约和回答构造集中于 `core.ts`，终端与原生对话框共用多选构造，保证索引排序和重复标签语义一致（[核心测试](../core.test.ts)）。
-- `ui/state.ts` 只把显式确认写入答案，最后一题前进到审阅页而非自动提交，防止草稿或局部回答被当作完整提交（[状态测试](../tui.test.ts)）。
-- `ui/keys.ts` 负责动作映射，组件将自定义行的 Space 交给输入组件，保证空格输入不会变成勾选操作（[交互测试](../tui.test.ts)）。
-- `tui.ts` 将宿主完成与中止清理交给共享会话，组件保留业务状态，保证结束后恢复编辑器草稿和焦点（[宿主测试](../tui-wheel.test.ts)）；共享机制见[共享 UI](../../../shared/docs/ui.md)。
-- `index.ts` 保持工具顺序执行并在每轮开始前协调活动工具列表，避免无界面时向模型暴露交互工具（[入口测试](../index.test.ts)）。
-- 问卷事件与面板事件分开，面板回调由入口转发，保留 RPC 与终端的事件差异，避免订阅方将问卷执行等同于面板已打开（[入口测试](../index.test.ts)）。
-- `buildResponse` 为两条路径共用，取消文本与结构化结果分别处理，保证取消保留的答案不会变成成功提交文本（[核心测试](../core.test.ts)）。
+- 输入与输出契约、`buildMultiAnswer` 集中于 `core.ts`，两条路径共用索引排序和去重规则，以保留重复标签的独立身份。
+- `ui/state.ts` 仅将显式确认写入答案，最后一题进入审阅而非提交，防止草稿或局部回答被当作完整提交。
+- 自定义行的 Space 由组件交给输入框，避免 `ui/keys.ts` 的多选动作吞掉文字空格。
+- `tui.ts` 将宿主完成与中止清理交给共享会话，组件只保留业务状态，以保证结束后恢复编辑器草稿与焦点。
+- `index.ts` 保持工具顺序执行，并在每轮开始前协调活动工具列表，避免无界面时向模型暴露交互工具。
+- 问卷事件与面板事件分离，入口只转发真实面板回调，避免订阅方将问卷开始误判为面板已打开。
+- `buildResponse` 将取消文本与结构化答案分开处理，防止取消时保留的答案被表述为成功提交。
+
+## 事件契约
+
+`pi.events` 发送 `workflow:ask-user-question:start` 和 `workflow:ask-user-question:end`。前者携带 `toolCallId`、`mode`、`questionCount`；后者追加 `status`：`answered`、`cancelled`、`aborted` 或 `error`，前两种携带 `result`。
+
+终端路径转发共享面板事件，`panelId` 为 `ask-user-question`，`instanceId` 为工具调用 ID；正常顺序为问卷开始、面板打开、面板关闭、问卷结束。共享事件名称与载荷见[面板事件契约](../../../shared/ui/docked-panel/events.ts)。
 
 ## 测试
 
@@ -43,7 +76,7 @@ npm test --workspace=pi-ask-user-question
 
 | 测试 | 覆盖 |
 |---|---|
-| [core.test.ts](../core.test.ts) | 契约、结果、原生对话框、取消、多选、中止 |
-| [index.test.ts](../index.test.ts) | 注册、配置、活动工具、通知、生命周期事件 |
-| [tui.test.ts](../tui.test.ts) | 状态、按键、鼠标、审阅、焦点与尺寸变化 |
-| [tui-wheel.test.ts](../tui-wheel.test.ts) | 宿主停靠、滚轮路由、编辑器恢复与关闭回调 |
+| `core.test.ts` | 契约、结果、原生对话框、取消、多选、中止 |
+| `index.test.ts` | 注册、配置、活动工具、通知、生命周期事件 |
+| `tui.test.ts` | 状态、按键、鼠标、审阅、焦点与尺寸变化 |
+| `tui-wheel.test.ts` | 宿主停靠、滚轮路由、编辑器恢复与关闭回调 |

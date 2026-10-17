@@ -1,6 +1,6 @@
 # subagent
 
-`subagent` 将任务交给独立的 Pi 或 Codex 执行会话，并通过 Herdr 管理原生终端视图（[入口](index.ts)、[执行适配](runtime/index.ts)）。
+`subagent` 把任务交给独立的 Pi 或 Codex 会话，返回结果，并通过 Herdr 打开可交互的原生终端视图。
 
 ## 安装
 
@@ -10,11 +10,11 @@
 pi install ./extensions/subagent
 ```
 
-扩展入口由[包清单](package.json)声明；运行环境使用 Herdr，Pi 任务调用 `pi`，Codex 任务调用 `codex`（[环境检查](mux/herdr.ts)、[Pi](runtime/pi/index.ts)、[Codex](runtime/codex/index.ts)）。
+运行需要 Herdr；Pi 任务使用 PATH 中的 `pi`，Codex 任务使用 `codex`。Codex 的进程清理使用 POSIX 进程组。
 
 ## 快速开始
 
-在 `<agent-dir>/pi-kits.json` 中设置以下内容，然后在 Herdr 内启动 Pi；配置位置见[共享配置](../../shared/config/README.md)，启用条件见[入口](index.ts)。
+在 `<agent-dir>/pi-kits.json` 中启用 Herdr：
 
 ```json
 {
@@ -22,16 +22,24 @@ pi install ./extensions/subagent
 }
 ```
 
-让父 Agent 调用 `subagent` 工具：
+在 Herdr 终端内启动 Pi，让父 Agent 调用 `subagent` 工具：
 
 ```json
 {
-  "description": "检查项目",
-  "prompt": "检查当前项目，报告关键文件及测试入口。"
+  "description": "<任务标题>",
+  "prompt": "<任务指令>"
 }
 ```
 
-工具默认立即返回任务 ID；后台任务完成后向父会话发送消息（[工具实现](index.ts)、[完成通知测试](manager.test.ts)）。
+工具默认创建 Pi 任务并立即返回完整任务 ID；未被等待调用接收的完成结果向父会话发送后续消息。把 `keep_alive` 设为 `true` 可保留会话供续跑。
+
+在 Pi 交互界面输入以下命令查看任务并打开原生终端：
+
+```text
+/subagent:views
+```
+
+扩展在 `subagent.enabled` 为 `true`、`subagent.mux` 为 `herdr` 且 Herdr 环境标记为 `1` 时注册；修改配置后重新加载扩展。
 
 ## 文档
 

@@ -8,8 +8,6 @@
 pi install https://github.com/aqua2k1/pi-kits.git
 ```
 
-仓库包通过 [Pi 清单](../../package.json)加载本扩展。
-
 ## 快速开始
 
 在已有暂存变更的 Git 仓库中，于 Pi 交互界面输入：
@@ -18,7 +16,7 @@ pi install https://github.com/aqua2k1/pi-kits.git
 /commit
 ```
 
-流程展示文件列表和模型选择，生成消息后进入审阅；选择「提交」创建提交。完整操作见[使用](docs/usage.md)。
+确认暂存文件，选择生成模型；审阅生成消息后选择「提交」创建提交。PATH 中需有 `git` 和 `pi`。
 
 ## 文档
 

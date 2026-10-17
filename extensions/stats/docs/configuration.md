@@ -1,6 +1,6 @@
 # 配置
 
-配置位置：`<agent-dir>/pi-kits.json`，配置键 `stats`；目录解析、重载和兼容规则见[共享配置](../../../shared/config/README.md)。
+配置位置：`<agent-dir>/pi-kits.json`，配置键 `stats`。默认 agent 目录为 `~/.pi/agent`，可由 `PI_CODING_AGENT_DIR` 指定；修改后执行 `/reload`。
 
 | 键 | 类型 | 默认值 | 说明 |
 |---|---|---|---|
@@ -16,4 +16,4 @@
 }
 ```
 
-类型、默认值和校验规则见 [schema.ts](../../../shared/config/schema.ts)，字段行为见 [index.ts](../index.ts)。
+字段校验规则见 [shared/config/schema.ts](../../../shared/config/schema.ts)。

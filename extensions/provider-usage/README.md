@@ -1,6 +1,6 @@
 # provider-usage
 
-`/usage` 刷新当前主会话模型对应的 DeepSeek 账户余额或 ChatGPT 套餐用量，在编辑器下方展示（[实现](index.ts)）。
+`/usage` 刷新当前主会话模型对应的 DeepSeek 账户余额或 ChatGPT 套餐用量，在编辑器下方展示。
 
 ## 安装
 
@@ -18,7 +18,7 @@ pi install https://github.com/aqua2k1/pi-kits.git
 /usage
 ```
 
-组件刷新并通知当前显示结果；认证读取自 Pi 模型注册表（[入口](index.ts)）。
+组件刷新并通知当前显示结果；认证读取自 Pi 模型注册表。
 
 ## 文档
 

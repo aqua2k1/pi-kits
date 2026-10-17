@@ -1,17 +1,19 @@
 # 抓取后读取的对照实验方法
 
-日期：2026-10-07（原记录的 Git 提交日期）
-结论：实验分别检查完整审查的 `read` 行覆盖与定点查询的检索行为，判定逻辑保存在[模型读取测试](../../fetch/model-read.test.ts)。
+日期：2026-10-07
+结论：实验设计以实际 `read` 行覆盖检查完整审查，以检索调用和局部读取检查定点查询。
 
 ## 过程与数据
 
-测试夹具（测试用的固定输入）通过本地 HTTP 返回 4501 行记录，在第 11、2301、4401 行放入异常代码，在第 2303 行放入保留天数与适用范围；构造见[测试源码](../../fetch/model-read.test.ts)。
+实验夹具与判定逻辑见[模型读取测试](../../fetch/model-read.test.ts)。
 
-完整审查任务要求回答所有异常代码，测试按实际 `read` 返回范围累计覆盖行；定点任务检查保留天数 37、归档发票范围、检索调用及小于全文的读取覆盖。
+本地 HTTP 返回 4501 行记录，第 11、2301、4401 行含异常代码，第 2303 行含保留天数 37 与归档发票范围。
 
-两个任务各启动新 Pi 进程，暴露 `web_fetch`、`read` 和 `grep` 工具；测试通过独立子测试断言两个任务，并记录调用、读取范围和最终答案。
+完整审查任务要求回答全部异常代码，断言累计 `read` 覆盖全部行；定点任务断言答案包含保留天数与范围、调用过 `grep`，且读取覆盖少于全文。
 
-对照版本通过 `PI_KITS_TEST_EXTENSION` 选择，异常代码通过 `PI_KITS_TEST_TOKENS` 固定；变量读取与报告生成均位于[测试源码](../../fetch/model-read.test.ts)。
+每个任务启动独立 Pi 进程，暴露 `web_fetch`、`read` 和 `grep`，测试过程观察工具调用，不追加提示或读取偏移。
+
+从仓库根目录运行：
 
 ```sh
 PI_KITS_MODEL_READ=1 \
@@ -23,4 +25,14 @@ PI_KITS_TEST_EXTENSION="/<checkout>/extensions/web-kits/index.ts" \
 node --import tsx --test extensions/web-kits/fetch/model-read.test.ts
 ```
 
-测试把 JSONL（逐行 JSON）事件、标准错误和任务报告写入系统临时目录下的 `pi-kits-model-read-` 前缀目录，报告包含请求的推理级别及模型实际返回的标识。
+| 环境变量 | 实验用途 |
+|---|---|
+| `PI_KITS_MODEL_READ` | `1` 启用真实模型实验 |
+| `PI_KITS_TEST_PI` | Pi 可执行文件，默认 `pi` |
+| `PI_KITS_TEST_MODEL`、`PI_KITS_TEST_PROVIDER` | 模型与服务；未设置时分别取 `PI_MODEL`、`PI_PROVIDER`，服务参数仅在指定模型时传递 |
+| `PI_KITS_TEST_THINKING` | 推理级别，默认 `low` |
+| `PI_KITS_TEST_TOKENS` | 三个逗号分隔的异常代码，默认随机生成 |
+| `PI_KITS_TEST_EXTENSION` | 对照版本的扩展入口，默认当前扩展 |
+| `PI_KITS_TEST_SCENARIO` | `full` 或 `targeted`，省略时运行两个任务 |
+
+JSONL 事件、标准错误和任务报告写入系统临时目录的 `pi-kits-model-read-` 前缀目录。报告记录实际模型标识、请求的推理级别、工具调用、读取范围、覆盖行数和最终答案。

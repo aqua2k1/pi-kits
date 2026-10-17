@@ -1,6 +1,6 @@
 # ask-user-question
 
-模型工具 `ask_user_question` 收集单选、多选和自定义回答，返回结构化问卷结果。
+`ask_user_question` 让模型向用户收集单选、多选和自定义回答，返回结构化问卷结果。
 
 ## 安装
 
@@ -12,7 +12,7 @@ pi install https://github.com/aqua2k1/pi-kits.git
 
 ## 快速开始
 
-在 Pi 交互界面向模型发送：
+在 Pi 终端交互界面向模型发送：
 
 ```text
 请使用 ask_user_question 询问我选择哪个方案，提供“<方案甲>”和“<方案乙>”。

@@ -1,35 +1,61 @@
 # 架构
 
-[index.ts](../index.ts) 编排交互提交流程，[ui.ts](../ui.ts) 提供对话框，[core.ts](../core.ts) 负责 Git、生成子进程和模型记忆。配置服务由 [@pi-kits/config](../../../shared/config/README.md) 提供，通知调用[共享库](../../../shared/README.md)。
+入口协调暂存区确认、模型选择、生成和提交；核心逻辑执行 Git 与生成子进程，界面负责交互。共享配置负责校验和原子更新，通知由共享库发送，细节见[共享配置](../../../shared/config/README.md)与[共享库](../../../shared/README.md)。
+
+## 模块关系
+
+```mermaid
+flowchart LR
+  index["index.ts<br/>入口与编排"] --> core["core.ts<br/>Git、生成和模型记忆"]
+  index --> ui["ui.ts<br/>模型选择与消息审阅"]
+  ui --> core
+```
 
 ## 文件地图
 
 | 文件 | 职责 |
 |---|---|
-| `index.ts` | 注册命令、标志与事件，协调生成、审阅和提交 |
-| `core.ts` | 暂存区读取、任务构造、子进程参数与执行、输出清理、模型记忆 |
+| `index.ts` | 注册命令、启动标志与事件，协调生成、审阅和提交 |
+| `core.ts` | 读取暂存区、构造生成任务与参数、执行子进程、清理输出、记忆模型 |
 | `ui.ts` | TUI 模糊搜索、消息预览和操作选择；RPC 选择框 |
-| `package.json` | 扩展入口、资源名、依赖与测试脚本 |
-| `core.test.ts` | 核心逻辑及 Git、子进程、配置读写测试 |
-| `index.test.ts` | 注册、启动派发及命令流程测试 |
 
 ## 数据流
 
-1. 扩展工厂读取配置，启用时注册入口；启动触发行为见[使用](usage.md#pi---commit)。
-2. 命令读取暂存文件列表并请求确认。
-3. UI 返回所选模型，按[配置](configuration.md)处理模型记忆。
-4. 核心逻辑将文件列表和最新暂存区 diff 经 stdin 传入 `pi -p`；生成规则通过系统提示词传入。
-5. 流程清理输出的包裹代码围栏并检查空结果，再显示消息审阅界面。
-6. 用户操作决定重新生成、结束流程或执行 Git 提交；操作语义见[使用](usage.md#commit)。
+```mermaid
+sequenceDiagram
+  actor User as 用户
+  participant Entry as index.ts
+  participant UI as ui.ts
+  participant Core as core.ts
+  participant Generator as pi 生成子进程
+  User->>Entry: /commit
+  Entry->>Core: 读取暂存文件
+  Core-->>Entry: 文件列表
+  Entry->>User: 确认暂存文件
+  User-->>Entry: 确认
+  Entry->>UI: 选择模型
+  UI-->>Entry: 模型标识
+  Entry->>Core: 文件列表、最新 diff、模型与配置
+  Core->>Generator: 系统提示词与 stdin 任务
+  Generator-->>Core: 提交信息
+  Core-->>Entry: 生成结果
+  Entry->>UI: 审阅完整消息
+  UI-->>Entry: 提交操作
+  Entry->>Core: git commit -m 完整消息
+  Core-->>Entry: 提交结果
+  Entry-->>User: 结果通知
+```
+
+取消或失败时结束流程；重新生成保留模型并重读 diff；启动标志触发的本次提交成功后退出 Pi。
 
 ## 约束
 
-- `index.ts` 向 Git 与生成逻辑传入 `ctx.cwd`，使读取暂存区、生成和提交作用于同一工作目录。
-- 生成规则集中在 `COMMIT_SYSTEM_PROMPT`，`buildTask` 只携带文件列表与 diff，避免规则在两处维护时分歧。
-- `buildPiArgs` 保留生成环境的隔离标志，避免子进程加载工具、扩展、技能、上下文文件或持久化会话；具体参数见 [core.ts](../core.ts)。
-- `index.ts` 将配置或记忆候选的存在性传给 `chooseModel`，使注册表缺少该候选时仍保留用户选择。
-- 模型记忆通过共享配置 API 更新顶层 `commit.lastModel`，保留其他配置；读写约定见[配置兼容与更新](../../../shared/config/docs/configuration.md)。
-- 审阅 UI 只返回操作值，`index.ts` 将完整消息传给 `gitCommit`，防止展示截断改变提交内容。
+- Git 读取、生成与提交共用 `ctx.cwd`，保证操作作用于同一工作目录。
+- `COMMIT_SYSTEM_PROMPT` 集中存放生成规则，`buildTask` 只带文件列表与 diff，避免规则分散后产生分歧。
+- `buildPiArgs` 保留工具、扩展、技能、上下文文件和会话的隔离标志，防止生成子进程加载这些资源或写入会话。
+- 配置模型或记忆模型缺席注册表时仍加入候选，避免用户配置被静默丢弃。
+- 模型记忆只在 `rememberModel` 开启时读写，并通过共享配置更新 `commit.lastModel`，保留其他设置。
+- TUI 预览仅显示前 15 行，提交始终使用完整消息，防止展示截断改变提交内容。
 
 ## 测试
 
@@ -39,5 +65,5 @@
 npm test --workspace=pi-commit
 ```
 
-- `core.test.ts`：暂存状态解析、Git 往返、任务与参数构造、生成成功/失败/超时、围栏清理、模型排序和记忆读写。
-- `index.test.ts`：命令与标志注册、启动条件、禁用配置、交互前提、模型优先级、记忆开关、thinking 与超时传递、完成通知开关。
+- `core.test.ts`：暂存状态解析、Git 往返、任务和参数构造、生成成功/失败/超时、围栏清理、模型排序和记忆读写。
+- `index.test.ts`：注册与启动条件、交互前提、模型优先级、记忆开关、配置传递与完成通知开关。
