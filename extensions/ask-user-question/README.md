@@ -1,35 +1,27 @@
 # ask-user-question
 
-## 功能简介
+模型工具 `ask_user_question` 收集单选、多选和自定义回答，返回结构化问卷结果。
 
-模型工具 `ask_user_question` 支持单选、多选和自定义回答；TUI 使用标签页问卷，RPC 使用原生对话框，非交互模式不注册工具。
+## 安装
 
-## 架构
-
-```mermaid
-flowchart LR
-  A["模型工具调用"] --> B["问答契约与流程"]
-  B --> C["TUI 问卷交互"]
-  B --> D["RPC 原生对话框"]
-  C --> E["共享面板基础设施"]
-  C --> F["结构化回答"]
-  D --> F
+```sh
+pi install https://github.com/aqua2k1/pi-kits.git
 ```
 
-`index.ts` 注册工具和事件；`core.ts` 定义问答契约及 RPC 流程；`tui.ts`、`ui/` 管理交互并复用共享停靠面板。
+仓库包通过 [Pi 清单](../../package.json)加载本扩展。
 
-## 配置
+## 快速开始
 
-在 agent 目录的 `pi-kits.json` 中设置 `askUserQuestion`，修改后执行 `/reload`。以下为默认值：
+在 Pi 交互界面向模型发送：
 
-```json
-{
-  "askUserQuestion": {
-    "enabled": true
-  }
-}
+```text
+请使用 ask_user_question 询问我选择哪个方案，提供“<方案甲>”和“<方案乙>”。
 ```
 
-`multiSelect` 是工具参数，默认 `false`，不是配置项。等待回答通知遵循 `notify.enabled`。操作和事件见[使用说明](docs/usage.md)。
+模型调用工具后显示问卷；确认答案并在 Submit 页提交。操作见[使用](docs/usage.md)。
 
-完整字段见[配置示例](../../pi-kits.example.json)。
+## 文档
+
+- [使用](docs/usage.md)
+- [配置](docs/configuration.md)
+- [架构](docs/architecture.md)

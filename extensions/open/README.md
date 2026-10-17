@@ -1,30 +1,25 @@
 # open
 
-## 功能简介
+`/open` 和模型工具 `open` 用系统默认应用打开文件、URL（网址）或目录。
 
-通过 `/open <file|url|directory>` 或模型工具 `open`，用系统默认应用打开文件、URL 和目录。
+## 安装
 
-## 架构
-
-```mermaid
-flowchart LR
-  A["用户命令 / 模型工具"] --> B["目标校验"]
-  B --> C["平台适配"]
-  C --> D["系统默认应用"]
+```sh
+pi install https://github.com/aqua2k1/pi-kits.git
 ```
 
-`index.ts` 注册命令和工具；`../../shared/desktop-open.ts` 处理 macOS、Windows、WSL 和 Linux 的启动差异。
+仓库包通过 [Pi 清单](../../package.json)加载本扩展。
 
-## 配置
+## 快速开始
 
-在 agent 目录的 `pi-kits.json` 中设置 `open`，修改后执行 `/reload`。以下为默认值：
-
-```json
-{
-  "open": {
-    "enabled": true
-  }
-}
+```text
+/open <目录路径>
 ```
 
-完整字段见[配置示例](../../pi-kits.example.json)。
+将占位值替换为已有目录路径，命令请求系统默认应用打开该目录，并显示启动结果。
+
+## 文档
+
+- [使用](docs/usage.md)
+- [配置](docs/configuration.md)
+- [架构](docs/architecture.md)

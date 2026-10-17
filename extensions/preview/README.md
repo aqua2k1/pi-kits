@@ -1,33 +1,27 @@
 # preview
 
-## 功能简介
+`/preview` 选择当前会话分支的一轮回复进行只读预览，`Alt+P` 直接预览最新回复。
 
-`/preview [--thinking]` 选择当前分支回复并只读预览；`Alt+P` 直接查看最新回复。需要 TUI 模式。
+## 安装
 
-## 架构
-
-```mermaid
-flowchart LR
-  A["会话历史"] --> B["回复选择与内容提取"]
-  C["用户操作"] --> B
-  B --> D["临时预览资源"]
-  D --> E["只读编辑器"]
+```sh
+pi install https://github.com/aqua2k1/pi-kits.git
 ```
 
-`index.ts` 提取会话回复；`../../shared/readonly-preview.ts` 管理临时文件和只读编辑器启动。
+仓库包通过 [Pi 清单](../../package.json)加载本扩展。
 
-## 配置
+## 快速开始
 
-在 agent 目录的 `pi-kits.json` 中设置 `preview`，修改后执行 `/reload`。以下为默认值：
+在已有回复且空闲的 TUI（Pi 交互式终端界面）中输入：
 
-```json
-{
-  "preview": {
-    "enabled": true
-  }
-}
+```text
+/preview
 ```
 
-共用 `terminal.editor`（默认 `nvim`），编辑器需支持 `-R`。
+选择一轮回复后打开只读预览。编辑器设置见[配置](docs/configuration.md)，预览资源与终端交接见[共享库](../../shared/README.md)。
 
-完整字段见[配置示例](../../pi-kits.example.json)。
+## 文档
+
+- [使用](docs/usage.md)
+- [配置](docs/configuration.md)
+- [架构](docs/architecture.md)

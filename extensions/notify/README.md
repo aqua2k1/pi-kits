@@ -1,34 +1,27 @@
 # notify
 
-## 功能简介
+任务在 TUI（Pi 交互式终端界面）中结束并持续空闲后，发送桌面状态通知。
 
-TUI 任务结束并保持空闲后，发送尽力而为的桌面通知，仅显示完成、失败、中止或达到 token 上限的状态，不显示回复摘要或错误详情。新输入或新任务会取消待发通知。
+## 安装
 
-## 架构
-
-```mermaid
-flowchart LR
-  A["任务与输入事件"] --> B["空闲判定与延迟调度"]
-  B --> C["通知传输"]
-  C --> D["平台适配"]
-  D --> E["操作系统通知"]
+```sh
+pi install https://github.com/aqua2k1/pi-kits.git
 ```
 
-`index.ts` 处理 Pi 生命周期和延迟；`../../shared/notifications/` 提供通知 API 及平台适配脚本。
+仓库包通过 [Pi 清单](../../package.json)加载本扩展。
 
-## 配置
+## 快速开始
 
-在 agent 目录的 `pi-kits.json` 中设置 `notify`，修改后执行 `/reload`。以下为默认值：
+在 Pi 交互式终端界面输入任务：
 
-```json
-{
-  "notify": {
-    "enabled": true,
-    "quietPeriodMs": 1000
-  }
-}
+```text
+请回复「完成」。
 ```
 
-macOS 需 `terminal-notifier`，Linux 需 `notify-send`，Windows/WSL 使用 PowerShell。详见[通知说明](docs/usage.md)。
+回复结束并保持空闲后，通知标题为 `Pi`，正文为 `Task completed.`。通知传输见[共享库](../../shared/README.md)。
 
-完整字段见[配置示例](../../pi-kits.example.json)。
+## 文档
+
+- [使用](docs/usage.md)
+- [配置](docs/configuration.md)
+- [架构](docs/architecture.md)

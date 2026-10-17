@@ -1,37 +1,27 @@
 # provider-usage
 
-## 功能简介
+`/usage` 刷新当前主会话模型对应的 DeepSeek 账户余额或 ChatGPT 套餐用量，在编辑器下方展示（[实现](index.ts)）。
 
-显示 DeepSeek 账户余额或 ChatGPT plan 额度；`/usage` 手动刷新，默认每 10 分钟自动刷新。
+## 安装
 
-## 架构
-
-```mermaid
-flowchart LR
-  A["手动 / 定时刷新"] --> B["用量刷新协调"]
-  C["当前模型与认证"] --> B
-  B --> D["服务商适配"]
-  D --> E["远程用量 API"]
-  D --> B
-  B --> F["缓存与状态展示"]
+```sh
+pi install https://github.com/aqua2k1/pi-kits.git
 ```
 
-`index.ts` 管理 widget、轮询和生命周期；`source.ts` 选择数据源，`deepseek.ts`、`chatgpt.ts` 适配服务商。
+仓库包通过 [Pi 清单](../../package.json)加载本扩展。
 
-## 配置
+## 快速开始
 
-在 agent 目录的 `pi-kits.json` 中设置 `providerUsage`，修改后执行 `/reload`。以下为默认值：
+在 Pi 中选择已配置认证的 `deepseek` 或 `openai-codex` 服务商模型后输入：
 
-```json
-{
-  "providerUsage": {
-    "enabled": true,
-    "intervalMs": 600000,
-    "timeoutMs": 15000
-  }
-}
+```text
+/usage
 ```
 
-认证来自 Pi 模型注册表，无需在此配置凭据。
+组件刷新并通知当前显示结果；认证读取自 Pi 模型注册表（[入口](index.ts)）。
 
-完整字段见[配置示例](../../pi-kits.example.json)。
+## 文档
+
+- [使用](docs/usage.md)
+- [配置](docs/configuration.md)
+- [架构](docs/architecture.md)

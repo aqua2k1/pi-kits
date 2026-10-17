@@ -6,10 +6,11 @@
 |---|---|---|---|
 | `enabled` | boolean | `true` | 控制命令、启动标志和会话事件处理器的注册 |
 | `model` | string | 未设置 | 模型选择器的优先候选，标识形式为 `provider/model-id` |
-| `lastModel` | string | 未设置 | 记忆的候选模型；选择模型后、生成前更新 |
+| `lastModel` | string | 未设置 | 自动记忆的候选模型；选择模型后、生成前更新，示例省略此字段 |
 | `thinking` | string | 未设置 | 传给生成子进程的 `--thinking` |
 | `timeoutMs` | integer | `120000` | 生成子进程超时毫秒数 |
 | `rememberModel` | boolean | `true` | 控制 `lastModel` 的读取和写入 |
+| `notify.enabled`（顶层配置） | boolean | `true` | 生成完成通知的开关，见[通知配置](../../notify/docs/configuration.md) |
 
 ## 示例
 
@@ -17,8 +18,7 @@
 {
   "commit": {
     "enabled": true,
-    "model": "opencode-go/deepseek-v4-flash",
-    "lastModel": "opencode-go/deepseek-v4-flash",
+    "model": "<provider>/<model-id>",
     "thinking": "high",
     "timeoutMs": 120000,
     "rememberModel": true

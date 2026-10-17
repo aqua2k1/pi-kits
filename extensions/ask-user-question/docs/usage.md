@@ -1,117 +1,93 @@
-## User questions (MVP)
+# 使用
 
-`ask_user_question` asks single-choice or multi-select questions in a fixed lower-half terminal
-panel. Editor-style rules use Pi's active theme; the upper half stays visible.
-The non-overlay panel temporarily replaces Pi's editor. Pi lays out the transcript
-above the dock and keeps ownership of the surrounding footer, notifications and
-widgets; small terminals may shrink or clip these regions. Closing restores the
-editor, its draft, and focus.
-Every row is filled to the panel width so underlying content cannot show through.
-Short questionnaires leave blank space; input and footer stay at the bottom.
-Long option lists scroll.
-Use Tab/Shift+Tab to switch questions and revisit answers. Each
-question keeps its selected option and custom-answer draft. Confirm answers with
-Enter, then review from the Submit tab. It has separate Submit and Cancel
-buttons: Up/Down chooses a button, Enter activates it, and fullscreen mouse clicks
-activate buttons directly. PgUp/PgDn browses the reviewed answers independently
-of button focus. All questions must be answered before Submit succeeds; Cancel
-is always available. Esc cancels; earlier answers remain in `details` but are not a
-completed submission. Cancellation returns only `User cancelled` in the tool text;
-the structured `details` still carries `cancelled: true` and any earlier answers.
+## ask_user_question
 
-In Pi's fullscreen terminal mode, tabs can also be clicked with the mouse. Regular
-terminal mode leaves mouse input to the terminal, so use keyboard navigation there.
-Enable fullscreen using Pi's `tuiMode: "fullscreen"` setting if needed; this is a Pi
-setting, not a `pi-kits.json` option. RPC uses native select/input dialogs sequentially
-and does not support tabs or review. Shift+Up/Down scroll long question details;
-The panel owns keyboard input while open. While typing a
-custom answer, use Left/Right, Ctrl+B/F or Home/End to move the cursor.
-
-There are no upper limits on question counts, option counts, or text lengths; each
-call needs at least one question and each question at least one option. A custom
-answer row is appended automatically. Blank custom answers cannot be confirmed.
-
-Set `multiSelect: true` on a question to show checkboxes. Space toggles the focused
-option, while Enter confirms all checked options and advances. At least one option
-must be checked. Checks survive switching tabs and can be revised. A custom answer
-replaces the checkbox answer rather than combining with it; Space types normally
-inside the custom-answer editor. Single-select remains the default.
-
-RPC multi-select uses a native input dialog: enter option numbers such as `1,3`
-or a custom answer. Invalid numeric selections and blank input are retried.
-Use `text: 123` to submit a numeric custom answer rather than option numbers.
+工具向用户收集一组相关问题的回答；模型调用参数示例：
 
 ```json
 {
   "questions": [
     {
-      "question": "Which cache should we use?",
+      "question": "<请选择方案>",
+      "multiSelect": false,
       "options": [
-        { "label": "Memory (Recommended)", "description": "No infrastructure" },
-        { "label": "Redis", "description": "Shared across instances" }
+        { "label": "<方案甲>", "description": "<方案甲说明>" },
+        { "label": "<方案乙>" }
       ]
     }
   ]
 }
 ```
 
-The tool declares documented input and output JSON schemas. Structured results
-are returned in `structuredContent` as well as `details`; successful tool text
-still includes the answers, and cancellation text remains `User cancelled`.
+| 参数 | 说明 |
+|---|---|
+| `questions` | 本次问卷的问题 |
+| `question` | 问题正文 |
+| `options` | 候选选项；自定义回答入口由工具添加 |
+| `label` | 选项文字 |
+| `description` | 可选的选项说明 |
+| `multiSelect` | 设为 `true` 收集多选回答；默认 `false` |
 
-Results include `answers` and `cancelled`; each answer includes `questionIndex`,
-`question`, `kind` (`option`, `custom`, or `multi`), and `answer`. Option answers
-also include `optionIndex`. Multi-select answers include `selected` labels and
-zero-based `optionIndices`, so duplicate labels are unambiguous. Non-interactive
-runs hide the tool. Execution is sequential and respects abort signals. This MVP
-has no previews or notes.
+参数与结果契约、校验规则见 [core.ts](../core.ts)。工具按顺序执行；[入口](../index.ts)在每轮代理开始前依据界面可用性更新活动工具列表。
 
-Disable other extensions registering `ask_user_question` (including
-`rpiv-ask-user-question`) before loading this entry. Set
-`askUserQuestion.enabled: false` to disable it independently.
+### 终端交互界面（TUI）
 
-### Question lifecycle hooks
+```text
+↑/↓ 选择 <方案甲> → Enter 确认 → Submit 页 → Enter 提交
+```
 
-The question extension emits hooks through `pi.events`:
+| 操作 | 结果 |
+|---|---|
+| Tab / Shift+Tab | 切换问题与 Submit 审阅页，保留选项位置、勾选和自定义草稿 |
+| ↑ / ↓ | 移动选项；审阅页切换 Submit、Cancel 按钮 |
+| Space | 多选题切换当前选项的勾选；自定义输入中输入空格 |
+| Enter | 确认当前题并前进；审阅页执行当前按钮 |
+| PgUp / PgDn | 在审阅页浏览已答或待答问题 |
+| Shift+↑ / Shift+↓ | 滚动长题目或当前选项说明 |
+| ← / → | 在自定义回答中移动光标 |
+| Esc / Ctrl+C | 取消问卷，保留已确认答案 |
 
-- `workflow:ask-user-question:start`: immediately before dialog interaction.
-- `workflow:ask-user-question:end`: after answering, cancelling, aborting, or
-  a dialog error.
+选择 Custom answer 行后输入自定义回答；该回答替代本题的勾选回答。修改草稿或选项后按 Enter 才更新已确认答案；全部问题确认后，Submit 按钮完成提交。Cancel 按钮随时结束问卷。
 
-Both payloads include `toolCallId`, `mode`, and `questionCount`. The end hook
-also includes `status` (`answered`, `cancelled`, `aborted`, or `error`);
-answered/cancelled events include `result`. Calls without UI or already aborted
-before interaction emit neither hook. Constants and payload types live in
-`../events.ts`.
+全屏终端模式下可点击标签和审阅按钮，滚轮由宿主滚动上方会话记录；常规终端模式使用键盘。布局与停靠行为见[共享 UI](../../../shared/docs/ui.md)。
 
-The question extension itself sends a best-effort desktop notification,
-`Pi: Waiting for your answer.`, when TUI interaction begins. It uses the shared
-notification transport, requires no notify extension to be loaded, and respects
-`notify.enabled`. RPC interactions emit hooks but do not send desktop
-notifications. Closing the questionnaire emits the end hook without another
-desktop notification.
+### 远程调用界面（RPC）
 
-TUI-only panel notifications are separate from tool start/end:
+RPC 按问题顺序显示原生选择框或输入框，回答完最后一题即返回结果。
 
-- `workflow:ui:opened`: the shared session created the component inside
-  `ui.custom`'s factory, before returning it to Pi. Pi has no post-mount callback:
-  this is an opening notification, **not proof of mounting or first paint**.
-- `workflow:ui:closed`: once the host promise settles and the abort listener and
-  component resources are cleaned up. Its `status` is `completed`, `cancelled`,
-  `aborted`, or `error` (`completed` corresponds to tool status `answered`).
+```text
+1,2
+text: 123
+```
 
-Both include `panelId: "ask-user-question"` and `instanceId` (the tool call ID).
-The order for an opened TUI interaction is tool start, panel opened, panel closed,
-then tool end. No panel events are emitted for RPC, a host failure before factory
-creation, or an abort observed before opening. An opened interaction gets one
-closed notification even on errors. Constants/types are exported from
-`@pi-kits/shared/ui/docked-panel`. Entry-point callbacks emit through `pi.events`;
-the shared layer does not subscribe to Pi events. Opened-callback failures still
-attempt closed after cleanup. The original interaction/factory/cancellation error
-wins over disposal and closed-callback errors; disposal errors reject only when
-there is no original failure, and closed-callback errors only when neither has
-failed. If abort cancellation throws, the session retains that error and calls
-Pi's factory completion callback to settle/restore the host before rejecting,
-not a competing rejection that could leave the panel mounted. Closed status is
-`aborted` whenever the signal is aborted, including cancellation/disposal failures;
-the rejection still preserves the original error identity.
+单选题通过选择框选取选项或 Type something. 自定义入口；多选题通过输入框输入选项编号（逗号或空格分隔）或自定义文字，纯数字自定义文字使用 `text:` 前缀。空输入与无效数字选择会重新询问；关闭对话框取消问卷。
+
+### 结果
+
+结果同时放入 `details` 和 `structuredContent`；字段定义见 [core.ts](../core.ts)。
+
+| 字段 | 含义 |
+|---|---|
+| `answers` | 按问题顺序排列的已确认答案 |
+| `cancelled` | 用户取消时为 `true` |
+| `kind` | `option` 为单选、`custom` 为自定义、`multi` 为多选 |
+| `questionIndex`、`optionIndex`、`optionIndices` | 从零开始的问题或选项索引；区分重复标签 |
+| `selected` | 多选回答的标签，按选项顺序保留重复标签 |
+| `answer` | 回答文字；多选标签以逗号和空格连接 |
+
+取消时工具文本为 `User cancelled`，结构化结果仍保留已确认答案；未确认草稿不计入答案。
+
+### 事件
+
+`pi.events` 是扩展发送生命周期消息的事件总线；问卷事件定义见 [events.ts](../events.ts)，发送路径见 [index.ts](../index.ts)。
+
+| 事件 | 时机 |
+|---|---|
+| `workflow:ask-user-question:start` | 进入对话交互前 |
+| `workflow:ask-user-question:end` | 回答、取消、中止或交互错误后 |
+
+开始事件携带调用标识、界面模式和题数；结束状态为 `answered`、`cancelled`、`aborted` 或 `error`，前两者携带结果。无界面或交互前已中止的调用直接抛错。
+
+TUI 入口还转发共享面板生命周期回调，面板标识为 `ask-user-question`，实例标识为工具调用 ID；共享事件语义见[共享 UI](../../../shared/docs/ui.md)及[事件定义](../../../shared/ui/docked-panel/events.ts)。正常打开时顺序为问卷开始、面板打开、面板关闭、问卷结束。
+
+TUI 开始交互时按[配置](configuration.md)发送等待回答通知；RPC 仅发送问卷事件。

@@ -24,12 +24,12 @@
 
 ## 约束
 
-- `core.ts` 的 Git 与生成逻辑通过参数接收工作目录，`index.ts` 始终传入 `ctx.cwd`。
-- 生成规则集中在 `COMMIT_SYSTEM_PROMPT`；`buildTask` 只携带文件列表与 diff。
-- `buildPiArgs` 为子进程设置 `--no-tools`、`--no-extensions`、`--no-skills`、`--no-context-files` 和 `--no-session`，隔离生成环境。
-- `index.ts` 将配置或记忆候选的存在性传给 `chooseModel`；`orderModelOptions` 据此补入注册表缺失的候选。
-- 模型记忆通过共享配置 API 更新顶层 `commit.lastModel`；共享读写约定见[配置兼容与更新](../../../shared/config/docs/configuration.md)。
-- 审阅 UI 返回操作值，`index.ts` 持有完整消息并传给 `gitCommit`，展示截断不改变提交内容。
+- `index.ts` 向 Git 与生成逻辑传入 `ctx.cwd`，使读取暂存区、生成和提交作用于同一工作目录。
+- 生成规则集中在 `COMMIT_SYSTEM_PROMPT`，`buildTask` 只携带文件列表与 diff，避免规则在两处维护时分歧。
+- `buildPiArgs` 保留生成环境的隔离标志，避免子进程加载工具、扩展、技能、上下文文件或持久化会话；具体参数见 [core.ts](../core.ts)。
+- `index.ts` 将配置或记忆候选的存在性传给 `chooseModel`，使注册表缺少该候选时仍保留用户选择。
+- 模型记忆通过共享配置 API 更新顶层 `commit.lastModel`，保留其他配置；读写约定见[配置兼容与更新](../../../shared/config/docs/configuration.md)。
+- 审阅 UI 只返回操作值，`index.ts` 将完整消息传给 `gitCommit`，防止展示截断改变提交内容。
 
 ## 测试
 

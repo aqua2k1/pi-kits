@@ -1,74 +1,24 @@
-# 桌面通知
+# 使用
 
-## Pure notification API
+## 任务结束通知
 
-Import the library, not the notification extension entry:
-
-```ts
-import { notify } from "@pi-kits/shared/notifications";
-// Or from the repository: import { notify } from "./shared/notifications/index.ts";
-
-notify("Build", "The build finished.");
+```text
+请回复「完成」。
 ```
 
-`notify(title, msg)` has no Pi runtime dependency. Importing it does not register
-commands, flags or lifecycle handlers, schedule timers, or launch processes.
-Calling it returns `true` when the platform command was accepted for execution;
-delivery is best-effort, so missing dependencies or OS failures never affect Pi.
+任务结束后，扩展在 TUI（Pi 交互式终端界面）空闲时安排通知；等待时间见[配置](configuration.md)。
 
-Architecture:
+通知标题固定为 `Pi`，正文取最后一条助手消息的结束状态：
 
-- `shared/notifications/index.ts`: shared `notify` API.
-- `shared/notifications/core.ts`: platform detection and shell-free launching.
-- `shared/notifications/scripts/`: platform adapters, resolved relative to the
-  library through `import.meta.url`, independent of the working directory.
-- `extensions/notify/index.ts`: Pi lifecycle wiring only.
+| 结束状态 | 通知正文 |
+|---|---|
+| `error` | `Task failed.` |
+| `aborted` | `Task aborted.` |
+| `length` | `Response truncated (token limit).` |
+| 其他或尚未记录 | `Task completed.` |
 
-The completion adapter uses the same API to send a `Pi` notification only in
-TUI after `agent_settled` has remained idle for the configured quiet period
-(one second by default). The body reflects the last assistant response:
+正文只包含状态。恢复成功的重试以最终助手消息为准，工具结果不改变记录的状态。
 
-- `Task completed.`
-- `Task failed.`
-- `Task aborted.`
-- `Response truncated (token limit).`
+新输入、新任务开始、会话开始或关闭会取消待发通知；新的任务结束事件会替换待发计时器。发送前再次检查空闲状态。
 
-Only the status is included, never response summaries, error details, thinking,
-or tool-call arguments. Automatic retries are allowed to finish before
-notifying: a recovered error is not reported
-as a failure. Tool errors alone do not imply task failure; the final assistant
-response determines the status. Errors not represented in an assistant response
-(such as extension-handler errors or a process crash) are not captured.
-
-Pending notifications
-are cancelled on input, `before_agent_start`, `agent_start`, or session shutdown.
-The idle state is checked again before delivery; notifier errors are contained.
-
-### Platform adapters
-
-| Environment | Adapter | Dependency | Behavior |
-| --- | --- | --- | --- |
-| Windows / WSL | `windows-toast.ps1` | Windows PowerShell | Expires after one minute. |
-| Linux | `linux-notify.sh` | `notify-send` / libnotify | Expires after 60 seconds and replaces the previous notification. |
-| macOS | `macos-notify.sh` | `terminal-notifier` | Removes the grouped notification after 60 seconds. |
-
-Unix adapters receive title/message as positional arguments; the PowerShell
-adapter receives `-Title` and `-Message`. WSL uses the Windows adapter through
-interop. The Windows script selects a registered terminal AppUserModelID;
-native Linux and macOS do not depend on a terminal emulator. All adapters use
-stable replacement identifiers.
-
-The macOS adapter stores private generation and lock state in
-`$HOME/.pi-kits-notifications`. Sending and cleanup share a lock, so an older
-60-second timer cannot remove a replacement notification. Lock contention is
-bounded and notification failures remain best-effort. An untrappable termination
-(such as `SIGKILL`) can leave an abandoned lock; after confirming no notification
-adapter or `terminal-notifier` process is active, remove it with
-`rmdir "$HOME/.pi-kits-notifications/lock"`.
-
-```sh
-brew install terminal-notifier  # macOS
-sudo apt install libnotify-bin # Linux
-```
-
-After changing package code, run `/reload` in Pi.
+通知传输与平台适配见[共享库](../../../shared/README.md)。

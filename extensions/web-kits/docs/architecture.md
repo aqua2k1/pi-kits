@@ -1,298 +1,80 @@
-# Pi web kit architecture
+# 架构
 
-`web-kits` lives in `extensions/web-kits`. Its explicit Pi manifest declares
-`./index.ts` as the only extension entry point; the existing implementation and
-test layout is retained without a `src` move. `/web-tools` and temporary/cache
-paths remain unchanged; configuration uses the shared `pi-kits.json`.
+[index.ts](../index.ts) 读取启动配置快照并注册工具与诊断命令，[composition.ts](../composition.ts) 按需组装搜索服务和抓取路由；搜索与抓取各自处理认证、超时及错误分类。共享配置与 UI（界面）能力分别见[配置服务](../../../shared/config/README.md)和[共享 UI](../../../shared/docs/ui.md)。
 
-The package owns two independent capabilities:
+## 文件地图
 
-```text
-web_search
-  -> SearXNG or Codex alpha/search
+| 文件 | 职责 |
+|---|---|
+| `index.ts` | 工具注册、参数 schema（结构契约）、启动快照、进度及错误边界 |
+| `commands.ts` | 状态展示、搜索服务连接测试及参数补全 |
+| `composition.ts` | 具体搜索服务工厂与抓取入口组装 |
+| `config.ts` | 扩展配置读取、服务名归一化、搜索与抓取配置解析 |
+| `schema.ts` | 公开机器输出及派生类型 |
+| `format.ts`、`renderers.ts` | 搜索文本／机器输出与工具界面渲染 |
+| `core/types.ts`、`core/validation.ts` | 搜索内部契约及请求归一化 |
+| `core/router.ts`、`core/routing.ts`、`core/errors.ts` | 主备搜索路由、回退选择与分类错误 |
+| `providers/searxng/config.ts`、`provider.ts` | SearXNG 地址、认证和搜索请求转换 |
+| `providers/codex/config.ts`、`auth.ts`、`provider.ts` | Codex 模型配置、Pi 认证及搜索请求转换 |
+| `shared/http.ts`、`shared/results.ts`、`shared/limits.ts` | 扩展内的搜索传输、结果归一化和资源边界 |
+| `fetch/router.ts`、`fetch/types.ts` | 抓取请求解析、处理器选择及运行时能力 |
+| `fetch/http.ts`、`fetch/content.ts` | 原生 HTTP 流读取、解码和标题提取 |
+| `fetch/formatters/index.ts`、`prettier-worker.mjs` | 按 MIME（媒体类型）／文件名选择格式化器及独立工作线程 |
+| `fetch/github-url.ts`、`fetch/github-refs.ts` | GitHub URL 和引用／路径边界解析 |
+| `fetch/github.ts`、`fetch/github-content.ts` | API／克隆策略、克隆缓存与仓库内容生成 |
+| `fetch/gh-client.ts`、`fetch/command.ts` | GitHub 命令参数与有界子进程执行 |
+| `fetch/spool.ts`、`fetch/format.ts`、`fetch/errors.ts` | 临时存储、公开元数据与抓取分类错误 |
+| `package.json` | Pi 入口、依赖和测试脚本 |
 
-web_fetch
-  -> native HTTP for ordinary URLs
-  -> GitHub API or shallow clone for GitHub repository URLs
-  -> bounded temp file
-  -> metadata only, with savedContent.path for read
+## 数据流
+
+1. `index.ts` 读取并解析文件与环境变量，按[配置开关](configuration.md)注册工具、命令及执行临时文件清理。
+2. 搜索请求经 `core/validation.ts` 归一化，`core/router.ts` 按主备顺序惰性构造服务；`composition.ts` 注入各自的认证与传输。
+3. 搜索服务经 `shared/http.ts` 读取响应，`shared/results.ts` 统一过滤、去重与脱敏，`format.ts` 生成文本、界面详情及机器输出。
+4. 抓取请求经 `fetch/router.ts` 解析后先交给 GitHub 处理器；处理器返回空结果时转原生 HTTP，具体策略见[使用](usage.md#web_fetch)。
+5. HTTP 流写入临时 `response.bin`，解码与格式化后保存 `content.txt` 并移除中间文件；GitHub 内容经格式化／仓库视图生成后直接保存文本。
+6. `fetch/format.ts` 从最终保存文本计算布局并生成元数据；`index.ts` 返回工具结果，调用方按[读取流程](usage.md#web_fetch)访问保存文件。
+
+## 约束
+
+- `index.ts` 将同一文件与环境快照交给工具和诊断命令，保持状态展示与实际请求一致；`index.test.ts` 和 `commands.test.ts` 检查启动后读取次数。
+- `composition.ts` 负责具体服务组装，`core/router.ts` 仅调用工厂与路由，保证未使用的服务不会触发认证或配置检查；`composition.test.ts` 覆盖惰性构造与凭据隔离。
+- 搜索路由保留服务返回的脱敏查询，防止原始输入覆盖清理结果；`core/router.test.ts` 检查返回查询，`composition.test.ts` 检查回退中的凭据反射。
+- 搜索回退使用 `core/errors.ts` 的分类策略并在尝试间检查取消信号，避免无效请求或用户取消继续调用备用服务；`core/router.test.ts` 覆盖这些分支。
+- Codex 从 Pi 认证接口获取 OAuth 凭据并使用固定搜索端点，避免把其他来源的请求地址和头部混入请求；`providers/codex/auth.test.ts` 和 `composition.test.ts` 检查此边界。
+- 搜索传输的单次截止时间覆盖认证、请求与响应流，且重定向采用报错策略，避免认证结束过晚仍发请求或重定向转发凭据；`shared/http.test.ts`、Codex 服务测试与 SearXNG 重定向测试覆盖该行为。
+- `schema.ts` 同时派生公开输出与内部相关类型，枚举使用 Pi 的 `StringEnum`，保持注册 schema 和实际机器输出一致；`index.test.ts` 对返回值执行 schema 检查。
+- 两个输出格式器以完整序列化返回值计算预算，计入文本、详情和机器数据副本，避免单份内容合规而总返回值超限；边界见 `shared/limits.ts`，测试见两份 `format.test.ts`。
+- 抓取格式器仅公开保存元数据，布局基于最终文本计算，使 `read` 的偏移与返回行数一致；`fetch/format.test.ts` 和 `fetch/read-integration.test.ts` 覆盖空行、UTF-8 与分页。
+- 格式化在线程中使用固定选项和资源预算，失败返回输入；调用方在保存前检查取消，避免阻塞主线程或将已取消请求当作成功保存；实现见 `fetch/formatters/`、`fetch/http.ts` 与 `fetch/github.ts`。
+- `fetch/spool.ts` 串行写入并在写前预留容量，最终化后拒绝重复保存，保证并发写入与短写处理仍满足存储边界；`fetch/spool.test.ts` 覆盖状态和容量竞争。
+- GitHub 引用解析只接受唯一分支／标签划分，避免把含 `/` 的引用误当目录；`fetch/github-refs.test.ts` 和 `fetch/github-url.test.ts` 覆盖歧义与显式编码。
+- 克隆操作由调用方运行时中的处理器缓存持有，每个操作使用独立临时目录，避免不同处理器和失败重试覆盖已有仓库；`fetch/router.test.ts` 与 `fetch/github-isolation.test.ts` 覆盖隔离。
+- 同一克隆的等待者独立取消，最后一个等待者退出才中止克隆；创建前预留会话容量，避免单个调用取消影响其他调用或并发突破容量；`fetch/github.test.ts` 覆盖这两项。
+- 仓库内容访问同时校验解析路径和真实路径，防止目录遍历或符号链接读取仓库外文件；`fetch/github-content.test.ts` 覆盖路径逃逸。
+- `fetch/gh-client.ts` 固定 GitHub 主机并以参数数组调用 `gh`／`git`，`fetch/command.ts` 关闭 shell，避免命令解析改变主机或参数含义；相关客户端与进程测试覆盖参数和终止流程。
+- 工具与诊断边界重建分类错误消息，避免上游正文、凭据和原始子进程诊断进入返回值；依据见两份 `errors.ts` 及 `commands.test.ts`、`index.test.ts`。
+
+## 测试
+
+在仓库根目录运行[包脚本](../package.json)：
+
+```sh
+npm test --workspace=web-kits
+npm run typecheck --workspace=web-kits
 ```
 
-Search and fetch share the extension process and configuration file, but they do
-not share provider routers, authentication, or network fallbacks.
-
-## Layer map
-
-```text
-Pi host
-└── index.ts
-    ├── web_search tool
-    ├── web_fetch tool
-    └── /web-tools command
-
-Boundary
-├── config.ts       -> @pi-kits/config, web-kits.search/web-kits.fetch resolution
-├── composition.ts  -> lazy search/fetch assembly
-├── schema.ts       -> pure TypeBox schemas and derived output/response types
-└── fetch/format.ts -> metadata-only output and saved-content metadata
-
-Search
-├── core/            -> contracts, normalization, routing, classified errors
-├── providers/searxng/
-└── providers/codex/ -> Codex OAuth and alpha/search wire format
-
-Fetch
-├── fetch/router.ts          -> GitHub then native HTTP dispatch
-├── fetch/http.ts            -> Node fetch, timeout and streamed body
-├── fetch/content.ts         -> decoding, title extraction and content formatting
-├── fetch/spool.ts           -> bounded temporary result files
-├── fetch/github-url.ts      -> GitHub URL parsing
-├── fetch/github.ts          -> clone/API strategy
-├── fetch/gh-client.ts       -> gh/git process execution
-└── fetch/github-content.ts  -> local repository tree/file rendering
-
-Shared
-├── shared/http.ts     -> existing search JSON transport
-├── shared/results.ts  -> search result normalization
-└── shared/limits.ts   -> search, fetch and GitHub limits
-```
-
-## Fetch call chain
-
-```text
-web_fetch(url)
-├─ startup snapshot (readConfigSnapshot + resolveConfig)
-├─ fetchWeb(request, config.fetch, runtime, signal)
-│  ├─ normalizeFetchRequest()
-│  └─ WebFetchRouter.fetch()
-│     ├─ GitHubHandler.fetch()
-│     │  ├─ parseGitHubUrl()
-│     │  ├─ mode=api -> gh api
-│     │  ├─ mode=auto -> repository-size probe
-│     │  ├─ small repository -> CloneManager -> gh repo clone/git clone
-│     │  └─ large/failing clone -> gh api
-│     └─ fetchDocument()
-│        ├─ Node global fetch() with Chrome-style HTTP headers
-│        ├─ follow redirects
-│        ├─ stream response into bounded spool
-│        ├─ decodeDocument() + title extraction
-│        ├─ best-effort content formatting through Prettier API
-│        └─ saveText() -> content.txt; remove response.bin
-├─ save final logical text as content.txt
-├─ buildFetchOutput()
-└─ return content + details + structuredContent
-```
-
-## Native HTTP
-
-Native HTTP uses the Node global `fetch`, not a shell command. It sends a GET
-request with Chrome-style HTTP headers, follows normal HTTP redirects,
-checks the status, and streams the response body to a temporary file. A
-response body larger than 50 MiB is cancelled. The transport remains Node's
-HTTP stack; these headers do not change its TLS or HTTP/2 fingerprint.
-
-`web_fetch` accepts only `url`; the `raw` parameter has been removed. Binary HTTP
-responses are rejected as unsupported. Supported textual bodies are decoded and
-retain their original format rather than undergoing HTML-to-plain-text extraction.
-HTML structure, script, style, noscript and template blocks remain in the content;
-title extraction is retained separately. JavaScript is never executed.
-
-HTML/XHTML, JSON (including `+json` media types), and Markdown receive best-effort
-formatting via the runtime dependency `prettier` and its API, not a CLI subprocess.
-Plain text, XML and other supported text remain unchanged. If formatting fails,
-the decoded original is saved. The formatter does not read user configuration;
-its rules are fixed:
-
-```ts
-{
-  printWidth: 100,
-  tabWidth: 2,
-  useTabs: false,
-  endOfLine: "lf",
-  proseWrap: "preserve",
-  htmlWhitespaceSensitivity: "css",
-  embeddedLanguageFormatting: "off",
-}
-```
-
-Prettier runs in a separate cancellable worker with a fixed 5-second budget and
-V8 heap limits of 128 MiB old space / 32 MiB young space. The agent thread remains
-responsive; syntax errors, worker failures and exhausted budgets preserve the
-input. These heap limits are not a hard process-RSS cap. Cancellation terminates
-formatting, and fetch checks its signal before saving. No user configuration or
-additional plugins are loaded. GitHub API README parser selection uses the actual
-returned filename; unknown or non-Markdown filenames are not forced to Markdown.
-
-## Temporary content
-
-A successful text operation creates:
-
-```text
-/tmp/pi-web-fetch-<random>/content.txt
-```
-
-The file contains the final logical content that corresponds to the tool result.
-For ordinary HTTP, it stores formatted or unchanged decoded text, with the
-original decoded content preserved on formatting failure. GitHub blobs receive
-formatting where supported; clone scaffolds and repository listings retain their
-repository-specific rendering. Final saved text is still limited to 50 MiB.
-Temporary files retain their fixed TTL (currently 24 hours).
-Every successful fetch returns metadata only, with no body, preview or summary.
-Use `read` on `savedContent.path` to access the saved text, regardless of size.
-Internal `fullOutputPath` is exposed publicly as `savedContent.path`; layout
-metadata is measured from the final saved text after formatting and limits.
-
-For native HTTP, the raw response is first streamed through a bounded
-`response.bin` and is then converted to `content.txt`; the intermediate file is
-removed. GitHub-generated
-text goes directly through `saveText()` to `content.txt`, without streaming a
-network body into `response.bin`. Failed or cancelled operations remove the
-directory. Expired spool cleanup is owned by
-extension startup rather than detached from individual fetch requests.
-
-## GitHub strategy
-
-Supported code URLs are:
-
-```text
-https://github.com/{owner}/{repo}
-https://github.com/{owner}/{repo}/blob/{ref}/{path}
-https://github.com/{owner}/{repo}/tree/{ref}/{path}
-```
-
-Issue, pull request, release, action, wiki and other UI pages use native HTTP.
-When a blob/tree URL has multiple possible ref/path boundaries, real branch and
-tag refs must identify a unique split. Encoded slashes (`%2F`) in the ref
-component explicitly delimit it. Ambiguous or unavailable ref metadata falls
-back to native HTTP rather than guessing a branch.
-
-`mode=auto` resolves repository metadata through `gh api`. Small repositories
-use a shallow, single-branch clone. Repositories known to exceed the configured
-threshold are never cloned: GitHub code-content handling is API-only, with
-ordinary native HTTP still available when the GitHub API cannot serve the URL.
-The clone is cached under a hashed key so owner, repository and ref cannot create arbitrary
-local paths. The repository path is returned as `repositoryPath`; generated
-tree or file content is also saved to `content.txt`. Both API and clone paths
-render roots/trees as listings (root README shares the overall saved-content limit),
-and blobs as file text. HTML, JSON and Markdown blobs receive best-effort
-Prettier formatting on both API and clone paths, falling back to original file
-text on failure. Clone scaffolds and repository listings (including their root
-README rendering) remain unchanged. Binary files produce a textual description rather than raw binary output;
-this differs from unsupported binary native HTTP responses.
-
-The clone does not recurse into submodules, install dependencies, run hooks,
-or execute repository files. A clone timeout, missing command or failed clone
-for an eligible repository can fall back to API access. `mode=api` never clones.
-
-`gh` owns GitHub authentication. The extension invokes `gh` and `git` with
-argument arrays and `shell: false`; tokens are not placed in arguments.
-
-## Machine output contract
-
-`schema.ts` defines TypeBox schemas/types for `SearchDetails`, `FetchDetails`,
-`SearchMachineOutput` and `FetchMachineOutput`. Fetch details and machine output
-share the same metadata-only schema.
-Machine schemas describe search content and metadata-only fetch output;
-search result fields, fetch source enums and truncation types are also derived
-with `Static` to avoid parallel shape drift. This is a pure helper, not an
-extension entry point. Enums use Pi's `StringEnum` for provider compatibility
-rather than literal unions/`anyOf`.
-
-The formatters render model-facing text and return metadata as `details` and
-machine data as `structuredContent`. `index.ts` declares the corresponding
-`outputSchema`. Pi codemode's `toScriptValue()` returns only `structuredContent`,
-not `content` or `details`, so machine output includes actual search summaries
-and fetch metadata, never fetched text. Failures remain classified thrown errors; there is no new error
-envelope. Progress updates are still text-only, with `details: undefined`.
-
-Search machine data contains `query`, `backend`, `resultCount`, `results`
-(`title`, `url`, `snippet`), `hasSummary`, optional `truncated`, and optional
-`summary`. Summary text is the provider's sanitized, bounded summary (currently
-limited to 4,000 UTF-8 bytes), without display-only Markdown escaping. The
-legacy details retain only `hasSummary`; no summary field is added there. Counts
-match returned results, including no-results and summary-only output.
-
-Search budgets the entire serialized return object, including all text, details
-and machine copies and JSON-escaped UTF-8, within 50 KiB and the existing visible
-line limit. It omits results until the return fits, marking both metadata copies
-as truncated. Omitted search data is not saved. If the remaining summary/query
-alone cannot fit, the existing classified `invalid-response` policy applies.
-
-Fetch public output is metadata-only: `url`, `finalUrl`, `source` (`native-http`,
-`github-gh`, `github-clone`), optional `title`, `contentType`, `contentLength`,
-`repositoryPath`, and required `savedContent`:
-
-```ts
-savedContent: {
-  path: string;
-  bytes: number;
-  lines: number;
-  maxLineBytes: number;
-  truncated: boolean;
-  expiresAt?: string;
-  truncation?: {
-    totalBytes: number;
-    outputBytes: number;
-    totalLines?: number;
-    outputLines?: number;
-  };
-}
-```
-
-No body, preview or summary is returned. There are no top-level `fullOutputPath`,
-`expiresAt`, `truncation`, `text` or `isPreview` fields. Every successful result
-saves text; callers use `read` with `savedContent.path` to obtain it.
-`savedContent.bytes` counts the saved formatted/decoded/repository-rendered text in UTF-8
-bytes, not HTTP `Content-Length` (which may be reported as `contentLength`).
-`savedContent.truncated` only indicates that the saved text was limited;
-`false` does not guarantee a complete original page, repository or browser render.
-`savedContent.lines` follows built-in `read` numbering (including the empty final
-line after a trailing newline); `maxLineBytes` is the longest saved line's UTF-8
-byte count excluding its newline. Optional `savedContent.truncation` describes
-those stored-content limits.
-`savedContent.expiresAt` is a timestamp string for the spool, not the clone cache.
-The saved file is never a guarantee of the original source in full.
-
-The formatter counts the complete serialized return toward 50 KiB, including
-visible metadata, details, machine data and JSON-escaped UTF-8. Metadata is not
-silently changed; if it cannot fit, a classified `invalid-response` is thrown.
-
-Both public URL fields are the same final redacted URL, never a new requested-URL
-field: native HTTP supplies `response.url` after redirects (or the normalized
-request URL if absent), while GitHub's `storeResponse()` supplies the handler's
-request URL. The router passes that provenance through unchanged. Only the
-output formatter removes credentials/fragments and redacts sensitive query
-values; `url` is retained as a compatibility alias of `finalUrl`.
-
-## Configuration and boundaries
-
-Configuration is loaded and resolved once during extension startup. Registered
-search and fetch tools consume that immutable resolved snapshot; changing the
-file or environment requires an extension reload.
-
-The single configuration file is:
-
-```text
-~/.pi/agent/pi-kits.json
-```
-
-Persistent settings are namespaced under `web-kits.search` and `web-kits.fetch`. The
-shared package validates the unified file; web-kits retains routing and fetch
-semantic validation. Missing files and omitted `web-kits` use defaults; invalid or
-unreadable files fail without fallback. All enabled switches default to true;
-`web-kits.enabled: false` returns before registration and cleanup, and disabled fetch
-skips spool cleanup. SearXNG URL/key and GitHub credentials stay outside JSON:
-SearXNG uses environment variables, and GitHub uses the local `gh` credential
-store.
-
-The implementation assumes a trusted, single-user local agent. It rejects
-non-HTTP(S) URLs, bounds response and command output, and uses basic temporary
-file permissions, but it does not attempt to be a complete SSRF sandbox or
-protect against a host-level bash escape.
-
-## Codex boundary
-
-Codex is only a search provider. Its Rust `web.run(open)` implementation sends
-an `open` command to a remote Codex `alpha/search` service through a Rust HTTP
-client. This extension deliberately does not implement or call that path for
-`web_fetch`.
+| 测试文件（相对扩展目录） | 覆盖模块 |
+|---|---|
+| `index.test.ts`、`commands.test.ts`、`composition.test.ts`、`config.test.ts` | 工具注册、启动快照、开关、参数、命令、服务组装与配置 |
+| `format.test.ts`、`fetch/format.test.ts` | 文本／机器契约、脱敏、布局与完整输出预算 |
+| `core/{errors,router,routing,validation}.test.ts` | 搜索分类、回退、取消和归一化 |
+| `shared/{http,results}.test.ts` | 搜索流边界、截止时间、重定向、过滤和脱敏 |
+| `providers/codex/{auth,provider}.test.ts` | OAuth、固定端点、请求结构与取消 |
+| `providers/searxng/{provider,redirect}.test.ts` | 地址配置、搜索参数及真实 HTTP 重定向 |
+| `fetch/{command,content,errors,http,router,spool}.test.ts` | 进程、解码、抓取分类、传输、处理器隔离及存储状态 |
+| `fetch/formatters.test.ts`、`fetch/github-formatters.test.ts` | 格式选择、工作线程、取消与 GitHub 保存视图 |
+| `fetch/github.test.ts`、`fetch/github-isolation.test.ts` | 策略、并发克隆、取消、容量与隔离 |
+| `fetch/{gh-client,github-content,github-readme,github-refs,github-url}.test.ts` | 命令、路径访问、README 边界及引用解析 |
+| `fetch/read-integration.test.ts` | 本地 HTTP 与 Pi `read` 的实际分页；外网用例通过文件内环境开关启用 |
+| `fetch/model-read.test.ts` | 通过文件内环境开关启用真实模型会话，验证完整审查与定点查询 |

@@ -1,32 +1,32 @@
 # context-preview
 
-## 功能简介
+`/context-preview` 缓存并查看最近一次模型请求的原始请求体。
 
-通过 `/context-preview` 查看最近缓存的模型请求 payload；`start`、`stop`、`status` 控制和查看缓存状态。
+## 安装
 
-## 架构
-
-```mermaid
-flowchart LR
-  A["模型请求事件"] --> B["可控请求缓存"]
-  C["用户命令"] -->|"启停 / 查看"| B
-  B --> D["只读预览"]
+```sh
+pi install https://github.com/aqua2k1/pi-kits.git
 ```
 
-`index.ts` 监听 `before_provider_request` 并缓存请求；`../../shared/readonly-preview.ts` 提供只读预览。
+仓库包通过 [Pi 清单](../../package.json)加载本扩展。
 
-## 配置
+## 快速开始
 
-在 agent 目录的 `pi-kits.json` 中设置 `contextPreview`，修改后执行 `/reload`。以下为默认值：
+在 Pi 终端交互界面输入：
 
-```json
-{
-  "contextPreview": {
-    "enabled": true
-  }
-}
+```text
+/context-preview start
 ```
 
-缓存默认关闭，需先运行 `/context-preview start`。预览需要 TUI，共用 `terminal.editor`（默认 `nvim`）。
+发送一条消息，等待模型请求发出后输入：
 
-完整字段见[配置示例](../../pi-kits.example.json)。
+```text
+/context-preview
+```
+
+命令将最新缓存交给编辑器预览；编辑器设置见[配置](docs/configuration.md)。
+
+## 文档
+
+- [使用](docs/usage.md)
+- [配置](docs/configuration.md)

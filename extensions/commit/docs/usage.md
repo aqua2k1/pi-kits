@@ -10,7 +10,7 @@
 
 1. 确认暂存文件列表；重命名以「旧路径 → 新路径」展示。
 2. 选择生成模型。候选来自模型注册表，首项依次取配置模型、已记忆模型、当前会话模型；配置与记忆的字段见[配置](configuration.md)。
-3. 等待生成。生成提示词要求 Conventional Commits 格式，规则位于 [core.ts](../core.ts) 的 `COMMIT_SYSTEM_PROMPT`。
+3. 等待生成。生成提示词要求 Conventional Commits（`type(scope): description` 形式的提交信息）格式，规则位于 [core.ts](../core.ts) 的 `COMMIT_SYSTEM_PROMPT`。
 4. 审阅消息并选择操作：
 
 | 操作 | 结果 |
@@ -19,13 +19,13 @@
 | 重新生成 | 保留所选模型，重新读取暂存区 diff 并生成 |
 | 取消 | 结束流程，保留暂存变更 |
 
-TUI 模型选择器支持输入模糊过滤、↑↓ 选择、回车确认和 Esc 取消；RPC 使用普通选择框。
+TUI（终端交互界面）模型选择器支持输入模糊过滤、↑↓ 选择、回车确认和 Esc 取消；RPC（远程过程调用模式）使用普通选择框。
 
 TUI 审阅只展示消息前 15 行，提交使用完整消息；RPC 在选择框标题中展示完整消息。
 
 文件确认或模型选择取消时流程结束；暂存区为空时显示提示；生成失败或超时时显示错误并结束。
 
-生成完成通知由 `notify.enabled` 控制；共享通知能力见[共享库](../../../shared/README.md)。
+生成完成通知由[配置](configuration.md)中的 `notify.enabled` 控制；共享通知能力见[共享库](../../../shared/README.md)。
 
 ## pi --commit
 
@@ -33,4 +33,4 @@ TUI 审阅只展示消息前 15 行，提交使用完整消息；RPC 在选择�
 pi --commit
 ```
 
-启动标志在 `session_start` 原因为 `startup` 时派发一次 [`/commit`](#commit)。这次流程提交成功后调用 Pi 关闭接口；取消或失败时保留会话。
+启动标志在 `session_start` 原因为 `startup` 时派发 [`/commit`](#commit)。这次流程提交成功后调用 Pi 关闭接口；取消或失败时保留会话。
