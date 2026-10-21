@@ -1,3 +1,5 @@
+import { Type } from "typebox";
+import { Value } from "typebox/value";
 import type { RuntimeCommand, RuntimeOptions } from "../index.ts";
 
 export type CodexReviewTarget =
@@ -8,9 +10,15 @@ export type CodexReviewTarget =
 
 export type CodexConfig = { runtime_args: string[] };
 const TASK_LIMIT = 64 * 1024;
+const objectSchema = Type.Object({});
+const configSchema = Type.Object({
+  runtime_args: Type.Optional(
+    Type.Union([Type.String(), Type.Array(Type.String())]),
+  ),
+});
 
 function record(value: unknown, name: string): Record<string, unknown> {
-  if (!value || typeof value !== "object" || Array.isArray(value))
+  if (!Value.Check(objectSchema, value))
     throw new Error(`Codex ${name} must be an object`);
   return value as Record<string, unknown>;
 }
@@ -28,15 +36,17 @@ function text(value: unknown, name: string): string {
  */
 export function parseCodexConfig(config: Record<string, unknown>): CodexConfig {
   record(config, "config");
+  if (!Value.Check(configSchema, config))
+    throw new Error(
+      Array.isArray(config.runtime_args)
+        ? "Codex runtime_args must contain only strings"
+        : "Codex runtime_args must be CSV or an array of strings",
+    );
   const raw = config.runtime_args;
   const values =
     raw === undefined ? [] : typeof raw === "string" ? raw.split(",") : raw;
-  if (!Array.isArray(values))
-    throw new Error("Codex runtime_args must be CSV or an array of strings");
   const args: CodexConfig["runtime_args"] = [];
   for (const value of values) {
-    if (typeof value !== "string")
-      throw new Error("Codex runtime_args must contain only strings");
     const arg = value.trim();
     if (!arg || /\p{Cc}/u.test(value))
       throw new Error(

@@ -37,6 +37,22 @@ test("Pi config preserves omission and normalizes only supplied fields", () => {
   assert.deepEqual(raw.disallowed_tools, [" edit ", "write", "edit", ""]);
 });
 
+test("Pi schema validates inherit_context and trims all prompt-mode whitespace", () => {
+  for (const inherit_context of [true, false]) {
+    assert.deepEqual(parsePiConfig({ inherit_context }), { inherit_context });
+  }
+  assert.deepEqual(parsePiConfig({ inherit_context: undefined }), {});
+  for (const inherit_context of [null, 0, "false", [], {}]) {
+    assert.throws(
+      () => parsePiConfig({ inherit_context }),
+      /Pi inherit_context must be a boolean/,
+    );
+  }
+  assert.deepEqual(parsePiConfig({ prompt_mode: "\t\n\u00a0append\ufeff " }), {
+    prompt_mode: "append",
+  });
+});
+
 test("Pi tool lists support CSV/arrays, native and extension tool names", () => {
   for (const key of ["tools", "disallowed_tools"]) {
     for (const value of [

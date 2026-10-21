@@ -2,9 +2,39 @@ import { type Dirent, readdirSync, readFileSync, statSync } from "node:fs";
 import { basename, join } from "node:path";
 import { parseFrontmatter } from "@earendil-works/pi-coding-agent";
 import { getAgentDir } from "@pi-kits/config";
+import { Type } from "typebox";
+import { Value } from "typebox/value";
 import type { RuntimeId } from "./runtime/index.ts";
 
 const MAX_FILE_BYTES = 64 * 1024;
+
+const NonEmptyString = Type.With(Type.String({ pattern: "\\S" }), {
+  description: "must be a non-empty string",
+});
+const BooleanField = Type.With(Type.Boolean(), {
+  description: "must be a boolean",
+});
+const RuntimeConfigSchema = Type.With(
+  Type.Refine(
+    Type.Record(Type.String(), Type.Unknown()),
+    (value) =>
+      Object.getPrototypeOf(value) === Object.prototype ||
+      Object.getPrototypeOf(value) === null,
+  ),
+  { description: "must be a non-null plain object" },
+);
+
+const AgentFrontmatterSchema = Type.Object({
+  description: Type.Optional(NonEmptyString),
+  display_name: Type.Optional(NonEmptyString),
+  runtime: Type.Optional(NonEmptyString),
+  runtime_config: Type.Optional(RuntimeConfigSchema),
+  model: Type.Optional(NonEmptyString),
+  thinking: Type.Optional(NonEmptyString),
+  enabled: Type.Optional(BooleanField),
+  run_in_background: Type.Optional(BooleanField),
+  keep_alive: Type.Optional(BooleanField),
+});
 
 export interface AgentDefinition {
   name: string;
@@ -49,49 +79,30 @@ export function parseAgentDefinition(
     fail("invalid YAML frontmatter");
   }
   const { frontmatter: fields, body } = parsed;
-  if (!fields || typeof fields !== "object" || Array.isArray(fields)) {
-    fail("YAML frontmatter must be an object");
+  if (!Value.Check(AgentFrontmatterSchema, fields)) {
+    const error = Value.Errors(AgentFrontmatterSchema, fields)[0];
+    const field = error?.instancePath.slice(
+      1,
+    ) as keyof typeof AgentFrontmatterSchema.properties;
+    if (!field) fail("YAML frontmatter must be an object");
+    const description = AgentFrontmatterSchema.properties[field]?.description;
+    fail(`${field} ${description ?? "does not match the schema"}`);
   }
-  const runtimeConfig = fields.runtime_config;
-  if (
-    runtimeConfig !== undefined &&
-    (runtimeConfig === null ||
-      typeof runtimeConfig !== "object" ||
-      Array.isArray(runtimeConfig) ||
-      (Object.getPrototypeOf(runtimeConfig) !== Object.prototype &&
-        Object.getPrototypeOf(runtimeConfig) !== null))
-  ) {
-    fail("runtime_config must be a non-null plain object");
-  }
-  const string = (field: string): string | undefined => {
-    const value = fields[field];
-    if (value === undefined) return undefined;
-    if (typeof value !== "string" || !value.trim()) {
-      fail(`${field} must be a non-empty string`);
-    }
-    return value.trim();
-  };
-  const boolean = (field: string): boolean | undefined => {
-    const value = fields[field];
-    if (value === undefined) return undefined;
-    if (typeof value !== "boolean") fail(`${field} must be a boolean`);
-    return value;
-  };
-  const runtime = string("runtime");
+  const runtime = fields.runtime?.trim();
   return {
     name,
     ...(runtime ? { runtime } : {}),
-    ...(runtimeConfig !== undefined
-      ? { runtimeConfig: runtimeConfig as Record<string, unknown> }
+    ...(fields.runtime_config !== undefined
+      ? { runtimeConfig: fields.runtime_config }
       : {}),
-    description: string("description") ?? name,
-    displayName: string("display_name"),
-    model: string("model"),
-    thinking: string("thinking"),
+    description: fields.description?.trim() ?? name,
+    displayName: fields.display_name?.trim(),
+    model: fields.model?.trim(),
+    thinking: fields.thinking?.trim(),
     systemPrompt: body.trim(),
-    enabled: boolean("enabled") ?? true,
-    runInBackground: boolean("run_in_background"),
-    keepAlive: boolean("keep_alive"),
+    enabled: fields.enabled ?? true,
+    runInBackground: fields.run_in_background,
+    keepAlive: fields.keep_alive,
     source,
     sourcePath,
   };

@@ -31,7 +31,7 @@ test("Codex config normalizes CSV/arrays without mutation and is idempotent", ()
     assert.deepEqual(parseCodexConfig(parsed), parsed);
     assert.deepEqual(config, before);
   }
-  for (const config of [{}, { runtime_args: [] }])
+  for (const config of [{}, { runtime_args: undefined }, { runtime_args: [] }])
     assert.deepEqual(parseCodexConfig(config), { runtime_args: [] });
 });
 

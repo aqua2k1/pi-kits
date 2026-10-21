@@ -1,3 +1,5 @@
+import { Type } from "typebox";
+import { Value } from "typebox/value";
 import type {
   RuntimeCallConfig,
   RuntimeCommand,
@@ -11,24 +13,25 @@ export type PiConfig = {
   inherit_context?: boolean;
 };
 
-function toolNames(value: unknown, field: string): string[] {
-  if (typeof value !== "string" && !Array.isArray(value)) {
-    throw new Error(`Pi ${field} must be a CSV string or string array`);
-  }
-  const items: unknown[] =
+const objectSchema = Type.Object({});
+const toolListSchema = Type.Union([Type.String(), Type.Array(Type.String())]);
+const configSchema = Type.Object({
+  tools: Type.Optional(toolListSchema),
+  disallowed_tools: Type.Optional(toolListSchema),
+  prompt_mode: Type.Optional(
+    Type.Union([Type.Literal("replace"), Type.Literal("append")]),
+  ),
+  inherit_context: Type.Optional(Type.Boolean()),
+});
+
+function toolNames(value: string | string[], field: string): string[] {
+  const items =
     typeof value === "string"
       ? value.trim() === "none"
         ? []
         : value.split(",")
       : value;
-  const names = items
-    .map((item) => {
-      if (typeof item !== "string") {
-        throw new Error(`Pi ${field} must contain tool names`);
-      }
-      return item.trim();
-    })
-    .filter(Boolean);
+  const names = items.map((item) => item.trim()).filter(Boolean);
   // CLI lists are comma-delimited; native names and availability belong to Pi.
   if (names.some((name) => /[,\p{Cc}]/u.test(name))) {
     throw new Error(`Pi ${field} contains an invalid tool name`);
@@ -37,7 +40,7 @@ function toolNames(value: unknown, field: string): string[] {
 }
 
 function checkRecord(config: Record<string, unknown>): void {
-  if (!config || typeof config !== "object" || Array.isArray(config)) {
+  if (!Value.Check(objectSchema, config)) {
     throw new Error("Pi runtime configuration must be an object");
   }
 }
@@ -45,26 +48,37 @@ function checkRecord(config: Record<string, unknown>): void {
 /** Pi owns interpretation of its runtime-specific configuration and tasks. */
 export function parsePiConfig(config: Record<string, unknown>): PiConfig {
   checkRecord(config);
+  const normalized: Record<string, unknown> = {
+    ...config,
+    // Trim before enum validation, without mutating the caller's configuration.
+    prompt_mode:
+      typeof config.prompt_mode === "string"
+        ? config.prompt_mode.trim()
+        : config.prompt_mode,
+  };
+  if (!Value.Check(configSchema, normalized)) {
+    const field = Value.Errors(configSchema, normalized)[0]?.instancePath.split(
+      "/",
+    )[1];
+    if (field === "prompt_mode")
+      throw new Error("Pi prompt_mode must be replace or append");
+    if (field === "inherit_context")
+      throw new Error("Pi inherit_context must be a boolean");
+    throw new Error(
+      Array.isArray(normalized[field ?? ""])
+        ? `Pi ${field} must contain tool names`
+        : `Pi ${field} must be a CSV string or string array`,
+    );
+  }
   const result: PiConfig = {};
   for (const key of ["tools", "disallowed_tools"] as const) {
-    if (config[key] !== undefined) result[key] = toolNames(config[key], key);
+    if (normalized[key] !== undefined)
+      result[key] = toolNames(normalized[key], key);
   }
-  if (config.prompt_mode !== undefined) {
-    const mode = config.prompt_mode;
-    if (
-      typeof mode !== "string" ||
-      (mode.trim() !== "replace" && mode.trim() !== "append")
-    ) {
-      throw new Error("Pi prompt_mode must be replace or append");
-    }
-    result.prompt_mode = mode.trim() as "replace" | "append";
-  }
-  if (config.inherit_context !== undefined) {
-    if (typeof config.inherit_context !== "boolean") {
-      throw new Error("Pi inherit_context must be a boolean");
-    }
-    result.inherit_context = config.inherit_context;
-  }
+  if (normalized.prompt_mode !== undefined)
+    result.prompt_mode = normalized.prompt_mode;
+  if (normalized.inherit_context !== undefined)
+    result.inherit_context = normalized.inherit_context;
   return result;
 }
 

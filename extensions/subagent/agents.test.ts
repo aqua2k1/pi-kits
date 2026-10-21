@@ -332,6 +332,45 @@ Role`,
   assert.deepEqual(agent.runtimeConfig, config);
 });
 
+test("schema-validated metadata trims strings and preserves explicit false flags", () => {
+  const agent = parseAgentDefinition(
+    `---
+runtime: "  pi  "
+description: "  Reviewer  "
+display_name: "  Auditor  "
+model: "  provider/model  "
+thinking: "  high  "
+enabled: false
+run_in_background: false
+keep_alive: false
+runtime_config: { custom: null }
+---
+Role`,
+    "/agents/test.md",
+    "project",
+  );
+  assert.equal(agent.runtime, "pi");
+  assert.equal(agent.description, "Reviewer");
+  assert.equal(agent.displayName, "Auditor");
+  assert.equal(agent.model, "provider/model");
+  assert.equal(agent.thinking, "high");
+  assert.equal(agent.enabled, false);
+  assert.equal(agent.runInBackground, false);
+  assert.equal(agent.keepAlive, false);
+  assert.deepEqual(agent.runtimeConfig, { custom: null });
+  for (const whitespace of ["\t", "\u00a0", "\u3000"]) {
+    assert.throws(
+      () =>
+        parseAgentDefinition(
+          `---\ndescription: ${JSON.stringify(whitespace)}\n---\nRole`,
+          "/agents/test.md",
+          "project",
+        ),
+      /description must be a non-empty string/,
+    );
+  }
+});
+
 test("thinking levels are not restricted by the agent parser", () => {
   const agent = parseAgentDefinition(
     "---\nthinking: future-level\n---\nRole",
