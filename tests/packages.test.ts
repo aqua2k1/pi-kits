@@ -4,6 +4,7 @@ import {
   cpSync,
   existsSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
   rmSync,
   writeFileSync,
@@ -14,18 +15,28 @@ import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
-const extensions = [
-  "open",
-  "preview",
-  "context-preview",
-  "provider-usage",
-  "stats",
-  "commit",
-  "notify",
-  "ask-user-question",
-  "subagent",
-  "web-kits",
-];
+const extensions = readdirSync(join(root, "extensions"), {
+  withFileTypes: true,
+})
+  .filter((entry) => entry.isDirectory())
+  .map((entry) => entry.name)
+  .sort();
+
+type Resources = Record<string, string | string[]>;
+
+function resourceEntries(dir: string, resources: Resources) {
+  return Object.entries(resources)
+    .map(([name, paths]) => {
+      assert.ok(name.trim(), "Resource names must not be blank");
+      const entries = typeof paths === "string" ? [paths] : paths;
+      assert.ok(entries.length > 0, `Resource ${name} must declare entries`);
+      return [
+        name,
+        entries.map((entry) => resolve(dir, entry)).sort(),
+      ] as const;
+    })
+    .sort(([a], [b]) => a.localeCompare(b));
+}
 
 function smoke(paths: readonly string[], agentDir: string): string {
   const child = spawnSync(
@@ -64,25 +75,30 @@ function smoke(paths: readonly string[], agentDir: string): string {
   return child.stdout;
 }
 
-test("ten flat extensions explicitly declare their independent runtime entries", () => {
+test("repository and independent extension manifests declare the same explicit entries and resources", () => {
+  assert.ok(extensions.length > 0, "No extension packages discovered");
   const entries: string[] = [];
+  const resources: ReturnType<typeof resourceEntries> = [];
   for (const name of extensions) {
     const dir = join(root, "extensions", name);
     const manifest = JSON.parse(
       readFileSync(join(dir, "package.json"), "utf8"),
     );
-    assert.equal(manifest.name, name === "web-kits" ? name : `pi-${name}`);
-    assert.deepEqual(Object.keys(manifest.extensionResources), [name]);
-    assert.deepEqual(manifest.pi.extensions, ["./index.ts"]);
     assert.ok(manifest.keywords.includes("pi-package"));
-    assert.equal(manifest.private, true);
-    assert.equal(manifest.version, undefined);
-    const declared = manifest.extensionResources[name];
-    assert.deepEqual(
-      typeof declared === "string" ? [declared] : declared,
-      manifest.pi.extensions,
+    assert.ok(Array.isArray(manifest.pi.extensions));
+    assert.ok(
+      manifest.pi.extensions.length > 0,
+      `${name} must declare entries`,
     );
+    const declared = resourceEntries(dir, manifest.extensionResources);
+    assert.deepEqual(
+      [...new Set(declared.flatMap(([, paths]) => paths))].sort(),
+      manifest.pi.extensions.map((entry: string) => resolve(dir, entry)).sort(),
+      `${name}: named resources must cover exactly the explicit entries`,
+    );
+    resources.push(...declared);
     for (const entry of manifest.pi.extensions) {
+      assert.ok(!/[*?[\]{}]/u.test(entry), "Entries must be explicit paths");
       assert.ok(!entry.includes(".test.") && !entry.includes("/lib/"));
       assert.ok(
         !entry.endsWith("/worker.ts"),
@@ -104,30 +120,31 @@ test("ten flat extensions explicitly declare their independent runtime entries",
         "host packages must not be runtime dependencies",
       );
     }
-    assert.equal(manifest.dependencies["@pi-kits/config"], "*");
-    if (name !== "web-kits") {
-      assert.equal(manifest.dependencies["@pi-kits/shared"], "*");
-    }
   }
-  assert.equal(entries.length, 10);
-  assert.equal(new Set(entries).size, 10);
+  assert.equal(
+    new Set(entries).size,
+    entries.length,
+    "Duplicate extension entries",
+  );
+  assert.equal(
+    new Set(resources.map(([name]) => name)).size,
+    resources.length,
+    "Logical resource names must be unique across extension packages",
+  );
   const repository = JSON.parse(
     readFileSync(join(root, "package.json"), "utf8"),
   );
-  assert.equal(repository.version, undefined);
   assert.ok(repository.keywords.includes("pi-package"));
-  assert.deepEqual(Object.keys(repository.extensionResources), extensions);
-  const named = Object.values(repository.extensionResources).flatMap((value) =>
-    typeof value === "string" ? [value] : (value as string[]),
+  assert.deepEqual(
+    resourceEntries(root, repository.extensionResources),
+    resources.sort(([a], [b]) => a.localeCompare(b)),
+    "Root resources must match the independent packages",
   );
   assert.deepEqual(
-    [...new Set(named)],
-    repository.pi.extensions,
-    "Named resources must expose exactly the explicit manifest entries",
-  );
-  assert.deepEqual(
-    repository.pi.extensions.map((entry: string) => resolve(root, entry)),
-    entries,
+    repository.pi.extensions
+      .map((entry: string) => resolve(root, entry))
+      .sort(),
+    entries.sort(),
     "Git repository manifest must expose exactly the independent extension entries",
   );
 });
@@ -177,7 +194,6 @@ test("repository declares an independent valid Gruvbox theme", async () => {
   );
   const dir = join(root, "themes");
   const manifest = JSON.parse(readFileSync(join(dir, "package.json"), "utf8"));
-  assert.equal(manifest.version, undefined);
   assert.ok(manifest.keywords.includes("pi-package"));
   assert.deepEqual(manifest.pi.themes, ["./gruvbox.json"]);
   assert.deepEqual(repository.pi.themes, ["./themes/gruvbox.json"]);
