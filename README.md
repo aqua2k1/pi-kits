@@ -19,6 +19,7 @@ pi install https://github.com/aqua2k1/pi-kits.git
 | [context-preview](extensions/context-preview/README.md) | 查看模型请求 payload |
 | [provider-usage](extensions/provider-usage/README.md) | 显示服务商余额与额度 |
 | [stats](extensions/stats/README.md) | 生成 Token 和费用统计报告 |
+| [token-meter](extensions/token-meter/README.md) | 状态栏显示最近请求的 TTFT 和 TPS |
 | [handoff](extensions/handoff/README.md) | 克隆会话并生成交接摘要 |
 | [notify](extensions/notify/README.md) | 任务完成桌面通知 |
 | [ask-user-question](extensions/ask-user-question/README.md) | 单选、多选和自定义回答 |
@@ -35,7 +36,7 @@ pi install https://github.com/aqua2k1/pi-kits.git
 
 `terminal.editor` 仍用于 `preview` 和 `context-preview`，默认 `nvim`。旧配置中的 `terminal.enabled`、`gitUI`、`fileManager` 仅为兼容保留，不再控制扩展或启动程序。
 
-各扩展可通过 `enabled` 独立关闭。完整字段见[配置示例](pi-kits.example.json)和 [JSON Schema](pi-kits.schema.json)；架构与使用细节见各包 README。
+扩展可通过 `pi config` 独立关闭；提供 `enabled` 配置的扩展也可在配置文件中关闭。完整字段见[配置示例](pi-kits.example.json)和 [JSON Schema](pi-kits.schema.json)；架构与使用细节见各包 README。
 
 ## 开发
 
