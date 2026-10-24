@@ -16,6 +16,9 @@
   "scripts": {
     "test": "node --import tsx --test *.test.ts"
   },
+  "dependencies": {
+    "@pi-kits/shared": "*"
+  },
   "peerDependencies": {
     "@earendil-works/pi-coding-agent": "*"
   },

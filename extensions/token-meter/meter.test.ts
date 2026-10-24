@@ -3,7 +3,6 @@ import { test } from "node:test";
 import {
   calculateMetrics,
   createMeasurement,
-  formatStatus,
   recordText,
   startMessage,
   startRequest,
@@ -70,7 +69,6 @@ test("native duration works without a provider hook", () => {
     100_000,
   );
   assert.deepEqual(result, { ttftMs: undefined, tps: 63 });
-  assert.equal(formatStatus(result), "TTFT — · TPS 63 token/s");
 });
 
 test("invalid native duration falls back to observed request boundaries", () => {
@@ -97,13 +95,4 @@ test("invalid elapsed time never produces negative or infinite metrics", () => {
     calculateMetrics(state, { usage: { output: 315 }, stopReason: "stop" }, 0),
     { ttftMs: undefined, tps: undefined },
   );
-});
-
-test("format uses seconds to one decimal, rounded TPS, and placeholders", () => {
-  assert.equal(formatStatus(), "TTFT — · TPS —");
-  assert.equal(
-    formatStatus({ ttftMs: 849, tps: 62.6 }),
-    "TTFT 0.8s · TPS 63 token/s",
-  );
-  assert.equal(formatStatus({ ttftMs: 0 }), "TTFT 0.0s · TPS —");
 });

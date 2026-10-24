@@ -1,18 +1,13 @@
-import type {
-  ExtensionAPI,
-  ExtensionContext,
-} from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import {
   calculateMetrics,
   createMeasurement,
-  formatStatus,
   type Measurement,
   recordText,
   startMessage,
   startRequest,
 } from "./meter.ts";
-
-const STATUS_ID = "token-meter";
+import { formatTokenMeter, updateTokenMeterUi } from "./ui.ts";
 
 /** Clock injection keeps event-driven measurements deterministic in tests. */
 export default function tokenMeter(
@@ -25,18 +20,14 @@ export default function tokenMeter(
     measurement = undefined;
   }
 
-  function setStatus(ctx: ExtensionContext, text: string | undefined) {
-    if (ctx.mode === "tui") ctx.ui.setStatus(STATUS_ID, text);
-  }
-
   pi.on("session_start", (_event, ctx) => {
     reset();
-    setStatus(ctx, formatStatus());
+    updateTokenMeterUi(ctx, formatTokenMeter());
   });
 
   pi.on("session_shutdown", (_event, ctx) => {
     reset();
-    setStatus(ctx, undefined);
+    updateTokenMeterUi(ctx, "");
   });
 
   pi.on("turn_start", () => {
@@ -67,7 +58,7 @@ export default function tokenMeter(
   pi.on("message_end", (event, ctx) => {
     if (!measurement || event.message.role !== "assistant") return;
     const metrics = calculateMetrics(measurement, event.message, now());
-    setStatus(ctx, formatStatus(metrics));
+    updateTokenMeterUi(ctx, formatTokenMeter(metrics.ttftMs, metrics.tps));
     reset();
   });
 

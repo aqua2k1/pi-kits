@@ -52,6 +52,37 @@ answer construction and native non-TUI dialogs. UI depends on the business core
 and shared design primitives, not the other way around. Shared files are library
 exports only, never Pi extension manifest entries.
 
+## 共享信息行
+
+共享 UI 管理编辑器下方的单行 widget。当前完整布局为：
+
+```text
+[provider-usage：余额或套餐用量]       [token-meter：TTFT 与 TPS]
+```
+
+| 内容标识 | 位置 | 空串行为 |
+| --- | --- | --- |
+| `provider-usage` | 左对齐 | 清除用量内容 |
+| `token-meter` | 右对齐 | 清除指标内容 |
+
+完整布局在共享模块的 `ROW_LAYOUT` 中定义，扩展只按自身标识提交字符串：
+
+```ts
+import { setWidgetRow } from "@pi-kits/shared/ui/widget";
+
+setWidgetRow(ctx.ui, "provider-usage", "余额 110 CNY");
+setWidgetRow(ctx.ui, "token-meter", "TTFT 0.8s · TPS 63 token/s");
+setWidgetRow(ctx.ui, "provider-usage", ""); // 只清除用量内容
+```
+
+内容始终为字符串，空串清除该标识的内容。第四个参数为颜色，可取 `dim`、`warning`，默认 `dim`。内容按可见列宽布局，两项之间至少留两列空白；空间不足时优先保留 token-meter 并截断 provider-usage，极窄终端同时截断 token-meter。组件在渲染时读取宽度与主题。
+
+仅有 provider-usage 时保持左对齐；仅有 token-meter 时保持右对齐；两项均为空时移除 widget。
+
+共享状态按 Pi UI 对象隔离。每个标识由对应扩展负责，扩展在会话关闭时提交空串清除自己的内容。共享 helper 负责完整布局和 widget 更新，扩展负责生命周期事件。
+
+`ui/widget-row.test.ts` 覆盖更新顺序、单侧清理、右对齐、窄屏、中文、主题变化和 UI 对象隔离。
+
 ## 工具结果渲染
 
 `ui/renderers.ts` 提供统一工具卡片渲染。折叠时显示名称、状态和有限预览，Ctrl+O 展开完整内容及结构化详情。流式输出、取消、错误和截断保留明确状态；渲染不改变模型可见内容或机器输出。

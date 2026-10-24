@@ -18,7 +18,7 @@ pi install https://github.com/aqua2k1/pi-kits.git
 /usage
 ```
 
-组件刷新并通知当前显示结果；认证读取自 Pi 模型注册表。
+组件刷新并通知当前显示结果；认证读取自 Pi 模型注册表。用量展示由共享信息行统一布局。
 
 ## 文档
 

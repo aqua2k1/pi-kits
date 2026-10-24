@@ -21,7 +21,6 @@ import type {
   ExtensionAPI,
   ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
-import { Text } from "@earendil-works/pi-tui";
 import { readPiKitsConfig } from "@pi-kits/config";
 import { chatgptSource } from "./chatgpt.js";
 import { deepseekSource } from "./deepseek.js";
@@ -30,9 +29,9 @@ import {
   type Registry,
   type Ui,
   type UsageData,
-  WIDGET_ID,
   type WidgetSource,
 } from "./source.js";
+import { updateProviderUsageUi } from "./ui.ts";
 
 const sources: WidgetSource[] = [deepseekSource, chatgptSource];
 
@@ -54,29 +53,19 @@ export default function (pi: ExtensionAPI) {
   let fetchGen = 0;
   /** 各 source 最近一次成功的 UsageData（不含占位/stale）。 */
   const caches = new Map<string, UsageData>();
-  /** 当前渲染快照（不含主题）；factory 渲染时重读。 */
+  /** 当前展示结果，同时用于手动刷新通知。 */
   let display: { line: string; isWarning: boolean } | null = null;
 
   function setLine(data: UsageData | undefined) {
     if (!ui) return;
     if (!data || !source) {
       display = null;
-      ui.setWidget(WIDGET_ID, undefined);
+      updateProviderUsageUi(ui, "");
       return;
     }
     const isWarning = source.isWarning(data);
     display = { line: data.line, isWarning };
-    // dim 与 footer token/cost 同色调；warning 为黄色预警。
-    ui.setWidget(
-      WIDGET_ID,
-      (_tui, theme) =>
-        new Text(
-          theme.fg(isWarning ? "warning" : "dim", display?.line ?? ""),
-          0,
-          0,
-        ),
-      { placement: "belowEditor" },
-    );
+    updateProviderUsageUi(ui, data.line, isWarning);
   }
 
   function showFailure(err?: unknown) {

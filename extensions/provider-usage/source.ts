@@ -9,7 +9,6 @@
 
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 
-export const WIDGET_ID = "provider-usage";
 // 轮询间隔 10 min；需要即时数据时用 /usage 主动刷新。
 export const INTERVAL_MS = 60 * 10 * 1000;
 // 代理路径实测单次请求 ~4.7s（EnvHttpProxyAgent 冷连接），5s 会稳定超时；15s 留足余量。

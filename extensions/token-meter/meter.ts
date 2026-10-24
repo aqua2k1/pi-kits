@@ -101,9 +101,3 @@ export function calculateMetrics(
     tps: calculateTps(state, response, endedAt),
   };
 }
-
-export function formatStatus({ ttftMs, tps }: Metrics = {}): string {
-  const ttft = ttftMs === undefined ? "—" : `${(ttftMs / 1000).toFixed(1)}s`;
-  const speed = tps === undefined ? "—" : `${Math.round(tps)} token/s`;
-  return `TTFT ${ttft} · TPS ${speed}`;
-}

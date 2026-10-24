@@ -1,6 +1,67 @@
-import type { Theme } from "@earendil-works/pi-coding-agent";
+import type { ExtensionContext, Theme } from "@earendil-works/pi-coding-agent";
 import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import { oneLine } from "./renderers.ts";
+
+type WidgetUi = Pick<ExtensionContext["ui"], "setWidget">;
+const ROW_LAYOUT = {
+  "provider-usage": "left",
+  "token-meter": "right",
+} as const;
+type RowItem = keyof typeof ROW_LAYOUT;
+type RowTone = "dim" | "warning";
+interface WidgetRow {
+  left: string;
+  right: string;
+  leftTone: RowTone;
+  rightTone: RowTone;
+}
+
+const ROW_WIDGET_ID = "pi-kits-info-row";
+const widgetRows = new WeakMap<WidgetUi, WidgetRow>();
+
+/** Shared below-editor layout. Callers identify content, not its position. */
+export function setWidgetRow(
+  ui: WidgetUi,
+  item: RowItem,
+  text: string,
+  tone: RowTone = "dim",
+): void {
+  const side = ROW_LAYOUT[item];
+  const row: WidgetRow = {
+    left: "",
+    right: "",
+    leftTone: "dim",
+    rightTone: "dim",
+    ...widgetRows.get(ui),
+    [side]: text,
+    [`${side}Tone`]: tone,
+  };
+  if (!row.left && !row.right) {
+    if (widgetRows.delete(ui)) ui.setWidget(ROW_WIDGET_ID, undefined);
+    return;
+  }
+  widgetRows.set(ui, row);
+  ui.setWidget(
+    ROW_WIDGET_ID,
+    (_tui, theme) => ({
+      render(width) {
+        if (width < 1) return [];
+        const style = (value: string, color: RowTone) =>
+          value ? theme.fg(color, oneLine(value)) : "";
+        const right = truncateToWidth(style(row.right, row.rightTone), width);
+        const rightWidth = visibleWidth(right);
+        const leftBudget =
+          rightWidth > 0 ? Math.max(0, width - rightWidth - 2) : width;
+        const left = truncateToWidth(style(row.left, row.leftTone), leftBudget);
+        const gap =
+          rightWidth > 0 ? width - visibleWidth(left) - rightWidth : 0;
+        return [left + " ".repeat(gap) + right];
+      },
+      invalidate() {},
+    }),
+    { placement: "belowEditor" },
+  );
+}
 
 /** Content coordinates relative to the rendered widget, for caller-owned hit testing. */
 export function widgetContentBounds(width: number) {

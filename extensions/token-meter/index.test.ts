@@ -8,6 +8,7 @@ import type {
 import tokenMeter from "./index.ts";
 
 type Handler = (event: unknown, ctx: ExtensionContext) => unknown;
+type Widget = Parameters<ExtensionContext["ui"]["setWidget"]>[1];
 
 function host(mode: ExtensionContext["mode"] = "tui") {
   let time = 0;
@@ -21,9 +22,20 @@ function host(mode: ExtensionContext["mode"] = "tui") {
   const ctx = {
     mode,
     ui: {
-      setStatus(key: string, value: string | undefined) {
-        assert.equal(key, "token-meter");
-        updates.push(value);
+      setWidget(_key: string, widget: Widget) {
+        if (widget === undefined) {
+          updates.push(undefined);
+          return;
+        }
+        assert.equal(typeof widget, "function");
+        if (typeof widget !== "function") return;
+        const component = widget(
+          {} as Parameters<typeof widget>[0],
+          { fg: (_tone: string, text: string) => text } as Parameters<
+            typeof widget
+          >[1],
+        );
+        updates.push(component.render(80).join("\n").trimStart());
       },
     },
   } as unknown as ExtensionContext;

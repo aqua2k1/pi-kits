@@ -8,7 +8,7 @@ import type {
 import { useAgentDir } from "../../tests/helpers/agent-dir.ts";
 import { chatgptSource } from "./chatgpt.js";
 import providerUsage from "./index.js";
-import { INTERVAL_MS, WIDGET_ID } from "./source.js";
+import { INTERVAL_MS } from "./source.js";
 
 type Handler = (event: unknown, ctx: ExtensionContext) => unknown;
 type Command = Parameters<ExtensionAPI["registerCommand"]>[1];
@@ -76,8 +76,7 @@ function host(t: TestContext, config?: unknown) {
     mode: "tui",
     hasUI: true,
     ui: {
-      setWidget: (id: string, content: Widget, options?: WidgetOptions) => {
-        if (id !== WIDGET_ID) return;
+      setWidget: (_id: string, content: Widget, options?: WidgetOptions) => {
         if (content !== undefined)
           assert.equal(options?.placement, "belowEditor");
         widget = content;
