@@ -14,6 +14,10 @@ function host(mode: ExtensionContext["mode"] = "tui") {
   let time = 0;
   const handlers = new Map<string, Handler>();
   const updates: Array<string | undefined> = [];
+  let component: { render(width: number): string[] } | undefined;
+  const draw = () => {
+    updates.push(component?.render(80).join("\n").trimStart());
+  };
   const pi = {
     on(name: string, handler: Handler) {
       handlers.set(name, handler);
@@ -24,18 +28,19 @@ function host(mode: ExtensionContext["mode"] = "tui") {
     ui: {
       setWidget(_key: string, widget: Widget) {
         if (widget === undefined) {
+          component = undefined;
           updates.push(undefined);
           return;
         }
         assert.equal(typeof widget, "function");
         if (typeof widget !== "function") return;
-        const component = widget(
-          {} as Parameters<typeof widget>[0],
+        component = widget(
+          { requestRender: draw } as Parameters<typeof widget>[0],
           { fg: (_tone: string, text: string) => text } as Parameters<
             typeof widget
           >[1],
         );
-        updates.push(component.render(80).join("\n").trimStart());
+        draw();
       },
     },
   } as unknown as ExtensionContext;

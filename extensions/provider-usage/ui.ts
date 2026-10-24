@@ -1,10 +1,19 @@
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { setWidgetRow } from "@pi-kits/shared/ui/widget";
+import { acquireWidgetPart, type WidgetPart } from "@pi-kits/shared/ui/widget";
+
+const parts = new WeakMap<ExtensionContext["ui"], WidgetPart>();
 
 export function updateProviderUsageUi(
   ui: ExtensionContext["ui"],
   text: string,
   isWarning = false,
 ): void {
-  setWidgetRow(ui, "provider-usage", text, isWarning ? "warning" : "dim");
+  if (text === "") {
+    parts.get(ui)?.dispose();
+    parts.delete(ui);
+    return;
+  }
+  const part = parts.get(ui) ?? acquireWidgetPart(ui, "provider-usage");
+  parts.set(ui, part);
+  part.update(text, isWarning ? "warning" : "dim");
 }

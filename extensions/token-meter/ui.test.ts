@@ -20,7 +20,7 @@ test("UI formats seconds, rounded TPS and placeholders, then clears its widget",
     if (typeof widget !== "function")
       throw new Error("Expected widget factory");
     return widget(
-      {} as Parameters<typeof widget>[0],
+      { requestRender() {} } as Parameters<typeof widget>[0],
       { fg: (_tone: string, text: string) => text } as Parameters<
         typeof widget
       >[1],

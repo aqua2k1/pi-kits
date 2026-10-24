@@ -57,7 +57,7 @@ test("provider usage and token meter share one widget and release only their sid
     if (typeof widget !== "function")
       throw new Error("Expected widget factory");
     const component = widget(
-      {} as Parameters<typeof widget>[0],
+      { requestRender() {} } as Parameters<typeof widget>[0],
       { fg: (_tone: string, text: string) => text } as Parameters<
         typeof widget
       >[1],

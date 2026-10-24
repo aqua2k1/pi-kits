@@ -150,7 +150,7 @@ function host(t: TestContext, config?: unknown) {
       if (Array.isArray(widget)) return widget.join("\n");
       const theme = { fg: (color: string, text: string) => `${color}:${text}` };
       const component = widget(
-        {} as Parameters<typeof widget>[0],
+        { requestRender() {} } as Parameters<typeof widget>[0],
         theme as Parameters<typeof widget>[1],
       );
       return component.render(200).join("\n");

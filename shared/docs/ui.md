@@ -65,23 +65,28 @@ exports only, never Pi extension manifest entries.
 | `provider-usage` | 左对齐 | 清除用量内容 |
 | `token-meter` | 右对齐 | 清除指标内容 |
 
-完整布局在共享模块的 `ROW_LAYOUT` 中定义，扩展只按自身标识提交字符串：
+完整布局在 `ui/widget-row.ts` 的 `ROW_LAYOUT` 中定义，经 `@pi-kits/shared/ui/widget` 导出。扩展获取自身子组件的写入句柄：
 
 ```ts
-import { setWidgetRow } from "@pi-kits/shared/ui/widget";
+import { acquireWidgetPart } from "@pi-kits/shared/ui/widget";
 
-setWidgetRow(ctx.ui, "provider-usage", "余额 110 CNY");
-setWidgetRow(ctx.ui, "token-meter", "TTFT 0.8s · TPS 63 token/s");
-setWidgetRow(ctx.ui, "provider-usage", ""); // 只清除用量内容
+const component = acquireWidgetPart(ctx.ui, "token-meter");
+component.update("TTFT 0.8s · TPS 63 token/s");
+component.update(""); // 隐藏内容，保留句柄
+component.dispose(); // 释放组件
 ```
 
-内容始终为字符串，空串清除该标识的内容。第四个参数为颜色，可取 `dim`、`warning`，默认 `dim`。内容按可见列宽布局，两项之间至少留两列空白；空间不足时优先保留 token-meter 并截断 provider-usage，极窄终端同时截断 token-meter。组件在渲染时读取宽度与主题。
+`update()` 的内容始终为字符串；第二个参数为颜色，可取 `dim`、`warning`，默认 `dim`。每个子组件独立持有文本和颜色，共享父组件只读取子组件的渲染结果。
 
-仅有 provider-usage 时保持左对齐；仅有 token-meter 时保持右对齐；两项均为空时移除 widget。
+父组件首次更新时挂载一次。后续更新只修改对应子组件并通知父组件请求重绘，保持父组件和其他子组件的身份不变。释放或被新句柄替换的写入句柄忽略后续更新和重复释放。
 
-共享状态按 Pi UI 对象隔离。每个标识由对应扩展负责，扩展在会话关闭时提交空串清除自己的内容。共享 helper 负责完整布局和 widget 更新，扩展负责生命周期事件。
+内容按可见列宽布局，两项之间至少留两列空白；空间不足时优先保留 token-meter 并截断 provider-usage，极窄终端同时截断 token-meter。组件在渲染时读取宽度与主题。
 
-`ui/widget-row.test.ts` 覆盖更新顺序、单侧清理、右对齐、窄屏、中文、主题变化和 UI 对象隔离。
+仅有 provider-usage 时保持左对齐；仅有 token-meter 时保持右对齐；两项文本均为空时渲染零行，最后一个组件释放后移除 widget。
+
+父组件注册表通过进程级版本化 Symbol 共享，确保 Pi 独立加载各扩展时连接同一个父组件；注册表内部使用 WeakMap，按 Pi UI 对象隔离。扩展在会话关闭时释放自己的句柄。共享 helper 负责完整布局和重绘，扩展负责生命周期事件。
+
+`ui/widget-row.test.ts` 覆盖独立子组件、父组件单次挂载、更新通知、失效句柄、右对齐、窄屏、主题变化和 UI 隔离。根目录的 `tests/widget-row-loader.test.ts` 在独立 Node 进程中通过 Pi 加载器验证两种加载顺序、交替刷新、父组件身份、单项清理与重新加载。
 
 ## 工具结果渲染
 
