@@ -149,6 +149,30 @@ test("views uses a single agent list and Enter immediately opens the selected vi
   assert.equal(source.listeners.size, 0);
 });
 
+test("views renders shortcuts and delete confirmation only once", () => {
+  for (const rows of [14, 16, 18, 24, 50]) {
+    for (const count of [0, 1, 20]) {
+      const source = new Source();
+      source.agents = Array.from({ length: count }, (_, i) => agent(`${i}`));
+      const h = panel(source, undefined, rows);
+      const lines = h.component.render(120);
+      assert.equal(
+        lines.filter((line) => line.includes("Enter open/focus")).length,
+        1,
+      );
+      if (count) {
+        h.component.handleInput("d");
+        const confirmation = h.component.render(120);
+        assert.equal(
+          confirmation.filter((line) => line.includes("Enter confirm")).length,
+          1,
+        );
+      }
+      h.component.dispose();
+    }
+  }
+});
+
 test("copy/delete keep the panel open and preserve full IDs without terminals", async () => {
   for (const [key, action] of [
     ["y", "copy"],
@@ -177,6 +201,32 @@ test("copy/delete keep the panel open and preserve full IDs without terminals", 
     h.component.dispose();
     assert.equal(source.listeners.size, 0);
   }
+});
+
+test("stop shortcut targets the selected agent and keeps the panel open", async () => {
+  const source = new Source();
+  source.agents = [agent("one"), agent("two")];
+  const actions: ViewChoice[] = [];
+  const h = panel(source, "two", 24, async (choice) => {
+    actions.push(choice);
+    return {};
+  });
+  assert.match(h.component.render(120).join("\n"), /s stop/);
+  h.component.handleInput("s");
+  h.component.handleInput("s");
+  assert.deepEqual(actions, [{ agentId: "two", action: "stop" }]);
+  await Promise.resolve();
+  assert.equal(h.completions, 0);
+  h.component.handleInput("d");
+  h.component.handleInput("s");
+  assert.equal(actions.length, 1);
+  h.component.dispose();
+
+  source.agents = [];
+  const empty = panel(source);
+  empty.component.handleInput("s");
+  assert.equal(empty.completions, 0);
+  empty.component.dispose();
 });
 
 test("callbacks can close the panel without returning an action for execution", async () => {

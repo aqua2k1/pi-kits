@@ -812,6 +812,36 @@ test("resume tool respects retained background preferences and aborted callers n
   assert.equal(resumed, 4);
 });
 
+test("views stop command delegates to the manager and reports failures", async (t) => {
+  const capture = registrations();
+  registerSubagents(capture.pi, {} as MuxAdapter);
+  const command = capture.commandHandlers.get("subagent:views");
+  assert.ok(command);
+  const stopped: string[] = [];
+  const notices: string[] = [];
+  t.mock.method(SubagentManager.prototype, "get", (id: string) => ({ id }));
+  t.mock.method(SubagentManager.prototype, "stop", (id: string) => {
+    stopped.push(id);
+    if (stopped.length > 1) throw new Error("Stop failed");
+    return { id };
+  });
+  const ctx = {
+    mode: "tui",
+    ui: {
+      setWidget() {},
+      setStatus() {},
+      notify(message: string) {
+        notices.push(message);
+      },
+    },
+  } as unknown as ExtensionCommandContext;
+  await command.handler("full-id stop", ctx);
+  assert.deepEqual(stopped, ["full-id"]);
+  assert.deepEqual(notices, []);
+  await command.handler("full-id stop", ctx);
+  assert.deepEqual(notices, ["Stop failed"]);
+});
+
 test("views command confirms deletion before execution and reports failures", async (t) => {
   const capture = registrations();
   registerSubagents(capture.pi, {} as MuxAdapter);

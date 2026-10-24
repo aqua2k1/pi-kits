@@ -416,7 +416,8 @@ export function registerSubagents(
   );
 
   pi.registerCommand("subagent:views", {
-    description: "View/control a subagent: [id] [open|focus|close|copy|delete]",
+    description:
+      "View/control a subagent: [id] [open|focus|close|copy|stop|delete]",
     async handler(args, ctx) {
       if (ctx.mode !== "tui") {
         ctx.ui.notify("Subagent views require interactive Pi.", "error");
@@ -427,7 +428,7 @@ export function registerSubagents(
         const tokens = args.trim().split(/\s+/).filter(Boolean);
         if (tokens.length > 2) {
           throw new Error(
-            "Usage: /subagent:views [id] [open|focus|close|copy|delete]",
+            "Usage: /subagent:views [id] [open|focus|close|copy|stop|delete]",
           );
         }
         let [id, action] = tokens;
@@ -443,6 +444,10 @@ export function registerSubagents(
                 case "copy":
                   await copyToClipboard(current.get(agentId).id);
                   return { closePanel: true };
+
+                case "stop":
+                  current.stop(agentId);
+                  return {};
 
                 case "delete":
                   await current.remove(agentId);
@@ -484,12 +489,13 @@ export function registerSubagents(
           )
             return;
           await current.remove(id);
-        } else if (action === "close") await current.closeView(id);
+        } else if (action === "stop") current.stop(id);
+        else if (action === "close") await current.closeView(id);
         else if (action === "open" || action === "focus") {
           await current.openView(id);
         } else {
           throw new Error(
-            "View action must be open, focus, close, copy, or delete.",
+            "View action must be open, focus, close, copy, stop, or delete.",
           );
         }
       } catch (error) {

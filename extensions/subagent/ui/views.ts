@@ -12,11 +12,13 @@ import {
 } from "@earendil-works/pi-tui";
 import {
   DockedPanelFrame,
+  type DockedPanelLayout,
   type DockedPanelLifecycle,
   dockedListBudget,
   dockedPanelLayout,
   runDockedPanel,
 } from "../../../shared/ui/docked-panel/index.ts";
+import type { AgentSnapshot } from "../manager.ts";
 import {
   type AgentSource,
   agentDisplayStatus,
@@ -26,7 +28,13 @@ import {
   oneLine,
 } from "./presentation.ts";
 
-export type ViewAction = "open" | "focus" | "close" | "copy" | "delete";
+export type ViewAction =
+  | "open"
+  | "focus"
+  | "close"
+  | "copy"
+  | "stop"
+  | "delete";
 export interface ViewChoice {
   agentId: string;
   action: ViewAction;
@@ -165,6 +173,9 @@ export class SubagentViewsPanel {
           void this.act({ agentId: agent.id, action: "close" });
         }
         return;
+      case "s":
+        void this.act({ agentId: agent.id, action: "stop" });
+        return;
       case "d":
         this.deleteId = agent.id;
         this.message = undefined;
@@ -211,106 +222,138 @@ export class SubagentViewsPanel {
     return { handled: true, focus: !this.finished };
   }
 
+  private hint(): string {
+    if (this.deleteId) return "Delete subagent? Enter confirm · Esc cancel";
+    return (
+      this.message ??
+      "Enter open/focus · y copy ID · c close view · s stop · d delete · Esc close"
+    );
+  }
+
+  private description(agents: AgentSnapshot[], agent?: AgentSnapshot): string {
+    if (this.deleteId) {
+      const deleting = agents.find((item) => item.id === this.deleteId);
+      return `Delete ${oneLine(deleting?.description ?? "subagent")} (${oneLine(this.deleteId)})?`;
+    }
+    return agent
+      ? agentHeader(agent, this.theme)
+      : "No subagents in this session";
+  }
+
+  private detail(agent: AgentSnapshot): string {
+    if (this.deleteId)
+      return "Closes terminal and removes record. Session files are retained.";
+    if (agent.sessionState === "closed")
+      return "Runtime released; result retained, resume unavailable";
+    if (!nativeViewAvailable(agent)) return "Terminal not ready; waiting…";
+    if (!agent.terminalId) return "Native view available; Enter to open";
+
+    const activity =
+      agent.sessionState === "interactive"
+        ? "User interaction"
+        : agentStats(agent);
+    return `${agent.id.slice(0, 8)} · ${agentDisplayStatus(agent)} · ${activity}`;
+  }
+
+  private renderCompact(
+    frame: DockedPanelFrame,
+    rows: number,
+    width: number,
+  ): string[] {
+    const { agents, agent } = this.selected();
+    const hint = this.hint();
+    const hasFeedback = !!(this.deleteId || this.message);
+    const description = this.description(agents, agent);
+    const status = agent ? agentDisplayStatus(agent) : "No agents";
+
+    if (agent && rows >= 2) {
+      this.hits = [{ y: rows >= 3 ? rows - 2 : 1, agentId: agent.id }];
+    }
+    return frame.finish([
+      ...frame.heading([], 0),
+      ...frame.compactBody({
+        progress: hasFeedback ? hint : status,
+        title: [hasFeedback ? hint : description],
+        detail: [],
+        kind: "value",
+        active: () => [
+          truncateToWidth(
+            agent ? agentHeader(agent, this.theme) : "No subagents",
+            width,
+          ),
+        ],
+      }),
+    ]);
+  }
+
+  private appendAgentList(
+    lines: string[],
+    layout: DockedPanelLayout,
+    width: number,
+    agents: AgentSnapshot[],
+    index: number,
+  ): void {
+    const { budget, visible } = dockedListBudget(
+      layout,
+      lines.length,
+      0,
+      agents.length,
+    );
+    if (!agents.length || !budget) return;
+
+    const items = agents.map((agent) => ({
+      value: agent.id,
+      label: agentHeader(agent, this.theme),
+    }));
+    const list = new SelectList(items, visible, {
+      selectedPrefix: (text) => this.theme.fg("accent", text),
+      selectedText: (text) => this.theme.fg("accent", text),
+      description: (text) => this.theme.fg("muted", text),
+      scrollInfo: (text) => this.theme.fg("dim", text),
+      noMatch: (text) => this.theme.fg("warning", text),
+    });
+    list.setSelectedIndex(index);
+    const first = Math.max(
+      0,
+      Math.min(index - Math.floor(visible / 2), items.length - visible),
+    );
+    this.hits = items.slice(first, first + visible).map((item, offset) => ({
+      y: lines.length + offset,
+      agentId: item.value,
+    }));
+    lines.push(...list.render(width).slice(0, budget));
+  }
+
   render(width: number): string[] {
     this.hits = [];
     if (width < 1) return [];
+
     const layout = {
       ...dockedPanelLayout(this.tui.terminal.rows),
       showTabs: false,
     };
+    // The hint is the only footer control; do not pin the last agent row.
+    if (layout.showHints) layout.pinnedLines -= 1;
     const frame = new DockedPanelFrame(
       layout,
       width,
       this.theme,
       "Subagent views",
     );
-    const lines = frame.heading([], 0);
+    if (layout.rows < 7) return this.renderCompact(frame, layout.rows, width);
+
     const { agents, index, agent } = this.selected();
-    const deleting = agents.find((item) => item.id === this.deleteId);
-    const description = this.deleteId
-      ? `Delete ${oneLine(deleting?.description ?? "subagent")} (${oneLine(this.deleteId)})?`
-      : agent
-        ? agentHeader(agent, this.theme)
-        : "No subagents in this session";
-    const hint = this.deleteId
-      ? "Delete subagent? Enter confirm · Esc cancel"
-      : (this.message ??
-        "Enter open/focus · y copy ID · c close view · d delete · Esc close");
-    const items = agents.map((item) => ({
-      value: item.id,
-      label: agentHeader(item, this.theme),
-    }));
-    if (layout.rows < 7) {
-      if (agent && layout.rows >= 2)
-        this.hits = [
-          { y: layout.rows >= 3 ? layout.rows - 2 : 1, agentId: agent.id },
-        ];
-      return frame.finish([
-        ...lines,
-        ...frame.compactBody({
-          progress:
-            this.deleteId || this.message
-              ? hint
-              : agent
-                ? agentDisplayStatus(agent)
-                : "No agents",
-          title: [this.deleteId || this.message ? hint : description],
-          detail: [],
-          kind: "value",
-          active: () => [
-            truncateToWidth(items[index]?.label ?? "No subagents", width),
-          ],
-        }),
-      ]);
-    }
-    lines.push(truncateToWidth(description, width));
+    const lines = frame.heading([], 0);
+    lines.push(truncateToWidth(this.description(agents, agent), width));
     if (agent) {
       lines.push(
-        truncateToWidth(
-          this.theme.fg(
-            "muted",
-            this.deleteId
-              ? "Closes terminal and removes record. Session files are retained."
-              : agent.sessionState === "closed"
-                ? "Runtime released; result retained, resume unavailable"
-                : nativeViewAvailable(agent)
-                  ? agent.terminalId
-                    ? `${agent.id.slice(0, 8)} · ${agentDisplayStatus(agent)} · ${agent.sessionState === "interactive" ? "User interaction" : agentStats(agent)}`
-                    : "Native view available; Enter to open"
-                  : "Terminal not ready; waiting…",
-          ),
-          width,
-        ),
+        truncateToWidth(this.theme.fg("muted", this.detail(agent)), width),
       );
     }
-    const { budget, visible } = dockedListBudget(
-      layout,
-      lines.length,
-      0,
-      items.length,
-    );
-    if (items.length && budget) {
-      const list = new SelectList(items, visible, {
-        selectedPrefix: (text) => this.theme.fg("accent", text),
-        selectedText: (text) => this.theme.fg("accent", text),
-        description: (text) => this.theme.fg("muted", text),
-        scrollInfo: (text) => this.theme.fg("dim", text),
-        noMatch: (text) => this.theme.fg("warning", text),
-      });
-      list.setSelectedIndex(index);
-      const startY = lines.length;
-      const rendered = list.render(width).slice(0, budget);
-      const first = Math.max(
-        0,
-        Math.min(index - Math.floor(visible / 2), items.length - visible),
-      );
-      this.hits = items.slice(first, first + visible).map((item, offset) => ({
-        y: startY + offset,
-        agentId: item.value,
-      }));
-      lines.push(...rendered);
-    }
-    lines.push(this.theme.fg("muted", hint));
+    this.appendAgentList(lines, layout, width, agents, index);
+
+    const hint = this.hint();
+    if (!layout.showHints) lines.push(this.theme.fg("muted", hint));
     return frame.finish(lines, hint);
   }
 }

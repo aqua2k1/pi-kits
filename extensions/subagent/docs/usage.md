@@ -134,6 +134,7 @@ runtime_config: { tools: [read], disallowed_tools: [write, edit],
 /subagent:views <完整任务ID> focus
 /subagent:views <完整任务ID> close
 /subagent:views <完整任务ID> copy
+/subagent:views <完整任务ID> stop
 /subagent:views <完整任务ID> delete
 ```
 
@@ -143,6 +144,7 @@ runtime_config: { tools: [read], disallowed_tools: [write, edit],
 | `open`、`focus`；Enter、单击任务行 | 打开或聚焦可输入的原生视图；首个在父窗格右侧，后续在最后存活视图下方 |
 | `close`；`c` | 关闭视图，执行中的任务继续运行 |
 | `copy`；`y` | 复制完整 ID；面板内复制成功后关闭面板 |
+| `stop`；`s` | 取消排队或执行中的受管任务，面板保持打开；独立原生交互通过原生终端控制 |
 | `delete`；`d` | 确认后清理资源并删除记录，保留会话文件 |
 | ↑↓、滚轮、PageUp、PageDown；Esc | 移动选择；关闭面板，删除确认期间 Esc 或 `n` 取消确认 |
 
