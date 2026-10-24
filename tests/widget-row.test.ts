@@ -63,7 +63,7 @@ test("provider usage and token meter share one widget and release only their sid
       >[1],
     );
     const line = component.render(100)[0];
-    assert.equal(visibleWidth(line), 100);
+    assert.ok(visibleWidth(line) <= 100);
     return stripTerminalSequences(line);
   }
 

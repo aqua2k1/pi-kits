@@ -67,8 +67,16 @@ for (const first of ["provider-usage", "token-meter"] as const) {
     const second =
       first === "provider-usage" ? "token-meter" : "provider-usage";
     const children = {
-      [first]: acquireWidgetPart(h.ui, first),
-      [second]: acquireWidgetPart(h.ui, second),
+      [first]: acquireWidgetPart(
+        h.ui,
+        first,
+        first === "provider-usage" ? 10 : 20,
+      ),
+      [second]: acquireWidgetPart(
+        h.ui,
+        second,
+        second === "provider-usage" ? 10 : 20,
+      ),
     };
     const usage = children["provider-usage"];
     const tokens = children["token-meter"];
@@ -99,8 +107,8 @@ for (const first of ["provider-usage", "token-meter"] as const) {
 
 test("empty strings hide children without destroying their ownership", () => {
   const h = host();
-  const usage = acquireWidgetPart(h.ui, "provider-usage");
-  const tokens = acquireWidgetPart(h.ui, "token-meter");
+  const usage = acquireWidgetPart(h.ui, "provider-usage", 10);
+  const tokens = acquireWidgetPart(h.ui, "token-meter", 20);
   usage.update("");
   tokens.update("");
   assert.deepEqual(h.render(), []);
@@ -115,9 +123,9 @@ test("empty strings hide children without destroying their ownership", () => {
 
 test("released or replaced writers cannot change the current children", () => {
   const h = host();
-  const old = acquireWidgetPart(h.ui, "token-meter");
+  const old = acquireWidgetPart(h.ui, "token-meter", 20);
   old.update("old");
-  const current = acquireWidgetPart(h.ui, "token-meter");
+  const current = acquireWidgetPart(h.ui, "token-meter", 20);
   current.update("current");
   old.update("stale");
   old.dispose();
@@ -125,7 +133,7 @@ test("released or replaced writers cannot change the current children", () => {
   current.dispose();
   current.update("after release");
   assert.equal(h.component, undefined);
-  const replacement = acquireWidgetPart(h.ui, "token-meter");
+  const replacement = acquireWidgetPart(h.ui, "token-meter", 20);
   replacement.update("new session");
   old.dispose();
   current.dispose();
@@ -135,17 +143,19 @@ test("released or replaced writers cannot change the current children", () => {
 
 test("the parent lays out read-only child output safely across widths and themes", () => {
   const h = host();
-  const usage = acquireWidgetPart(h.ui, "provider-usage");
-  const tokens = acquireWidgetPart(h.ui, "token-meter");
+  const usage = acquireWidgetPart(h.ui, "provider-usage", 10);
+  const tokens = acquireWidgetPart(h.ui, "token-meter", 20);
   const right = "TTFT 0.8s · TPS 63 token/s";
   usage.update("余额中文🙂".repeat(30));
   tokens.update(right);
   for (const width of [0, 1, 2, 10, 24, 25, 30, 80, 120]) {
     const lines = h.render(width);
-    assert.equal(lines.length, width === 0 ? 0 : 1);
+    assert.equal(lines.length, width === 0 ? 0 : 2);
     if (!width) continue;
-    assert.ok(visibleWidth(lines[0]) <= width);
-    if (width >= visibleWidth(right)) assert.ok(h.text(width).endsWith(right));
+    assert.ok(lines.every((line) => visibleWidth(line) <= width));
+    if (width >= visibleWidth(right)) {
+      assert.equal(stripTerminalSequences(lines[1]), right);
+    }
   }
   tokens.update("");
   usage.update("balance\n\x1b]52;c;payload\x07next");
@@ -159,8 +169,8 @@ test("the parent lays out read-only child output safely across widths and themes
 test("different UI contexts have independent parent widgets", () => {
   const first = host();
   const second = host();
-  const usage = acquireWidgetPart(first.ui, "provider-usage");
-  const tokens = acquireWidgetPart(second.ui, "token-meter");
+  const usage = acquireWidgetPart(first.ui, "provider-usage", 10);
+  const tokens = acquireWidgetPart(second.ui, "token-meter", 20);
   usage.update("first");
   tokens.update("second");
   assert.equal(first.text(), "first");
@@ -168,4 +178,42 @@ test("different UI contexts have independent parent widgets", () => {
   usage.dispose();
   assert.equal(second.text().trimStart(), "second");
   tokens.dispose();
+});
+
+test("arbitrary children reflow by priority as content and width change", () => {
+  const h = host();
+  const children = ["E", "D", "C", "B", "A"].map((id) => {
+    const part = acquireWidgetPart(h.ui, id, (id.charCodeAt(0) - 64) * 10);
+    part.update(id);
+    return part;
+  });
+  const plain = (width: number) => h.render(width).map(stripTerminalSequences);
+  const parent = h.component;
+  assert.deepEqual(plain(10), ["A        B", "C        D", "E"]);
+  children[3].update("");
+  assert.deepEqual(plain(10), ["A        C", "D        E"]);
+  const first = acquireWidgetPart(h.ui, "E", 0);
+  first.update("E");
+  assert.deepEqual(plain(10), ["E        A", "C        D"]);
+  assert.deepEqual(plain(1), ["E", "A", "C", "D"]);
+  assert.equal(h.component, parent);
+  assert.equal(h.mounts, 1);
+  for (const child of children) child.dispose();
+  first.dispose();
+  assert.equal(h.component, undefined);
+});
+
+test("invalid priorities are rejected before mounting a widget", () => {
+  const h = host();
+  for (const priority of [
+    Number.NaN,
+    Number.POSITIVE_INFINITY,
+    Number.NEGATIVE_INFINITY,
+  ]) {
+    assert.throws(
+      () => acquireWidgetPart(h.ui, "invalid", priority),
+      RangeError,
+    );
+  }
+  assert.equal(h.mounts, 0);
 });

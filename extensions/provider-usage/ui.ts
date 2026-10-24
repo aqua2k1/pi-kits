@@ -13,7 +13,7 @@ export function updateProviderUsageUi(
     parts.delete(ui);
     return;
   }
-  const part = parts.get(ui) ?? acquireWidgetPart(ui, "provider-usage");
+  const part = parts.get(ui) ?? acquireWidgetPart(ui, "provider-usage", 10);
   parts.set(ui, part);
   part.update(text, isWarning ? "warning" : "dim");
 }

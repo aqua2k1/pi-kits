@@ -16,7 +16,8 @@ export function updateTokenMeterUi(ctx: ExtensionContext, text: string): void {
     parts.delete(ctx.ui);
     return;
   }
-  const part = parts.get(ctx.ui) ?? acquireWidgetPart(ctx.ui, "token-meter");
+  const part =
+    parts.get(ctx.ui) ?? acquireWidgetPart(ctx.ui, "token-meter", 20);
   parts.set(ctx.ui, part);
   part.update(text);
 }
