@@ -230,11 +230,11 @@ for (const [name, paths] of [
   test(`Pi loads ${name} in isolation without extension errors`, (t) => {
     const dir = mkdtempSync(join(tmpdir(), "pi-kits-smoke-"));
     t.after(() => rmSync(dir, { recursive: true, force: true }));
-    assert.match(smoke(paths, dir), /--commit/);
+    assert.doesNotMatch(smoke(paths, dir), /--commit/);
   });
 }
 
-test("unified config disables all kit entries in the real Pi loader", (t) => {
+test("legacy disabled groups remain accepted by the real Pi loader", (t) => {
   const dir = mkdtempSync(join(tmpdir(), "pi-kits-disabled-"));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
   writeFileSync(
@@ -282,5 +282,5 @@ test("Git package loads with production-only workspace dependencies", (t) => {
   assert.equal(install.status, 0, install.stderr);
   assert.ok(existsSync(join(checkout, "node_modules/@pi-kits/config")));
   assert.equal(existsSync(join(checkout, "node_modules/typebox")), false);
-  assert.match(smoke([checkout], dir), /--commit/);
+  assert.doesNotMatch(smoke([checkout], dir), /--commit/);
 });

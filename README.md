@@ -1,6 +1,6 @@
 # pi-kits
 
-为 [Pi](https://pi.dev) 提供工作区工具、交互问答、提交与会话交接工作流、用量统计、Web 工具和 Gruvbox 主题。
+为 [Pi](https://pi.dev) 提供工作区工具、交互问答、会话交接工作流、用量统计、Web 工具和 Gruvbox 主题。
 
 ## 安装
 
@@ -19,7 +19,6 @@ pi install https://github.com/aqua2k1/pi-kits.git
 | [context-preview](extensions/context-preview/README.md) | 查看模型请求 payload |
 | [provider-usage](extensions/provider-usage/README.md) | 显示服务商余额与额度 |
 | [stats](extensions/stats/README.md) | 生成 Token 和费用统计报告 |
-| [commit](extensions/commit/README.md) | 生成并确认 Conventional Commits 提交 |
 | [handoff](extensions/handoff/README.md) | 克隆会话并生成交接摘要 |
 | [notify](extensions/notify/README.md) | 任务完成桌面通知 |
 | [ask-user-question](extensions/ask-user-question/README.md) | 单选、多选和自定义回答 |
@@ -27,6 +26,8 @@ pi install https://github.com/aqua2k1/pi-kits.git
 | [web-kits](extensions/web-kits/README.md) | Web 搜索、网页与 GitHub 内容获取 |
 
 `terminal` 扩展已从主线移除，原实现保留在 `archive/terminal` 分支；`/vim`、`/lg`、`/fm` 不再注册，建议通过 mux 启动相应程序。
+
+`commit` 扩展原实现保留在 `archive/commit` 分支；主线保留旧 `commit` 配置兼容，提交由编码 Agent 执行。
 
 ## 配置
 
