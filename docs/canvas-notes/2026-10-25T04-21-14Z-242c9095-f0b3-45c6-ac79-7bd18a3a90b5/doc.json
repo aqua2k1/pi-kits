@@ -1,0 +1,831 @@
+{
+  "version": 6,
+  "pages": [
+    {
+      "id": "7fa43f3e-4baf-4469-ac07-10042c7fa19a",
+      "title": "Canvas Note 通信流程｜三个工具与用户反馈闭环",
+      "blocks": [
+        {
+          "type": "text",
+          "spec": {
+            "md": "> **阅读重点：三个工具都先写 JSON；HTTP 只负责加载页面资源；文档同步和用户反馈走 `/ws` WebSocket。**\n\n这里区分两份持久化：`doc.json` 保存页面内容，**Pi 会话**保存反馈及交付状态。下面按当前源码实现绘制，不修改扩展代码。"
+          },
+          "align": "left",
+          "id": "0af8434c-0608-41ef-8133-4dccd1c2f8e0"
+        },
+        {
+          "type": "text",
+          "spec": {
+            "md": "## 01 · 三个工具：从模型调用到持久化\n\n每列从上到下读取。中间的文档修改均经过：**串行队列 → 读取当前 JSON → 校验整批操作 → version + 1 → 同目录临时文件 → rename 原子替换 `doc.json`**。"
+          },
+          "align": "left",
+          "id": "e7971d7e-7940-4bef-a032-dcf3a084e07d"
+        },
+        {
+          "id": "3ecc523e-0c6e-4468-a373-ff48d424d6c2",
+          "type": "chart",
+          "align": "left",
+          "spec": {
+            "animation": false,
+            "tooltip": {
+              "show": false
+            },
+            "series": [
+              {
+                "type": "graph",
+                "layout": "none",
+                "left": 60,
+                "right": 60,
+                "top": 25,
+                "bottom": 30,
+                "roam": false,
+                "data": [
+                  {
+                    "id": "0-0",
+                    "name": "new_page",
+                    "x": 0,
+                    "y": 0,
+                    "symbol": "roundRect",
+                    "symbolSize": [115, 36],
+                    "itemStyle": {
+                      "color": "#3659b7",
+                      "borderColor": "#3659b7",
+                      "borderWidth": 1
+                    },
+                    "label": {
+                      "color": "#fff",
+                      "fontSize": 10,
+                      "lineHeight": 15
+                    }
+                  },
+                  {
+                    "id": "0-1",
+                    "name": "title",
+                    "x": 0,
+                    "y": 95,
+                    "symbol": "roundRect",
+                    "symbolSize": [115, 49],
+                    "itemStyle": {
+                      "color": "#f4f6fa",
+                      "borderColor": "#3659b7",
+                      "borderWidth": 1
+                    },
+                    "label": {
+                      "color": "#273347",
+                      "fontSize": 10,
+                      "lineHeight": 15
+                    }
+                  },
+                  {
+                    "id": "0-2",
+                    "name": "创建空页\n设置 currentPage",
+                    "x": 0,
+                    "y": 190,
+                    "symbol": "roundRect",
+                    "symbolSize": [115, 49],
+                    "itemStyle": {
+                      "color": "#f4f6fa",
+                      "borderColor": "#3659b7",
+                      "borderWidth": 1
+                    },
+                    "label": {
+                      "color": "#273347",
+                      "fontSize": 10,
+                      "lineHeight": 15
+                    }
+                  },
+                  {
+                    "id": "0-3",
+                    "name": "不启动服务\n已有服务则 sync",
+                    "x": 0,
+                    "y": 285,
+                    "symbol": "roundRect",
+                    "symbolSize": [115, 49],
+                    "itemStyle": {
+                      "color": "#f4f6fa",
+                      "borderColor": "#3659b7",
+                      "borderWidth": 1
+                    },
+                    "label": {
+                      "color": "#273347",
+                      "fontSize": 10,
+                      "lineHeight": 15
+                    }
+                  },
+                  {
+                    "id": "1-0",
+                    "name": "insert_blocks",
+                    "x": 230,
+                    "y": 0,
+                    "symbol": "roundRect",
+                    "symbolSize": [115, 36],
+                    "itemStyle": {
+                      "color": "#168575",
+                      "borderColor": "#168575",
+                      "borderWidth": 1
+                    },
+                    "label": {
+                      "color": "#fff",
+                      "fontSize": 10,
+                      "lineHeight": 15
+                    }
+                  },
+                  {
+                    "id": "1-1",
+                    "name": "pageId? · index?\nblocks[]",
+                    "x": 230,
+                    "y": 95,
+                    "symbol": "roundRect",
+                    "symbolSize": [115, 49],
+                    "itemStyle": {
+                      "color": "#f4f6fa",
+                      "borderColor": "#168575",
+                      "borderWidth": 1
+                    },
+                    "label": {
+                      "color": "#273347",
+                      "fontSize": 10,
+                      "lineHeight": 15
+                    }
+                  },
+                  {
+                    "id": "1-2",
+                    "name": "分配 blockIds\n批量插入",
+                    "x": 230,
+                    "y": 190,
+                    "symbol": "roundRect",
+                    "symbolSize": [115, 49],
+                    "itemStyle": {
+                      "color": "#f4f6fa",
+                      "borderColor": "#168575",
+                      "borderWidth": 1
+                    },
+                    "label": {
+                      "color": "#273347",
+                      "fontSize": 10,
+                      "lineHeight": 15
+                    }
+                  },
+                  {
+                    "id": "1-3",
+                    "name": "启动 / 复用服务\nsync 完整文档",
+                    "x": 230,
+                    "y": 285,
+                    "symbol": "roundRect",
+                    "symbolSize": [115, 49],
+                    "itemStyle": {
+                      "color": "#f4f6fa",
+                      "borderColor": "#168575",
+                      "borderWidth": 1
+                    },
+                    "label": {
+                      "color": "#273347",
+                      "fontSize": 10,
+                      "lineHeight": 15
+                    }
+                  },
+                  {
+                    "id": "2-0",
+                    "name": "update_blocks",
+                    "x": 460,
+                    "y": 0,
+                    "symbol": "roundRect",
+                    "symbolSize": [115, 36],
+                    "itemStyle": {
+                      "color": "#a76720",
+                      "borderColor": "#a76720",
+                      "borderWidth": 1
+                    },
+                    "label": {
+                      "color": "#fff",
+                      "fontSize": 10,
+                      "lineHeight": 15
+                    }
+                  },
+                  {
+                    "id": "2-1",
+                    "name": "blocks[]\n每项含 blockId",
+                    "x": 460,
+                    "y": 95,
+                    "symbol": "roundRect",
+                    "symbolSize": [115, 49],
+                    "itemStyle": {
+                      "color": "#f4f6fa",
+                      "borderColor": "#a76720",
+                      "borderWidth": 1
+                    },
+                    "label": {
+                      "color": "#273347",
+                      "fontSize": 10,
+                      "lineHeight": 15
+                    }
+                  },
+                  {
+                    "id": "2-2",
+                    "name": "按 ID 修改 / 删除\n整批成功或失败",
+                    "x": 460,
+                    "y": 190,
+                    "symbol": "roundRect",
+                    "symbolSize": [115, 49],
+                    "itemStyle": {
+                      "color": "#f4f6fa",
+                      "borderColor": "#a76720",
+                      "borderWidth": 1
+                    },
+                    "label": {
+                      "color": "#273347",
+                      "fontSize": 10,
+                      "lineHeight": 15
+                    }
+                  },
+                  {
+                    "id": "2-3",
+                    "name": "启动 / 重启服务\nsync 完整文档",
+                    "x": 460,
+                    "y": 285,
+                    "symbol": "roundRect",
+                    "symbolSize": [115, 49],
+                    "itemStyle": {
+                      "color": "#f4f6fa",
+                      "borderColor": "#a76720",
+                      "borderWidth": 1
+                    },
+                    "label": {
+                      "color": "#273347",
+                      "fontSize": 10,
+                      "lineHeight": 15
+                    }
+                  }
+                ],
+                "links": [
+                  {
+                    "source": "0-0",
+                    "target": "0-1",
+                    "lineStyle": {
+                      "color": "#3659b7"
+                    }
+                  },
+                  {
+                    "source": "0-1",
+                    "target": "0-2",
+                    "lineStyle": {
+                      "color": "#3659b7"
+                    }
+                  },
+                  {
+                    "source": "0-2",
+                    "target": "0-3",
+                    "lineStyle": {
+                      "color": "#3659b7"
+                    }
+                  },
+                  {
+                    "source": "1-0",
+                    "target": "1-1",
+                    "lineStyle": {
+                      "color": "#168575"
+                    }
+                  },
+                  {
+                    "source": "1-1",
+                    "target": "1-2",
+                    "lineStyle": {
+                      "color": "#168575"
+                    }
+                  },
+                  {
+                    "source": "1-2",
+                    "target": "1-3",
+                    "lineStyle": {
+                      "color": "#168575"
+                    }
+                  },
+                  {
+                    "source": "2-0",
+                    "target": "2-1",
+                    "lineStyle": {
+                      "color": "#a76720"
+                    }
+                  },
+                  {
+                    "source": "2-1",
+                    "target": "2-2",
+                    "lineStyle": {
+                      "color": "#a76720"
+                    }
+                  },
+                  {
+                    "source": "2-2",
+                    "target": "2-3",
+                    "lineStyle": {
+                      "color": "#a76720"
+                    }
+                  }
+                ],
+                "edgeSymbol": ["none", "arrow"],
+                "edgeSymbolSize": 9,
+                "label": {
+                  "show": true
+                },
+                "lineStyle": {
+                  "width": 2,
+                  "opacity": 1
+                },
+                "silent": true
+              }
+            ],
+            "graphic": [
+              {
+                "type": "text",
+                "left": "15%",
+                "top": "21%",
+                "silent": true,
+                "style": {
+                  "text": "↓",
+                  "font": "16px sans-serif",
+                  "fill": "#3659b7"
+                }
+              },
+              {
+                "type": "text",
+                "left": "15%",
+                "top": "48%",
+                "silent": true,
+                "style": {
+                  "text": "↓",
+                  "font": "16px sans-serif",
+                  "fill": "#3659b7"
+                }
+              },
+              {
+                "type": "text",
+                "left": "15%",
+                "top": "75%",
+                "silent": true,
+                "style": {
+                  "text": "↓",
+                  "font": "16px sans-serif",
+                  "fill": "#3659b7"
+                }
+              },
+              {
+                "type": "text",
+                "left": "50%",
+                "top": "21%",
+                "silent": true,
+                "style": {
+                  "text": "↓",
+                  "font": "16px sans-serif",
+                  "fill": "#168575"
+                }
+              },
+              {
+                "type": "text",
+                "left": "50%",
+                "top": "48%",
+                "silent": true,
+                "style": {
+                  "text": "↓",
+                  "font": "16px sans-serif",
+                  "fill": "#168575"
+                }
+              },
+              {
+                "type": "text",
+                "left": "50%",
+                "top": "75%",
+                "silent": true,
+                "style": {
+                  "text": "↓",
+                  "font": "16px sans-serif",
+                  "fill": "#168575"
+                }
+              },
+              {
+                "type": "text",
+                "left": "85%",
+                "top": "21%",
+                "silent": true,
+                "style": {
+                  "text": "↓",
+                  "font": "16px sans-serif",
+                  "fill": "#a76720"
+                }
+              },
+              {
+                "type": "text",
+                "left": "85%",
+                "top": "48%",
+                "silent": true,
+                "style": {
+                  "text": "↓",
+                  "font": "16px sans-serif",
+                  "fill": "#a76720"
+                }
+              },
+              {
+                "type": "text",
+                "left": "85%",
+                "top": "75%",
+                "silent": true,
+                "style": {
+                  "text": "↓",
+                  "font": "16px sans-serif",
+                  "fill": "#a76720"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "type": "table",
+          "spec": {
+            "columns": ["工具", "输入与内容变化", "返回给 Pi / 模型"],
+            "rows": [
+              [
+                "new_page",
+                "{ title }；生成 pageId，追加空页并设为当前页。服务未启动时只落盘；服务已运行时同步。",
+                "pageId · documentPath · version（无 url）"
+              ],
+              [
+                "insert_blocks",
+                "{ pageId?, index?, blocks[] }；省略 pageId 使用当前页，无页则建“输出”页；每个 Block 生成稳定 ID。",
+                "pageId · blockIds[] · url · documentPath · version"
+              ],
+              [
+                "update_blocks",
+                "{ blocks: [{ blockId, type?, align?, spec? }] }；省略字段不变，spec 整体替换；type:null 删除；换类型须提供新 spec。",
+                "updated[] · removed[] · url · documentPath · version"
+              ]
+            ]
+          },
+          "align": "left",
+          "id": "b83d2790-1035-4c8c-ac5f-6e52aa0fdd19"
+        },
+        {
+          "id": "ecbd2917-d0a5-4334-8b61-74c70bea4d33",
+          "type": "text",
+          "align": "left",
+          "spec": {
+            "md": "### 工具返回 ≠ 浏览器渲染完成\n\n**不完全正确：工具会等待服务端读取并发送快照，但不会等待浏览器完成渲染；返回值是操作结果，不是真正的渲染结果。**\n\n```text\n模型调用 insert_blocks / update_blocks\n  │\n  ├─ 等待：校验、修改 JSON、原子落盘\n  ├─ 等待：启动 / 复用 Web 服务\n  ├─ 等待：sync() 读取完整文档并调用 WebSocket send\n  │          └──▶ 网络传输 → 浏览器接收 → DOM / 图表渲染\n  │                                      （不等待该链完成）\n  └─ 返回：ID、URL、documentPath、version 等操作结果\n```\n\n`sync()` 完成仅表示服务端这一轮读取与发送调用结束，不保证浏览器已收到、已绘制或渲染正确。没有浏览器连接时，工具也可以成功返回。当前协议没有“渲染成功 ACK”，也不会把截图作为工具结果返回。\n\n- `new_page` 不启动服务；已有服务时才等待一次 `sync()`。\n- HTTP GET 负责加载 HTML、JS、CSS 和本地渲染库；`/ws` WebSocket 负责完整 `{ type: \"snapshot\", doc }` 快照和反馈。\n- 浏览器按稳定 Block ID 协调 DOM / 图表，未变化内容不重绘。\n- 渲染错误通过 `render:error` **异步回报**，再触发模型修复；它不是原工具调用的同步返回结果。\n- 用户反馈的 `{ type: \"ack\", requestId }` 只确认反馈已接收进 Pi 会话，**也不是渲染成功确认**。\n\n因此应区分：**内容已保存 → 服务端已尝试推送 → 浏览器已渲染**。工具主要确认前两步；要核对真实画面，需要另行通过浏览器检查或截图。\n\n实现细节：`sync()` 内部会捕获同步错误并通知 UI，因此工具成功也不构成快照必达保证。动态工具结果位于 `structuredContent` / `details`，`content` 仅为固定提示。"
+          }
+        },
+        {
+          "type": "divider",
+          "spec": {},
+          "align": "left",
+          "id": "f98a4413-af8c-460c-aff7-9e836661689f"
+        },
+        {
+          "type": "text",
+          "spec": {
+            "md": "## 02 · 用户反馈：浏览器 → Pi 会话 → 模型\n\n用户可以跨页勾选多个 Block，再点击“回复”。弹窗固定本次选择的 **version + blockIds**。浏览器提交的是 ID 和回复文本，**所选 Block 的完整内容快照由服务端从权威 JSON 中补齐**。"
+          },
+          "align": "left",
+          "id": "8fa5a43b-b245-4a69-8151-6d4d280a61f6"
+        },
+        {
+          "id": "06e15278-5ebb-4d36-a800-b0a483a29698",
+          "type": "chart",
+          "align": "left",
+          "spec": {
+            "animation": false,
+            "tooltip": {
+              "show": false
+            },
+            "series": [
+              {
+                "type": "graph",
+                "layout": "none",
+                "left": 85,
+                "right": 85,
+                "top": 28,
+                "bottom": 30,
+                "data": [
+                  {
+                    "id": "0",
+                    "name": "① 浏览器提交\nID + version + reply",
+                    "x": 0,
+                    "y": 0,
+                    "symbol": "roundRect",
+                    "symbolSize": [165, 54],
+                    "itemStyle": {
+                      "color": "#eef4ff",
+                      "borderColor": "#4b6eb5",
+                      "borderWidth": 1
+                    },
+                    "label": {
+                      "color": "#273347",
+                      "fontSize": 10,
+                      "lineHeight": 16
+                    }
+                  },
+                  {
+                    "id": "1",
+                    "name": "② /ws 服务接收\n校验格式 / requestId",
+                    "x": 350,
+                    "y": 0,
+                    "symbol": "roundRect",
+                    "symbolSize": [165, 54],
+                    "itemStyle": {
+                      "color": "#eef4ff",
+                      "borderColor": "#4b6eb5",
+                      "borderWidth": 1
+                    },
+                    "label": {
+                      "color": "#273347",
+                      "fontSize": 10,
+                      "lineHeight": 16
+                    }
+                  },
+                  {
+                    "id": "2",
+                    "name": "③ 读取 doc.json\n核对版本 · 补全内容快照",
+                    "x": 350,
+                    "y": 100,
+                    "symbol": "roundRect",
+                    "symbolSize": [165, 54],
+                    "itemStyle": {
+                      "color": "#eef4ff",
+                      "borderColor": "#4b6eb5",
+                      "borderWidth": 1
+                    },
+                    "label": {
+                      "color": "#273347",
+                      "fontSize": 10,
+                      "lineHeight": 16
+                    }
+                  },
+                  {
+                    "id": "3",
+                    "name": "④ Feedback Inbox\n先 appendEntry 写入会话",
+                    "x": 0,
+                    "y": 100,
+                    "symbol": "roundRect",
+                    "symbolSize": [165, 54],
+                    "itemStyle": {
+                      "color": "#eef4ff",
+                      "borderColor": "#4b6eb5",
+                      "borderWidth": 1
+                    },
+                    "label": {
+                      "color": "#273347",
+                      "fontSize": 10,
+                      "lineHeight": 16
+                    }
+                  },
+                  {
+                    "id": "4",
+                    "name": "⑤ sendUserMessage\n以 followUp 交给 Pi",
+                    "x": 0,
+                    "y": 200,
+                    "symbol": "roundRect",
+                    "symbolSize": [165, 54],
+                    "itemStyle": {
+                      "color": "#eef8f4",
+                      "borderColor": "#29846c",
+                      "borderWidth": 1
+                    },
+                    "label": {
+                      "color": "#273347",
+                      "fontSize": 10,
+                      "lineHeight": 16
+                    }
+                  },
+                  {
+                    "id": "5",
+                    "name": "⑥ 模型处理反馈\n选择是否修改文档",
+                    "x": 350,
+                    "y": 200,
+                    "symbol": "roundRect",
+                    "symbolSize": [165, 54],
+                    "itemStyle": {
+                      "color": "#eef8f4",
+                      "borderColor": "#29846c",
+                      "borderWidth": 1
+                    },
+                    "label": {
+                      "color": "#273347",
+                      "fontSize": 10,
+                      "lineHeight": 16
+                    }
+                  },
+                  {
+                    "id": "6",
+                    "name": "⑦ 再调用工具\nupdate_blocks / insert_blocks",
+                    "x": 350,
+                    "y": 300,
+                    "symbol": "roundRect",
+                    "symbolSize": [165, 54],
+                    "itemStyle": {
+                      "color": "#eef8f4",
+                      "borderColor": "#29846c",
+                      "borderWidth": 1
+                    },
+                    "label": {
+                      "color": "#273347",
+                      "fontSize": 10,
+                      "lineHeight": 16
+                    }
+                  },
+                  {
+                    "id": "7",
+                    "name": "⑧ 完整 snapshot\n浏览器呈现新内容",
+                    "x": 0,
+                    "y": 300,
+                    "symbol": "roundRect",
+                    "symbolSize": [165, 54],
+                    "itemStyle": {
+                      "color": "#eef8f4",
+                      "borderColor": "#29846c",
+                      "borderWidth": 1
+                    },
+                    "label": {
+                      "color": "#273347",
+                      "fontSize": 10,
+                      "lineHeight": 16
+                    }
+                  }
+                ],
+                "links": [
+                  {
+                    "source": "0",
+                    "target": "1"
+                  },
+                  {
+                    "source": "1",
+                    "target": "2"
+                  },
+                  {
+                    "source": "2",
+                    "target": "3"
+                  },
+                  {
+                    "source": "3",
+                    "target": "4"
+                  },
+                  {
+                    "source": "4",
+                    "target": "5"
+                  },
+                  {
+                    "source": "5",
+                    "target": "6"
+                  },
+                  {
+                    "source": "6",
+                    "target": "7"
+                  }
+                ],
+                "edgeSymbol": ["none", "arrow"],
+                "edgeSymbolSize": 9,
+                "label": {
+                  "show": true
+                },
+                "lineStyle": {
+                  "color": "#788aa5",
+                  "width": 2,
+                  "opacity": 1
+                },
+                "silent": true
+              }
+            ],
+            "graphic": [
+              {
+                "type": "text",
+                "left": "48%",
+                "top": "7%",
+                "silent": true,
+                "style": {
+                  "text": "→",
+                  "font": "16px sans-serif",
+                  "fill": "#566a85"
+                }
+              },
+              {
+                "type": "text",
+                "left": "77%",
+                "top": "21%",
+                "silent": true,
+                "style": {
+                  "text": "↓",
+                  "font": "16px sans-serif",
+                  "fill": "#566a85"
+                }
+              },
+              {
+                "type": "text",
+                "left": "48%",
+                "top": "34%",
+                "silent": true,
+                "style": {
+                  "text": "←",
+                  "font": "16px sans-serif",
+                  "fill": "#566a85"
+                }
+              },
+              {
+                "type": "text",
+                "left": "20%",
+                "top": "47%",
+                "silent": true,
+                "style": {
+                  "text": "↓",
+                  "font": "16px sans-serif",
+                  "fill": "#566a85"
+                }
+              },
+              {
+                "type": "text",
+                "left": "48%",
+                "top": "60%",
+                "silent": true,
+                "style": {
+                  "text": "→",
+                  "font": "16px sans-serif",
+                  "fill": "#566a85"
+                }
+              },
+              {
+                "type": "text",
+                "left": "77%",
+                "top": "73%",
+                "silent": true,
+                "style": {
+                  "text": "↓",
+                  "font": "16px sans-serif",
+                  "fill": "#566a85"
+                }
+              },
+              {
+                "type": "text",
+                "left": "48%",
+                "top": "87%",
+                "silent": true,
+                "style": {
+                  "text": "←",
+                  "font": "16px sans-serif",
+                  "fill": "#566a85"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "type": "text",
+          "spec": {
+            "md": "### 线上实际传输的数据\n\n**浏览器 → 服务端（WebSocket）**\n```json\n{\n  \"type\": \"reply\",\n  \"requestId\": \"<本次提交唯一ID>\",\n  \"version\": 12,\n  \"blockIds\": [\"<block-1>\", \"<block-2>\"],\n  \"reply\": \"请把这两个块合并说明\"\n}\n```\n\n**服务端 → Feedback Inbox → Pi 会话 / 模型**\n```text\n{\n  requestId, version, reply,\n  blocks: [\n    { pageId, pageTitle, block: { id, type, align, spec } },\n    …\n  ]\n}\n```\n\n服务端用同一文件队列读取并校验当前文档，保证引用的是提交版本的内容。`sendUserMessage` 把带上述 JSON 的用户消息投递为 `followUp`，并关闭提示模板展开。模型收到完整所选内容，而不是只收到页面摘要。"
+          },
+          "align": "left",
+          "id": "1afbc218-3ed5-4aaa-ac04-cc926ae17fa7"
+        },
+        {
+          "type": "text",
+          "spec": {
+            "md": "### ACK 支线：已接收 ≠ 已回答\n\n```text\n服务端 onReply(feedback)\n  └─ Inbox: appendEntry(\"canvas-note-feedback\", feedback)\n       └─ pending 记录 + sendUserMessage(..., deliverAs:\"followUp\")\n            └─ onReply 返回 → WebSocket { type:\"ack\", requestId }\n                 └─ 浏览器清除本次选择、回复文本，关闭弹窗\n\n模型推理 / 调用工具 / 网页更新：沿另一条链继续，不等待其完成才 ACK。\n```\n\n- `message_end` 确认反馈消息正式进入上下文后，记录 `canvas-note-feedback-delivered` 并移出 pending。\n- 重载时从会话恢复待交付反馈；未成功进入上下文的记录，在下次 `before_agent_start` 以补交消息注入。\n- **反馈本身不修改 `doc.json`，模型普通文字回答也不会自动显示在画布。** 需要模型调用 `update_blocks` / `insert_blocks`，才能形成“反馈 → 修改 JSON → snapshot → 网页更新”的闭环。"
+          },
+          "align": "left",
+          "id": "4f54e8af-9dce-4144-9443-07ca27f66ee2"
+        },
+        {
+          "type": "table",
+          "spec": {
+            "columns": ["分支", "数据流 / 用户所见"],
+            "rows": [
+              [
+                "文档已更新或 ID 无效",
+                "服务端拒绝；返回 {type:'error', requestId, message}，不按过期版本生成反馈。浏览器保留输入，版本过期时重新打开回复窗口。"
+              ],
+              [
+                "请求重试",
+                "同一 requestId 的已成功提交去重；服务端还校验请求指纹（version / blockIds / reply），防止同 ID 换内容。会话 Inbox 按 requestId 防止再次注入。"
+              ],
+              [
+                "推理暂不可用",
+                "已持久化反馈保留为 pending，后续运行补交；ACK 不承诺本轮推理完成。"
+              ],
+              [
+                "渲染失败",
+                "浏览器 → /ws {type:'render:error', version, blockId, message} → 校验/去重 → pi.sendMessage(..., triggerTurn:true, deliverAs:'followUp') → 模型用工具修复；单扩展生命周期最多触发 3 次自动修复。"
+              ],
+              [
+                "服务停止 / 重启",
+                "关闭服务保留 JSON；下次插入或更新重启，浏览器以新的工具返回 URL 为准。仅创建空页不会重启。"
+              ]
+            ]
+          },
+          "align": "left",
+          "id": "b1b92809-a478-4c71-9826-a8900025ec72"
+        },
+        {
+          "type": "text",
+          "spec": {
+            "md": "## 03 · 源码定位\n\n| 位置 | 对应流程 |\n|---|---|\n| `extensions/canvas-note/index.ts` | 三个工具、串行编排、服务启动与 sync、反馈回调绑定 |\n| `extensions/canvas-note/core/model.ts` | 入参校验、ID、版本、批次变更、文件队列与原子替换 |\n| `extensions/canvas-note/server/index.ts` | HTTP 静态资源、`/ws`、完整 snapshot、reply / ack / error |\n| `extensions/canvas-note/server/protocol.ts` | 回复格式、版本检查、内容快照与请求指纹 |\n| `extensions/canvas-note/core/feedback.ts` | 反馈持久化、followUp、交付确认、重载补交 |\n| `extensions/canvas-note/web/client.js` | 多选、弹窗、提交、ACK 清理、快照协调渲染 |\n\n**你可以直接勾选本页任意几个块并点击顶部“回复”，用这份流程图验证反馈闭环。**"
+          },
+          "align": "left",
+          "id": "f646c5cf-c89b-457d-9a39-97ab0d7c14d7"
+        }
+      ]
+    }
+  ]
+}
