@@ -1,10 +1,12 @@
 import assert from "node:assert/strict";
 import * as contracts from "../../core/contracts.js";
 import * as chartTheme from "../../web/chart-theme.js";
+import * as htmlExport from "../../web/export-html.js";
 
 export const clientGlobals = {
   CanvasNoteContracts: contracts,
   CanvasNoteChartTheme: chartTheme,
+  CanvasNoteHtmlExport: htmlExport,
 };
 
 // vm.Script cannot link ESM. Bind static imports to the actual modules,
@@ -34,5 +36,9 @@ export function clientScript(source: string): string {
     );
   return source
     .replace(imported, "const {$1} = CanvasNoteContracts;\n")
-    .replace(themeImport, "const {$1} = CanvasNoteChartTheme;\n");
+    .replace(themeImport, "const {$1} = CanvasNoteChartTheme;\n")
+    .replace(
+      /^import\s*\{([^}]+)\}\s*from\s*"\.\/export-html\.js";\r?\n/m,
+      "const {$1} = CanvasNoteHtmlExport;\n",
+    );
 }

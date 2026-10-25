@@ -11,6 +11,7 @@ import {
   PageChangeKind,
 } from "../core/contracts.js";
 import { createChartTheme } from "./chart-theme.js";
+import { exportHtml } from "./export-html.js";
 
 {
   let chartThemeMode = "screen";
@@ -544,6 +545,7 @@ import { createChartTheme } from "./chart-theme.js";
     let pending = null;
     let lastSubmission = null;
     let preparingPrint = false;
+    let exportingHtml = false;
 
     function send(message) {
       if (socket?.readyState !== WebSocket.OPEN) return false;
@@ -568,7 +570,11 @@ import { createChartTheme } from "./chart-theme.js";
       $("reply").disabled = next.replyDisabled;
       $("clear").disabled = next.clearDisabled;
       $("shutdown").disabled = next.shutdownDisabled;
-      $("save-pdf").disabled = preparingPrint || !doc?.pages.length;
+      $("save-html").disabled =
+        exportingHtml || preparingPrint || !doc?.pages.length;
+      $("save-html").textContent = exportingHtml ? "Exporting…" : "Save HTML";
+      $("save-pdf").disabled =
+        exportingHtml || preparingPrint || !doc?.pages.length;
       $("save-pdf").textContent = preparingPrint ? "Preparing…" : "Save PDF";
       $("submit").disabled = next.submitDisabled;
       $("reply-text").readOnly = next.readOnly;
@@ -1024,8 +1030,35 @@ import { createChartTheme } from "./chart-theme.js";
 
     window.addEventListener("beforeprint", () => updateChartThemes("print"));
     window.addEventListener("afterprint", () => updateChartThemes("screen"));
+    $("save-html").addEventListener("click", async () => {
+      if (exportingHtml || preparingPrint || !doc?.pages.length) return;
+      exportingHtml = true;
+      $("export-status").textContent = "";
+      updateControls();
+      try {
+        await exportHtml({
+          title: document.title,
+          pages: pagesRoot,
+          charts: doc.pages.flatMap((page) =>
+            page.blocks
+              .filter(
+                (block) =>
+                  block.type === BlockKind.Chart && blocks.get(block.id)?.chart,
+              )
+              .map((block) => ({ id: block.id, option: block.spec })),
+          ),
+          theme: screenChartTheme,
+        });
+        $("export-status").textContent = "HTML downloaded";
+      } catch (error) {
+        $("export-status").textContent = `Export failed: ${String(error)}`;
+      } finally {
+        exportingHtml = false;
+        updateControls();
+      }
+    });
     $("save-pdf").addEventListener("click", async () => {
-      if (preparingPrint || !doc?.pages.length) return;
+      if (exportingHtml || preparingPrint || !doc?.pages.length) return;
       preparingPrint = true;
       $("save-pdf").title = "";
       updateControls();

@@ -120,6 +120,29 @@
   .connection-tools {
     margin-left: auto;
   }
+  .export-menu {
+    position: fixed;
+    inset: var(--toolbar-height) 1rem auto auto;
+    margin: 0;
+    padding: 0.5rem;
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    background: var(--surface);
+    color: var(--text);
+    max-width: min(26rem, 90vw);
+    font-family: var(--mono);
+    font-size: var(--font-size-sm);
+  }
+  .export-menu button {
+    display: block;
+    width: 100%;
+    text-align: left;
+  }
+  #export-status:not(:empty) {
+    display: block;
+    padding: 0.5rem;
+    overflow-wrap: anywhere;
+  }
   #selection-count {
     color: var(--muted);
     min-width: 5.5rem;
