@@ -13,6 +13,8 @@ import {
   type DocumentCommit,
   DocumentStore,
   documentFingerprint,
+  InsertBlock,
+  UpdateParams,
   validateBlock,
 } from "../core/model.ts";
 
@@ -39,6 +41,37 @@ test("TypeBox block and alignment contracts derive from shared enums", () => {
     () => validateBlock({ type: "unknown", spec: {} }),
     /Unknown block type:/,
   );
+});
+
+test("insert schemas constrain specs by kind and preserve open content", () => {
+  assert.deepEqual(
+    new Set(InsertBlock.anyOf.map((schema) => schema.properties.type.const)),
+    new Set(Object.values(BlockKind)),
+  );
+  for (const block of [
+    { type: BlockKind.Text, spec: { md: "", extra: true } },
+    { type: BlockKind.Math, spec: { latex: "x" } },
+    { type: BlockKind.Table, spec: { columns: ["A"], rows: [[1, null, {}]] } },
+    { type: BlockKind.Chart, spec: { arbitrary: true } },
+    { type: BlockKind.Divider, spec: { arbitrary: true } },
+  ]) {
+    assert.ok(Value.Check(InsertBlock, block));
+    assert.ok(
+      Value.Check(UpdateParams, {
+        blocks: [{ blockId: "id", spec: block.spec }],
+      }),
+    );
+  }
+  for (const block of [
+    { type: BlockKind.Text, spec: {} },
+    { type: BlockKind.Text, spec: { md: 1 } },
+    { type: BlockKind.Math, spec: { latex: false } },
+    { type: BlockKind.Table, spec: { columns: [1], rows: [] } },
+    { type: BlockKind.Table, spec: { columns: [], rows: [1] } },
+    { type: "unknown", spec: {} },
+    { type: BlockKind.Chart, spec: [] },
+  ])
+    assert.equal(Value.Check(InsertBlock, block), false);
 });
 
 async function fixture(t: { after: (fn: () => Promise<void>) => void }) {
@@ -193,8 +226,9 @@ test("batch validation is atomic and queue recovers from errors", async (t) => {
   );
   await assert.rejects(store.insert({ blocks: [] }), /Invalid/);
   await assert.rejects(
+    // @ts-expect-error Runtime input must reject non-string latex.
     store.insert({ blocks: [{ type: "math", spec: { latex: 123 } }] }),
-    /latex/,
+    /Invalid insert_blocks/,
   );
   await store.update({
     blocks: [{ blockId: inserted.blockIds[0], spec: { md: "fixed" } }],
@@ -369,8 +403,9 @@ test("parameter failures and explicit inserts preserve the current page", async 
     /Invalid insert_blocks/,
   );
   await assert.rejects(
+    // @ts-expect-error Runtime input must reject a math block without latex.
     store.insert({ blocks: [text("B"), { type: "math", spec: {} }] }),
-    /math: spec.latex/,
+    /Invalid insert_blocks/,
   );
   assert.equal(await readFile(store.path, "utf8"), before);
   assert.equal(

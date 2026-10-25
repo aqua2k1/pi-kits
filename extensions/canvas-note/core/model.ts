@@ -13,31 +13,102 @@ import {
 } from "./contracts.js";
 
 export const BlockType = Type.Enum(BlockKind);
-export const Align = Type.Enum(Alignment);
-export const BlockTitle = Type.String({ minLength: 1, pattern: "\\S" });
+export const Align = Type.Enum(Alignment, {
+  description:
+    "Block alignment. Defaults to left on insertion; omission preserves it on update.",
+});
+export const BlockTitle = Type.String({
+  minLength: 1,
+  pattern: "\\S",
+  description:
+    "Outline label, not body content. Must contain non-whitespace text.",
+});
 const Spec = Type.Record(Type.String(), Type.Unknown());
-export const InsertBlock = Type.Object({
-  type: BlockType,
+const blockMetadata = {
   title: Type.Optional(BlockTitle),
   align: Type.Optional(Align),
-  spec: Spec,
-});
+};
+export const InsertBlock = Type.Union([
+  Type.Object({
+    type: Type.Literal(BlockKind.Text),
+    ...blockMetadata,
+    spec: Type.Object({
+      md: Type.String({ description: "Markdown content." }),
+    }),
+  }),
+  Type.Object({
+    type: Type.Literal(BlockKind.Math),
+    ...blockMetadata,
+    spec: Type.Object({
+      latex: Type.String({ description: "LaTeX expression." }),
+    }),
+  }),
+  Type.Object({
+    type: Type.Literal(BlockKind.Table),
+    ...blockMetadata,
+    spec: Type.Object({
+      columns: Type.Array(Type.String()),
+      rows: Type.Array(Type.Array(Type.Unknown())),
+    }),
+  }),
+  Type.Object({
+    type: Type.Literal(BlockKind.Chart),
+    ...blockMetadata,
+    spec: Type.Record(Type.String(), Type.Unknown(), {
+      description: "Native ECharts option object. JSON only.",
+    }),
+  }),
+  Type.Object({
+    type: Type.Literal(BlockKind.Divider),
+    ...blockMetadata,
+    spec: Spec,
+  }),
+]);
 export const NewPageParams = Type.Object({
   title: Type.String({ minLength: 1, pattern: "\\S" }),
 });
 export const InsertParams = Type.Object({
-  pageId: Type.Optional(Type.String()),
-  index: Type.Optional(Type.Integer({ minimum: 0 })),
+  pageId: Type.Optional(
+    Type.String({
+      description:
+        "Target page ID. If omitted, uses the current page or creates one if none is current.",
+    }),
+  ),
+  index: Type.Optional(
+    Type.Integer({
+      minimum: 0,
+      description:
+        "Zero-based position to insert before. Omit or exceed the block count to append.",
+    }),
+  ),
   blocks: Type.Array(InsertBlock, { minItems: 1 }),
 });
 export const UpdateParams = Type.Object({
   blocks: Type.Array(
     Type.Object({
-      blockId: Type.String(),
-      type: Type.Optional(Type.Union([BlockType, Type.Null()])),
-      title: Type.Optional(Type.Union([BlockTitle, Type.Null()])),
+      blockId: Type.String({
+        description:
+          "Existing block ID. Each ID may appear only once per batch.",
+      }),
+      type: Type.Optional(
+        Type.Union([BlockType, Type.Null()], {
+          description:
+            "Omit to retain the type; null deletes the block. Changing type requires a complete spec.",
+        }),
+      ),
+      title: Type.Optional(
+        Type.Union([BlockTitle, Type.Null()], {
+          description:
+            "Outline label, not body content. Null clears it; omission preserves it.",
+        }),
+      ),
       align: Type.Optional(Align),
-      spec: Type.Optional(Spec),
+      spec: Type.Optional(
+        Type.Record(Type.String(), Type.Unknown(), {
+          description:
+            "Complete replacement spec for the block's resulting type; never deep-merged.",
+        }),
+      ),
     }),
     { minItems: 1 },
   ),
