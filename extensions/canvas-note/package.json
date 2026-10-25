@@ -11,6 +11,9 @@
   "pi": {
     "extensions": [
       "./index.ts"
+    ],
+    "prompts": [
+      "./prompts/canvas-note.md"
     ]
   },
   "scripts": {

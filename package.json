@@ -36,6 +36,9 @@
     ],
     "themes": [
       "./themes/gruvbox.json"
+    ],
+    "prompts": [
+      "./extensions/canvas-note/prompts/canvas-note.md"
     ]
   },
   "peerDependencies": {

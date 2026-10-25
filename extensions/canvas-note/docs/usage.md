@@ -1,5 +1,15 @@
 # 使用
 
+## /canvas-note <msg>
+
+```text
+/canvas-note 分析当前项目架构，并绘制模块关系图
+/canvas-note 将刚才的方案整理为交互文档
+/canvas-note 修改报告中的代码示例
+```
+
+模板接收完整请求，将主要结果呈现在 Canvas Note 文档中；修改时优先更新已有 Block。不带参数时先询问需求。运行 `/reload` 后可在命令补全中选择 `/canvas-note`；模板使用已启用的 Canvas Note 工具。
+
 ## 创建报告
 
 ```js
