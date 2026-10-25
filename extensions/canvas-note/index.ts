@@ -6,9 +6,11 @@ import type {
 } from "@earendil-works/pi-coding-agent";
 import { readPiKitsConfig } from "@pi-kits/config";
 import { Type } from "typebox";
+import { Value } from "typebox/value";
 import { createFeedbackInbox } from "./core/feedback.ts";
 import {
   InsertBlocksParams,
+  InsertBlocksToolParams,
   InsertPageParams,
   UpdateBlocksParams,
   UpdatePageParams,
@@ -165,7 +167,7 @@ export default function canvasNoteExtension(pi: ExtensionAPI) {
     label: "Canvas Note · Insert blocks",
     description:
       "Insert blocks into a page in a single atomic batch. Returns stable block IDs and a browser URL.",
-    parameters: InsertBlocksParams,
+    parameters: InsertBlocksToolParams,
     outputSchema: Type.Object({
       pageId: Type.String(),
       blockIds: strings,
@@ -175,6 +177,8 @@ export default function canvasNoteExtension(pi: ExtensionAPI) {
     async execute(_id, params, signal, _update, ctx) {
       return serial(async () => {
         signal?.throwIfAborted();
+        if (!Value.Check(InsertBlocksParams, params))
+          throw new Error("Invalid insert_blocks parameters");
         const docStore = getStore(ctx);
         const inserted = await docStore.insertBlocks(params);
         let view: CanvasNoteServer;

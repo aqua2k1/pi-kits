@@ -13,6 +13,8 @@ import {
   type DocumentCommit,
   documentFingerprint,
   InsertBlock,
+  InsertBlocksParams,
+  InsertBlocksToolParams,
   UpdateBlocksParams,
   UpdatePageParams,
   validateBlock,
@@ -98,6 +100,42 @@ test("insert schemas constrain specs by kind and preserve open content", () => {
     { type: BlockKind.Chart, spec: [] },
   ])
     assert.equal(Value.Check(InsertBlock, block), false);
+});
+
+test("tool insert schema shares metadata and retains all content shapes", () => {
+  const block = InsertBlocksToolParams.properties.blocks.items;
+  assert.deepEqual(block.properties.type.enum, Object.values(BlockKind));
+  assert.deepEqual(block.required, ["type", "spec"]);
+  assert.deepEqual(
+    block.properties.spec.anyOf,
+    InsertBlock.anyOf.map((branch) => ({
+      ...branch.properties.spec,
+      description: `${branch.properties.type.const}: ${"description" in branch.properties.spec ? branch.properties.spec.description : "Block content object."}`,
+    })),
+  );
+  const serialized = JSON.stringify(InsertBlocksToolParams);
+  assert.equal(serialized.split("Optional outline label.").length - 1, 1);
+  assert.equal(
+    serialized.split("Block alignment; defaults to left.").length - 1,
+    1,
+  );
+  assert.ok(serialized.length < 2200, "public schema stays compact");
+  assert.ok(
+    serialized.length < JSON.stringify(InsertBlocksParams).length * 0.7,
+  );
+  for (const params of [
+    { blocks: [] },
+    { index: -1, blocks: [text("A")] },
+    { blocks: [{ type: "unknown", spec: {} }] },
+    { blocks: [{ type: "text", spec: [] }] },
+    { blocks: [{ type: "text", spec: null }] },
+    { blocks: [{ type: "text", title: " ", spec: { md: "A" } }] },
+    { blocks: [{ type: "text", align: "unknown", spec: { md: "A" } }] },
+  ])
+    assert.equal(Value.Check(InsertBlocksToolParams, params), false);
+  const mismatched = { blocks: [{ type: "text", spec: { latex: "x" } }] };
+  assert.ok(Value.Check(InsertBlocksToolParams, mismatched));
+  assert.equal(Value.Check(InsertBlocksParams, mismatched), false);
 });
 
 async function fixture(t: { after: (fn: () => Promise<void>) => void }) {

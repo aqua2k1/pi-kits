@@ -15,6 +15,7 @@ import {
   SettingsManager,
 } from "@earendil-works/pi-coding-agent";
 import { WebSocket } from "ws";
+import { InsertBlocksToolParams } from "../core/model.ts";
 import canvasNote from "../index.ts";
 
 test("extension registers only four tools; real handlers lazily serve and route browser feedback", async (t) => {
@@ -321,13 +322,35 @@ test("real Pi SDK loads Canvas Note and dispatches its lifecycle and tools", asy
     "update_blocks",
     "update_page",
   ]);
-  await page.execute(
+  const pageResult = await page.execute(
     "sdk-page",
     { title: "SDK 报告" },
     undefined,
     undefined,
     ctx,
   );
+  await assert.rejects(fetch(`http://127.0.0.1:${address.port}`));
+  assert.deepEqual(insert.parameters, InsertBlocksToolParams);
+  const documentPath = (
+    pageResult.structuredContent as { documentPath: string }
+  ).documentPath;
+  const beforeInvalid = await readFile(documentPath, "utf8");
+  await assert.rejects(
+    insert.execute(
+      "sdk-invalid-insert",
+      {
+        blocks: [
+          { type: "text", spec: { md: "Must not persist" } },
+          { type: "text", spec: { latex: "wrong content type" } },
+        ],
+      },
+      undefined,
+      undefined,
+      ctx,
+    ),
+    /Invalid insert_blocks parameters/,
+  );
+  assert.equal(await readFile(documentPath, "utf8"), beforeInvalid);
   await assert.rejects(fetch(`http://127.0.0.1:${address.port}`));
   const result = await insert.execute(
     "sdk-insert",

@@ -119,6 +119,25 @@ export const InsertBlocksParams = Type.Object({
   ),
   blocks: Type.Array(InsertBlock, { minItems: 1 }),
 });
+// Keep the strict discriminated union for internal validation and typing.
+// Only the model-facing schema factors out the repeated block metadata.
+export const InsertBlocksToolParams = Type.Object({
+  ...InsertBlocksParams.properties,
+  blocks: Type.Array(
+    Type.Object({
+      type: BlockType,
+      ...blockMetadata,
+      spec: Type.Union(
+        InsertBlock.anyOf.map((block) => ({
+          ...block.properties.spec,
+          description: `${block.properties.type.const}: ${"description" in block.properties.spec ? block.properties.spec.description : "Block content object."}`,
+        })),
+        { description: "Content must match the selected block type." },
+      ),
+    }),
+    { minItems: 1 },
+  ),
+});
 export const UpdateBlocksParams = Type.Object({
   blocks: Type.Array(
     Type.Object({
