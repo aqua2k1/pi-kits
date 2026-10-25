@@ -332,7 +332,7 @@ button.primary:hover:not(:disabled) {
   scroll-margin-top: 6rem;
   position: relative;
   margin: 0.6rem -0.6rem;
-  padding: 0.85rem 0.65rem 0.85rem 2.35rem;
+  padding: 2.6rem 0.65rem 0.85rem 2.35rem;
   border: 1px solid transparent;
   border-radius: 3px;
   min-height: 3rem;
@@ -353,6 +353,13 @@ button.primary:hover:not(:disabled) {
   margin: 0;
   accent-color: var(--accent);
   cursor: pointer;
+}
+.block-copy {
+  position: absolute;
+  top: 0.5rem;
+  right: 0.65rem;
+  padding: 0.2rem 0.5rem;
+  font-size: var(--font-size-sm);
 }
 .block-content {
   min-width: 0;

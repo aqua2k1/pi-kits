@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import { setImmediate as settle } from "node:timers/promises";
 import type { Block, Document, Operation, Page } from "../core/model.ts";
 import { browser, subtree, writeCount } from "./fixtures/browser.ts";
 
@@ -51,6 +52,83 @@ const select = (b: ReturnType<typeof browser>, id: string) => {
   checkbox.checked = true;
   checkbox.emit("change");
 };
+
+test("every block has a copy button that copies current content without changing selection", async () => {
+  const b = browser();
+  const blocks: Block[] = [
+    text("text", "# Markdown\n**source**"),
+    {
+      id: "code",
+      type: "code",
+      align: "left",
+      spec: { code: "const answer = 42;", language: "js" },
+    },
+    { id: "math", type: "math", align: "left", spec: { latex: "x^2" } },
+    chart("chart"),
+    {
+      id: "table",
+      type: "table",
+      align: "left",
+      spec: { columns: ["A", "B"], rows: [[1, 2]] },
+    },
+    { id: "divider", type: "divider", align: "left", spec: {} },
+  ];
+  const expected = [
+    "# Markdown\n**source**",
+    "const answer = 42;",
+    "x^2",
+    JSON.stringify(blocks[3].spec, null, 2),
+    "A\tB\n1\t2",
+    "---",
+  ];
+  b.snapshot(document([page("p", blocks)]));
+  select(b, "text");
+  for (const [index, block] of blocks.entries()) {
+    const button = b.block(block.id).children[2];
+    assert.equal(button.className, "block-copy");
+    assert.equal(button.attributes["aria-label"], "Copy block content");
+    let stopped = false;
+    button.emit("click", {
+      stopPropagation() {
+        stopped = true;
+      },
+    });
+    await settle();
+    assert.equal(stopped, true);
+    assert.equal(b.clipboard.texts.at(-1), expected[index]);
+    assert.equal(button.textContent, "Copied");
+    assert.equal(button.disabled, false);
+    b.runTimers();
+    assert.equal(button.textContent, "Copy");
+  }
+  assert.equal(b.block("text").children[0].checked, true);
+  assert.equal(b.get("selection-count").textContent, "1 selected");
+  assert.equal(b.charts[0].options.length, 1);
+  b.operations(1, [update([text("text", "Latest source")])]);
+  b.block("text").children[2].emit("click");
+  await settle();
+  assert.equal(b.clipboard.texts.at(-1), "Latest source");
+  b.operations(2, [update([], ["text"])]);
+  b.runTimers();
+});
+
+for (const available of [true, false]) {
+  test(`clipboard fallback ${available ? "copies" : "reports failure"} and removes its temporary textarea`, async () => {
+    const b = browser();
+    b.clipboard.fail = true;
+    b.clipboard.legacyAvailable = available;
+    b.snapshot(document([page("p", [text("a", "Exact source")])]));
+    const button = b.block("a").children[2];
+    button.emit("click");
+    await settle();
+    assert.equal(b.clipboard.legacyCalls, 1);
+    assert.equal(b.body.children.length, 0);
+    assert.equal(button.textContent, available ? "Copied" : "Copy failed");
+    assert.equal(button.disabled, false);
+    if (available) assert.equal(b.clipboard.texts[0], "Exact source");
+    else assert.equal(b.clipboard.texts.length, 0);
+  });
+}
 
 test("code blocks use the bundled highlighter and preserve source without executing markup", () => {
   const b = browser();

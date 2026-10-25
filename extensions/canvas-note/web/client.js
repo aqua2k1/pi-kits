@@ -13,6 +13,7 @@ import {
   const blockHandlers = defineHandlers(BlockKind, {
     [BlockKind.Text]: {
       ...blockDefinitions[BlockKind.Text],
+      copyText: blockDefinitions[BlockKind.Text].summarize,
       render(record, block) {
         record.content.innerHTML = window.DOMPurify.sanitize(
           window.marked.parse(block.spec.md),
@@ -22,6 +23,7 @@ import {
     },
     [BlockKind.Code]: {
       ...blockDefinitions[BlockKind.Code],
+      copyText: blockDefinitions[BlockKind.Code].summarize,
       render(record, block) {
         const language = block.spec.language?.trim().toLowerCase();
         if (language) {
@@ -46,6 +48,7 @@ import {
     },
     [BlockKind.Chart]: {
       ...blockDefinitions[BlockKind.Chart],
+      copyText: (spec) => JSON.stringify(spec, null, 2),
       reuse: true,
       render(record, block) {
         if (!record.chart) {
@@ -58,6 +61,7 @@ import {
     },
     [BlockKind.Math]: {
       ...blockDefinitions[BlockKind.Math],
+      copyText: blockDefinitions[BlockKind.Math].summarize,
       render(record, block) {
         window.katex.render(block.spec.latex, record.content, {
           displayMode: true,
@@ -69,6 +73,10 @@ import {
     },
     [BlockKind.Table]: {
       ...blockDefinitions[BlockKind.Table],
+      copyText: (spec) =>
+        [spec.columns, ...spec.rows]
+          .map((row) => row.map(tableClipboardCell).join("\t"))
+          .join("\n"),
       render(record, block) {
         const table = document.createElement("table");
         const head = table.createTHead().insertRow();
@@ -90,6 +98,7 @@ import {
     },
     [BlockKind.Divider]: {
       ...blockDefinitions[BlockKind.Divider],
+      copyText: () => "---",
       render(record) {
         record.content.append(document.createElement("hr"));
       },
@@ -123,6 +132,53 @@ import {
         ? JSON.stringify(value)
         : String(value);
   };
+
+  const tableClipboardCell = (value) => {
+    const text = tableCellText(value);
+    return /[\t\r\n"]/.test(text) ? `"${text.replaceAll('"', '""')}"` : text;
+  };
+
+  const blockCopyText = (block) => {
+    if (!isBlockKind(block.type))
+      throw new Error(`Unknown block type: ${block.type}`);
+    return blockHandlers[block.type].copyText(block.spec);
+  };
+
+  async function writeClipboard(text) {
+    try {
+      if (globalThis.navigator?.clipboard?.writeText) {
+        await navigator.clipboard.writeText(text);
+        return;
+      }
+    } catch {
+      // Remote HTTP pages may need the legacy clipboard path instead.
+    }
+    const activeElement = document.activeElement;
+    const selection = window.getSelection?.();
+    const ranges = selection
+      ? Array.from({ length: selection.rangeCount }, (_, index) =>
+          selection.getRangeAt(index).cloneRange(),
+        )
+      : [];
+    const input = document.createElement("textarea");
+    input.value = text;
+    input.readOnly = true;
+    input.style.position = "fixed";
+    input.style.opacity = "0";
+    document.body.append(input);
+    try {
+      input.select();
+      if (!document.execCommand?.("copy"))
+        throw new Error("Clipboard access is unavailable in this browser.");
+    } finally {
+      input.remove();
+      activeElement?.focus({ preventScroll: true });
+      if (selection) {
+        selection.removeAllRanges();
+        for (const range of ranges) selection.addRange(range);
+      }
+    }
+  }
 
   const selectedReply = (version, selection, records) => {
     const context = { version, blockIds: [...selection] };
@@ -523,8 +579,39 @@ import {
         updateControls();
       });
       const content = document.createElement("div");
-      element.append(checkbox, content);
-      return { id, element, checkbox, content };
+      const copy = document.createElement("button");
+      copy.type = "button";
+      copy.className = "block-copy";
+      copy.textContent = "Copy";
+      copy.title = "Copy block content";
+      copy.setAttribute("aria-label", "Copy block content");
+      copy.setAttribute("aria-live", "polite");
+      copy.addEventListener("click", async (event) => {
+        event.stopPropagation();
+        const record = blocks.get(id);
+        if (!record || copy.disabled) return;
+        clearTimeout(record.copyTimer);
+        copy.disabled = true;
+        try {
+          await writeClipboard(blockCopyText(record.block));
+          copy.textContent = "Copied";
+          copy.title = "Copied to clipboard";
+        } catch (error) {
+          copy.textContent = "Copy failed";
+          copy.title = String(error);
+        } finally {
+          if (blocks.get(id) === record) {
+            copy.disabled = false;
+            record.copyTimer = setTimeout(() => {
+              copy.textContent = "Copy";
+              copy.title = "Copy block content";
+              record.copyTimer = null;
+            }, 2000);
+          }
+        }
+      });
+      element.append(checkbox, content, copy);
+      return { id, element, checkbox, content, copy, copyTimer: null };
     }
 
     // Only move nodes that are out of place; unchanged renderers keep their DOM.
@@ -736,6 +823,7 @@ import {
 
     function removeBlock(id) {
       const record = blocks.get(id);
+      clearTimeout(record.copyTimer);
       disposeChart(record);
       record.element.remove();
       blocks.delete(id);

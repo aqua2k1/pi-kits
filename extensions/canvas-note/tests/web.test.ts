@@ -22,7 +22,7 @@ const sandbox: typeof clientGlobals & {
   registries?: Record<string, Record<string, Record<string, unknown>>>;
 } = { ...clientGlobals };
 runInNewContext(
-  `${script.slice(0, boundary)}\n globalThis.helpers = {blockSummary, documentPresentation, tableCellText, selectedReply, replySignature, replyMessage, websocketUrl, parseMessage, controlState, blockPresentation, validOperations, errorPresentation, replyFailureText, reconnectDelay};\n globalThis.registries = { blocks: blockHandlers, operations: operationHandlers };\n}`,
+  `${script.slice(0, boundary)}\n globalThis.helpers = {blockSummary, documentPresentation, tableCellText, blockCopyText, selectedReply, replySignature, replyMessage, websocketUrl, parseMessage, controlState, blockPresentation, validOperations, errorPresentation, replyFailureText, reconnectDelay};\n globalThis.registries = { blocks: blockHandlers, operations: operationHandlers };\n}`,
   sandbox,
 );
 const helpers = sandbox.helpers;
@@ -45,10 +45,45 @@ test("browser registries cover shared kinds with complete behaviors", () => {
     assert.equal(handler.validate, blockDefinitions[kind].validate);
     assert.equal(handler.summarize, blockDefinitions[kind].summarize);
     assert.equal(typeof handler.render, "function");
+    assert.equal(typeof handler.copyText, "function");
   }
   for (const kind of Object.values(OperationKind)) {
     assert.equal(typeof registries.operations[kind].validate, "function");
     assert.equal(typeof registries.operations[kind].apply, "function");
+  }
+});
+
+test("block clipboard text preserves complete source and formats structured content", () => {
+  for (const [type, spec, expected] of [
+    ["text", { md: "# Heading\n**raw**" }, "# Heading\n**raw**"],
+    [
+      "code",
+      { code: "<script>\n  source\n</script>", language: "html" },
+      "<script>\n  source\n</script>",
+    ],
+    ["math", { latex: "\\frac{1}{2}" }, "\\frac{1}{2}"],
+    [
+      "chart",
+      { series: [{ data: [1, 2] }] },
+      JSON.stringify({ series: [{ data: [1, 2] }] }, null, 2),
+    ],
+    [
+      "table",
+      {
+        columns: ["A", "B"],
+        rows: [
+          [1, null],
+          ["a\tb", 'say "hello"'],
+        ],
+      },
+      'A\tB\n1\t\n"a\tb"\t"say ""hello"""',
+    ],
+    ["divider", {}, "---"],
+  ] as const) {
+    const block = { type, spec };
+    const before = structuredClone(block);
+    assert.equal(helpers.blockCopyText(block), expected);
+    assert.deepEqual(block, before);
   }
 });
 

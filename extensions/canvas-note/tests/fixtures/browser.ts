@@ -23,7 +23,7 @@ class Events {
 
   emit(type: string, event: Record<string, unknown> = {}) {
     for (const listener of this.listeners.get(type) ?? []) {
-      listener({ preventDefault() {}, ...event });
+      listener({ preventDefault() {}, stopPropagation() {}, ...event });
     }
   }
 }
@@ -178,6 +178,9 @@ export class Element extends Events {
     this.open = false;
   }
   focus() {}
+  select() {
+    this.count("select");
+  }
   scrollIntoView() {
     this.count("scrollIntoView");
   }
@@ -218,6 +221,13 @@ export function browser() {
     const node = new Element(tag);
     nodes.push(node);
     return node;
+  };
+  const body = createElement("body");
+  const clipboard = {
+    texts: [] as string[],
+    fail: false,
+    legacyAvailable: true,
+    legacyCalls: 0,
   };
   const ids = new Map<string, Element>();
   const html = readFileSync(
@@ -333,7 +343,27 @@ export function browser() {
     ),
     {
       ...clientGlobals,
-      document: { getElementById: get, createElement, title: "Canvas Note" },
+      document: {
+        getElementById: get,
+        createElement,
+        title: "Canvas Note",
+        body,
+        execCommand(command: string) {
+          assert.equal(command, "copy");
+          clipboard.legacyCalls++;
+          if (!clipboard.legacyAvailable) return false;
+          clipboard.texts.push(body.children.at(-1)?.value ?? "");
+          return true;
+        },
+      },
+      navigator: {
+        clipboard: {
+          async writeText(text: string) {
+            if (clipboard.fail) throw new Error("clipboard denied");
+            clipboard.texts.push(text);
+          },
+        },
+      },
       window,
       WebSocket: Socket,
       ResizeObserver: Observer,
@@ -390,6 +420,12 @@ export function browser() {
     charts,
     observers,
     window,
+    clipboard,
+    body,
+    runTimers() {
+      for (const fn of [...timers.values()]) fn();
+      timers.clear();
+    },
     page: (id: string) => find("pageId", id),
     block: (id: string) => find("blockId", id),
     snapshot(doc: Document) {
