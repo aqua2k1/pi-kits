@@ -127,6 +127,10 @@ test("document identity is displayed verbatim without changing the directory nam
     new URL("../web/client.html", import.meta.url),
     "utf8",
   );
+  assert.match(
+    html,
+    /<link rel="icon" href="\/favicon\.svg" type="image\/svg\+xml" \/>/,
+  );
   assert.match(html, /id="document-id"/);
   assert.match(html, /<aside id="outline"/);
   assert.match(html, /id="outline-tree"/);

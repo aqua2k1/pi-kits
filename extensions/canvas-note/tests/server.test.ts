@@ -333,6 +333,7 @@ test("real HTTP, WebSocket snapshots, atomic rename watch, reply acknowledgment 
   assert.equal(res.status, 200);
   assert.match(await res.text(), /Canvas Note/);
   for (const path of [
+    "/favicon.svg",
     "/client.js",
     "/chart-theme.js",
     "/client.css",
@@ -350,6 +351,9 @@ test("real HTTP, WebSocket snapshots, atomic rename watch, reply acknowledgment 
     "/vendor/fonts/KaTeX_Main-Regular.woff2",
   ])
     assert.equal((await fetch(server.url + path)).status, 200, path);
+  const favicon = await fetch(`${server.url}/favicon.svg`);
+  assert.equal(favicon.headers.get("content-type"), "image/svg+xml");
+  assert.match(await favicon.text(), /<svg/);
   const theme = await fetch(`${server.url}/theme.css?v=1`);
   assert.match(theme.headers.get("content-type") ?? "", /text\/css/);
   assert.equal(theme.headers.get("cache-control"), "no-store");

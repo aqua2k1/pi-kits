@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-labelledby="title">
+  <title id="title">Canvas Note</title>
+  <rect width="64" height="64" rx="14" fill="#282828" />
+  <path d="M16 10h25l11 11v33H16z" fill="#fbf1c7" />
+  <path d="M41 10v12h11" fill="#d79921" />
+  <path d="M41 10l11 11H41z" fill="#ebdbb2" />
+  <path d="M23 31h22M23 39h22M23 47h13" fill="none" stroke="#b57614" stroke-linecap="round" stroke-width="4" />
+  <circle cx="45" cy="47" r="5" fill="#b8bb26" />
+</svg>

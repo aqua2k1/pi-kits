@@ -33,6 +33,7 @@ const assets = new Map<string, [string, string]>([
     ],
   ],
   ["/", [join(assetRoot, "client.html"), "text/html; charset=utf-8"]],
+  ["/favicon.svg", [join(assetRoot, "favicon.svg"), "image/svg+xml"]],
   [
     "/client.js",
     [join(assetRoot, "client.js"), "text/javascript; charset=utf-8"],

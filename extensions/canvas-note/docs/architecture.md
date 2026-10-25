@@ -34,6 +34,7 @@ flowchart LR
 | `server/theme.ts` | 从扩展根目录 theme.json 读取配色，校验后生成主题 CSS |
 | `server/protocol.ts` | 消息解析、校验、指纹、反馈快照与错误投影 |
 | `web/client.html` | 页面、固定目录与回复窗口骨架 |
+| `web/favicon.svg` | 浏览器标签图标 |
 | `web/content.css` | 屏幕与打印共享的配色变量、字体和正文排版 |
 | `web/client.css` | 屏幕专属纸面布局、目录、选择框、工具栏与弹窗样式 |
 | `web/print.css` | 纸张、浅色配色、隐藏交互与分页规则 |
