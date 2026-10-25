@@ -31,7 +31,7 @@ export function sshAddressWarning(
 }
 
 export function statusText(url: string | undefined): string | undefined {
-  return url ? `Canvas Note · ${url}` : undefined;
+  return url ? `Canvas Note: ${url}` : undefined;
 }
 
 export function renderFailureMessage(error: RenderErrorReport) {

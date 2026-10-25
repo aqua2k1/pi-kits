@@ -55,12 +55,13 @@ button.primary:hover:not(:disabled) {
 }
 
 .toolbar {
+  flex-wrap: wrap;
   position: sticky;
   top: 0;
   z-index: 10;
   display: flex;
   align-items: center;
-  gap: 1.5rem;
+  gap: 0.35rem 1.5rem;
   min-height: 72px;
   padding: 0.85rem 2rem;
   background: #fafbfced;
@@ -68,6 +69,14 @@ button.primary:hover:not(:disabled) {
   border-bottom: 1px solid #d4d7de;
   box-shadow: 0 2px 12px #24293608;
   font-size: 0.85rem;
+}
+.document-id {
+  flex-basis: 100%;
+  min-width: 0;
+  color: #646c7b;
+  font-family: ui-monospace, "SFMono-Regular", Consolas, monospace;
+  font-size: 0.75rem;
+  overflow-wrap: anywhere;
 }
 .brand {
   color: #242a36;

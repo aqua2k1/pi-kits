@@ -47,7 +47,7 @@ test("message builders preserve structured payloads and produce text without eff
   assert.equal(statusText(undefined), undefined);
   assert.equal(
     statusText("http://localhost:1234"),
-    "Canvas Note · http://localhost:1234",
+    "Canvas Note: http://localhost:1234",
   );
   assert.equal(sshAddressWarning(false, undefined), undefined);
   assert.equal(sshAddressWarning(true, "host.example"), undefined);

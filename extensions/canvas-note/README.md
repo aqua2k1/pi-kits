@@ -12,7 +12,7 @@ pi install https://github.com/aqua2k1/pi-kits.git
 
 让 Pi 创建一份包含 Markdown、ECharts 图表和 LaTeX 公式的报告。文档固定保存到当前项目的 `docs/canvas-notes/<UTC时间>-<UUID>/doc.json`，重载后沿用同一文档。首次插入内容时启动服务，工具返回访问地址和 JSON 文件路径。
 
-服务运行时，Pi 状态栏显示“Canvas Note”和访问 URL；服务关闭后自动清除。远端访问地址通过环境变量指定，不写入配置文件：
+服务运行时，Pi 状态栏显示 `Canvas Note: <URL>`；服务关闭后自动清除。网页顶部和浏览器标题显示与文档目录名一致的时间戳和 UUID。远端访问地址通过环境变量指定，不写入配置文件：
 
 ```sh
 CANVAS_NOTE_PUBLIC_HOST=192.0.2.10 pi

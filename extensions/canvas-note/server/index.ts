@@ -194,11 +194,16 @@ export async function startCanvasNoteServer(options: ServerOptions) {
   const broadcast = (value: unknown) => {
     for (const ws of wss.clients) send(ws, value);
   };
+  const snapshot = async () => ({
+    type: "snapshot",
+    documentId: basename(dirname(store.path)),
+    doc: await store.read(),
+  });
   let syncing = Promise.resolve();
   function sync() {
     syncing = syncing
       .then(async () => {
-        if (!closed) broadcast({ type: "snapshot", doc: await store.read() });
+        if (!closed) broadcast(await snapshot());
       })
       .catch((error) => options.onError?.(error));
     return syncing;
@@ -229,7 +234,7 @@ export async function startCanvasNoteServer(options: ServerOptions) {
     // Use the same queue as broadcasts so the initial snapshot cannot arrive after a newer one.
     syncing = syncing
       .then(async () => {
-        send(ws, { type: "snapshot", doc: await store.read() });
+        send(ws, await snapshot());
       })
       .catch((error) => options.onError?.(error));
     ws.on("message", (raw) => {

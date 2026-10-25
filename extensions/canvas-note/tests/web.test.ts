@@ -13,12 +13,34 @@ assert.ok(boundary > 0);
 const sandbox: { helpers?: Record<string, (...args: unknown[]) => unknown> } =
   {};
 runInNewContext(
-  `${source.slice(0, boundary)}\n globalThis.helpers = {blockSummary, tableCellText, selectedReply, replySignature, replyMessage, websocketUrl, parseMessage, controlState, blockPresentation, errorPresentation, replyFailureText, reconnectDelay};\n}`,
+  `${source.slice(0, boundary)}\n globalThis.helpers = {blockSummary, documentPresentation, tableCellText, selectedReply, replySignature, replyMessage, websocketUrl, parseMessage, controlState, blockPresentation, errorPresentation, replyFailureText, reconnectDelay};\n}`,
   sandbox,
 );
 const helpers = sandbox.helpers;
 assert.ok(helpers);
 const plain = (value: unknown) => JSON.parse(JSON.stringify(value));
+
+test("document identity is displayed verbatim without changing the directory name", () => {
+  const id = "2026-10-25T04-21-14Z-242c9095-f0b3-45c6-ac79-7bd18a3a90b5";
+  assert.deepEqual(plain(helpers.documentPresentation(id)), {
+    identity: id,
+    title: `Canvas Note: ${id}`,
+  });
+  for (const value of [undefined, null, 123, ""]) {
+    assert.deepEqual(plain(helpers.documentPresentation(value)), {
+      identity: "",
+      title: "Canvas Note",
+    });
+  }
+  const html = readFileSync(
+    new URL("../web/client.html", import.meta.url),
+    "utf8",
+  );
+  assert.match(html, /id="document-id"/);
+  assert.ok(
+    source.includes('$("document-id").textContent = presentation.identity'),
+  );
+});
 
 test("browser selection and wire-message helpers preserve input state", () => {
   const block = {

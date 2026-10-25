@@ -123,7 +123,7 @@ test("extension registers only three tools; real handlers lazily serve and route
     ],
   });
   assert.equal((await fetch(String(inserted.url))).status, 200);
-  assert.equal(statuses.get("canvas-note"), `Canvas Note · ${inserted.url}`);
+  assert.equal(statuses.get("canvas-note"), `Canvas Note: ${inserted.url}`);
   const ws = new WebSocket(
     `${String(inserted.url).replace("http:", "ws:")}/ws`,
   );
@@ -171,7 +171,7 @@ test("extension registers only three tools; real handlers lazily serve and route
   });
   assert.equal((await fetch(String(reopened.url))).status, 200);
   assert.equal(reopened.documentPath, inserted.documentPath);
-  assert.equal(statuses.get("canvas-note"), `Canvas Note · ${reopened.url}`);
+  assert.equal(statuses.get("canvas-note"), `Canvas Note: ${reopened.url}`);
   await events.get("session_shutdown")?.();
   assert.equal(
     statuses.has("canvas-note"),

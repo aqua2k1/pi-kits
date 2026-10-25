@@ -13,6 +13,14 @@
     return `${pageTitle || "Untitled page"} · ${block.type}: ${String(text).replace(/\s+/g, " ").slice(0, 180)}`;
   };
 
+  const documentPresentation = (documentId) => {
+    const identity = typeof documentId === "string" ? documentId : "";
+    return {
+      identity,
+      title: identity ? `Canvas Note: ${identity}` : "Canvas Note",
+    };
+  };
+
   const tableCellText = (value) => {
     return value == null
       ? ""
@@ -442,6 +450,10 @@
         if (message.type === "server:closing") {
           serverClosing();
         } else if (message.type === "snapshot" && !closing) {
+          const presentation = documentPresentation(message.documentId);
+          $("document-id").textContent = presentation.identity;
+          $("document-id").hidden = !presentation.identity;
+          document.title = presentation.title;
           reconcile(message.doc);
         } else if (pending && message.requestId === pending) {
           if (message.type === "ack") {

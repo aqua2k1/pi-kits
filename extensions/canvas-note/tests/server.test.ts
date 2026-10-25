@@ -3,7 +3,7 @@ import { once } from "node:events";
 import { mkdtemp, rm } from "node:fs/promises";
 import { createServer as createPortBlocker } from "node:net";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { test } from "node:test";
 import { setTimeout as delay } from "node:timers/promises";
 import { withFileMutationQueue } from "@earendil-works/pi-coding-agent";
@@ -126,7 +126,8 @@ test("real HTTP, WebSocket snapshots, atomic rename watch, reply acknowledgment 
   const ws = new WebSocket(`${server.url.replace("http:", "ws:")}/ws`);
   const next = inbox(ws);
   t.after(() => ws.terminate());
-  await next((msg) => msg.type === "snapshot");
+  const initialSnapshot = await next((msg) => msg.type === "snapshot");
+  assert.equal(initialSnapshot.documentId, basename(dir));
   await store.update({
     blocks: [{ blockId: inserted.blockIds[0], spec: { md: "fixed" } }],
   });
@@ -134,6 +135,7 @@ test("real HTTP, WebSocket snapshots, atomic rename watch, reply acknowledgment 
     (msg) =>
       msg.type === "snapshot" && (msg.doc as { version: number }).version === 2,
   );
+  assert.equal(snapshot.documentId, basename(dir));
   assert.equal(
     (snapshot.doc as { pages: { blocks: { spec: { md: string } }[] }[] })
       .pages[0].blocks[0].spec.md,
@@ -168,6 +170,14 @@ test("real HTTP, WebSocket snapshots, atomic rename watch, reply acknowledgment 
     ...options,
     port: Number(new URL(server.url).port),
   });
+  const reconnected = new WebSocket(
+    `${restarted.url.replace("http:", "ws:")}/ws`,
+  );
+  t.after(() => reconnected.terminate());
+  const restoredSnapshot = await inbox(reconnected)(
+    (msg) => msg.type === "snapshot",
+  );
+  assert.equal(restoredSnapshot.documentId, basename(dir));
   await restarted.close();
   assert.deepEqual(errors, []);
 });
