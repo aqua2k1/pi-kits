@@ -14,6 +14,7 @@ pi install https://github.com/aqua2k1/pi-kits.git
 
 | 扩展 | 功能 |
 | --- | --- |
+| [canvas-note](extensions/canvas-note/README.md) | 浏览器纸张式文档、图表公式和多选回复 |
 | [open](extensions/open/README.md) | 用默认应用打开文件、URL 和目录 |
 | [preview](extensions/preview/README.md) | 只读预览会话回复 |
 | [context-preview](extensions/context-preview/README.md) | 查看模型请求 payload |

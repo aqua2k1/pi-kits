@@ -64,6 +64,11 @@ export function parsePiKitsFile(text: string): PiKitsFileConfig {
       `Invalid pi-kits.json: ${field} does not match the configuration schema.`,
     );
   }
+  const range = value["canvas-note"]?.portRange;
+  if (range && range[0] > range[1])
+    throw new Error(
+      "Invalid pi-kits.json: canvas-note.portRange must be ordered [minimum, maximum].",
+    );
   const routing = value["web-kits"]?.search?.routing;
   const provider =
     normalizeProvider(routing?.provider) ?? WEB_DEFAULTS.provider;
@@ -184,6 +189,14 @@ export function resolvePiKitsConfig(raw: PiKitsFileConfig = {}) {
       editor: raw.terminal?.editor ?? "nvim",
       gitUI: raw.terminal?.gitUI ?? "lazygit",
       fileManager: raw.terminal?.fileManager ?? "yazi",
+    },
+    "canvas-note": {
+      enabled: raw["canvas-note"]?.enabled ?? true,
+      host: raw["canvas-note"]?.host,
+      portRange: [...(raw["canvas-note"]?.portRange ?? [10_000, 20_000])] as [
+        number,
+        number,
+      ],
     },
     open: { enabled: raw.open?.enabled ?? true },
     preview: { enabled: raw.preview?.enabled ?? true },

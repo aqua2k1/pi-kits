@@ -100,6 +100,19 @@ export const PI_KITS_SCHEMA = Type.Object(
   {
     $schema: Type.Optional(Type.String()),
     ...workspaceFeatures,
+    "canvas-note": section({
+      enabled,
+      host: Type.Optional(text()),
+      portRange: Type.Optional(
+        Type.Tuple(
+          [
+            Type.Integer({ minimum: 1, maximum: 65_535 }),
+            Type.Integer({ minimum: 1, maximum: 65_535 }),
+          ],
+          { default: [10_000, 20_000] },
+        ),
+      ),
+    }),
     ...usageFeatures,
     ...workflowFeatures,
     workspace: Type.Optional(

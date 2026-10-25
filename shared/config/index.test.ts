@@ -52,6 +52,34 @@ test("absent config uses defaults without creating a file", (t) => {
   assert.equal(readPiKitsFile(dir), undefined);
 });
 
+test("canvas defaults, overrides and port-range validation", () => {
+  assert.deepEqual(resolvePiKitsConfig()["canvas-note"], {
+    enabled: true,
+    host: undefined,
+    portRange: [10000, 20000],
+  });
+  assert.deepEqual(
+    parsePiKitsConfig(
+      '{"canvas-note":{"enabled":false,"host":"0.0.0.0","portRange":[12000,14000]}}',
+    )["canvas-note"],
+    { enabled: false, host: "0.0.0.0", portRange: [12000, 14000] },
+  );
+  for (const portRange of [
+    [0, 20000],
+    [20000, 10000],
+    [10000, 65536],
+    [1.5, 3],
+    [10000],
+    [10000, 20000, 30000],
+    "10000-20000",
+  ]) {
+    assert.throws(
+      () => parsePiKitsFile(JSON.stringify({ "canvas-note": { portRange } })),
+      /Invalid pi-kits.json/,
+    );
+  }
+});
+
 test("web-kits is the sole web configuration key", () => {
   const config = parsePiKitsConfig(
     '{"web-kits":{"enabled":false,"search":{"maxResults":2}}}',

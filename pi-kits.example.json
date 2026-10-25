@@ -3,6 +3,10 @@
   "terminal": {
     "editor": "nvim"
   },
+  "canvas-note": {
+    "enabled": true,
+    "portRange": [10000, 20000]
+  },
   "open": {
     "enabled": true
   },

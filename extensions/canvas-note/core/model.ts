@@ -1,0 +1,245 @@
+import { randomUUID } from "node:crypto";
+import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { dirname } from "node:path";
+import { withFileMutationQueue } from "@earendil-works/pi-coding-agent";
+import { type Static, Type } from "typebox";
+import { Value } from "typebox/value";
+
+export const BlockType = Type.Union([
+  Type.Literal("text"),
+  Type.Literal("chart"),
+  Type.Literal("math"),
+  Type.Literal("table"),
+  Type.Literal("divider"),
+]);
+export const Align = Type.Union([
+  Type.Literal("left"),
+  Type.Literal("center"),
+  Type.Literal("right"),
+]);
+const Spec = Type.Record(Type.String(), Type.Unknown());
+export const InsertBlock = Type.Object({
+  type: BlockType,
+  align: Type.Optional(Align),
+  spec: Spec,
+});
+export const NewPageParams = Type.Object({
+  title: Type.String({ minLength: 1, pattern: "\\S" }),
+});
+export const InsertParams = Type.Object({
+  pageId: Type.Optional(Type.String()),
+  index: Type.Optional(Type.Integer({ minimum: 0 })),
+  blocks: Type.Array(InsertBlock, { minItems: 1 }),
+});
+export const UpdateParams = Type.Object({
+  blocks: Type.Array(
+    Type.Object({
+      blockId: Type.String(),
+      type: Type.Optional(Type.Union([BlockType, Type.Null()])),
+      align: Type.Optional(Align),
+      spec: Type.Optional(Spec),
+    }),
+    { minItems: 1 },
+  ),
+});
+export const BlockSchema = Type.Object({
+  id: Type.String(),
+  type: BlockType,
+  align: Align,
+  spec: Spec,
+});
+export const DocumentSchema = Type.Object({
+  version: Type.Integer({ minimum: 0 }),
+  pages: Type.Array(
+    Type.Object({
+      id: Type.String(),
+      title: Type.String(),
+      blocks: Type.Array(BlockSchema),
+    }),
+  ),
+});
+export type Block = Static<typeof BlockSchema>;
+export type Document = Static<typeof DocumentSchema>;
+export type Page = Document["pages"][number];
+
+export function validateBlock(block: Pick<Block, "type" | "spec">) {
+  const { type, spec } = block;
+  if (type === "text" && typeof spec.md !== "string")
+    throw new Error("text: spec.md must be a string");
+  if (type === "math" && typeof spec.latex !== "string")
+    throw new Error("math: spec.latex must be a string");
+  if (
+    type === "table" &&
+    (!Array.isArray(spec.columns) ||
+      !spec.columns.every((c) => typeof c === "string") ||
+      !Array.isArray(spec.rows) ||
+      !spec.rows.every(Array.isArray))
+  )
+    throw new Error(
+      "table: spec.columns must be strings and spec.rows must be arrays",
+    );
+}
+
+function decodeDocument(source: string): Document {
+  const doc: unknown = JSON.parse(source);
+  if (!Value.Check(DocumentSchema, doc))
+    throw new Error("Invalid Canvas Note document");
+  const ids = new Set<string>();
+  for (const page of doc.pages) {
+    if (ids.has(page.id)) throw new Error("Duplicate page ID");
+    ids.add(page.id);
+    for (const block of page.blocks) {
+      if (ids.has(block.id)) throw new Error("Duplicate block ID");
+      ids.add(block.id);
+      validateBlock(block);
+    }
+  }
+  return doc;
+}
+
+function encodeDocument(doc: Document): string {
+  return `${JSON.stringify(doc, null, 2)}\n`;
+}
+
+function pageValue(id: string, title: string): Page {
+  return { id, title, blocks: [] };
+}
+
+function blockValues(
+  inputs: Static<typeof InsertBlock>[],
+  ids: string[],
+): Block[] {
+  return inputs.map((block, index) => ({
+    ...block,
+    align: block.align ?? "left",
+    id: ids[index],
+  }));
+}
+
+function planInsertion(
+  doc: Document,
+  params: Static<typeof InsertParams>,
+  currentPage: string | undefined,
+) {
+  const page = doc.pages.find(
+    (item) => item.id === (params.pageId ?? currentPage),
+  );
+  if (!page && params.pageId)
+    throw new Error(`Unknown pageId: ${params.pageId}`);
+  const length = page?.blocks.length ?? 0;
+  return { page, index: Math.min(params.index ?? length, length) };
+}
+
+function insertionResult(pageId: string, blocks: Block[]) {
+  return { pageId, blockIds: blocks.map((block) => block.id) };
+}
+
+function planUpdates(doc: Document, params: Static<typeof UpdateParams>) {
+  const seen = new Set<string>();
+  const changes: { page: Page; old: Block; next: Block | null }[] = [];
+  const updated: string[] = [],
+    removed: string[] = [];
+  for (const patch of params.blocks) {
+    if (seen.has(patch.blockId))
+      throw new Error(`Duplicate update: ${patch.blockId}`);
+    seen.add(patch.blockId);
+    const page = doc.pages.find((p) =>
+      p.blocks.some((b) => b.id === patch.blockId),
+    );
+    const index = page?.blocks.findIndex((b) => b.id === patch.blockId) ?? -1;
+    if (!page || index < 0)
+      throw new Error(`Unknown blockId: ${patch.blockId}`);
+    const old = page.blocks[index];
+    if (patch.type === null) {
+      changes.push({ page, old, next: null });
+      removed.push(old.id);
+      continue;
+    }
+    if (patch.type && patch.type !== old.type && patch.spec === undefined)
+      throw new Error(`Block ${old.id}: changing type requires complete spec`);
+    const next: Block = {
+      id: old.id,
+      type: patch.type ?? old.type,
+      align: patch.align ?? old.align,
+      spec: patch.spec ?? old.spec,
+    };
+    validateBlock(next);
+    changes.push({ page, old, next });
+    updated.push(old.id);
+  }
+  return { changes, updated, removed };
+}
+
+export class DocumentStore {
+  private currentPage?: string;
+  constructor(readonly path: string) {}
+  async read(): Promise<Document> {
+    try {
+      return decodeDocument(await readFile(this.path, "utf8"));
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT")
+        return { version: 0, pages: [] };
+      throw error;
+    }
+  }
+  private mutate<T>(change: (doc: Document) => T): Promise<T> {
+    return withFileMutationQueue(this.path, async () => {
+      const doc = await this.read();
+      const result = change(doc);
+      doc.version++;
+      await mkdir(dirname(this.path), { recursive: true });
+      const temporary = `${this.path}.${randomUUID()}.tmp`;
+      try {
+        await writeFile(temporary, encodeDocument(doc), {
+          mode: 0o600,
+        });
+        await rename(temporary, this.path);
+      } finally {
+        await rm(temporary, { force: true });
+      }
+      return result;
+    });
+  }
+  async newPage(params: Static<typeof NewPageParams>) {
+    if (!Value.Check(NewPageParams, params))
+      throw new Error("Invalid page title");
+    const pageId = await this.mutate((doc) => {
+      const page = pageValue(randomUUID(), params.title);
+      doc.pages.push(page);
+      return page.id;
+    });
+    this.currentPage = pageId;
+    return { pageId };
+  }
+  async insert(params: Static<typeof InsertParams>) {
+    if (!Value.Check(InsertParams, params))
+      throw new Error("Invalid insert_blocks parameters");
+    params.blocks.forEach(validateBlock);
+    const result = await this.mutate((doc) => {
+      const plan = planInsertion(doc, params, this.currentPage);
+      const page = plan.page ?? pageValue(randomUUID(), "输出");
+      if (!plan.page) doc.pages.push(page);
+      const blocks = blockValues(
+        params.blocks,
+        params.blocks.map(() => randomUUID()),
+      );
+      page.blocks.splice(plan.index, 0, ...blocks);
+      return insertionResult(page.id, blocks);
+    });
+    if (!params.pageId) this.currentPage = result.pageId;
+    return result;
+  }
+  async update(params: Static<typeof UpdateParams>) {
+    if (!Value.Check(UpdateParams, params))
+      throw new Error("Invalid update_blocks parameters");
+    return this.mutate((doc) => {
+      const { changes, updated, removed } = planUpdates(doc, params);
+      for (const { page, old, next } of changes) {
+        const index = page.blocks.indexOf(old);
+        if (next === null) page.blocks.splice(index, 1);
+        else page.blocks[index] = next;
+      }
+      return { updated, removed };
+    });
+  }
+}
