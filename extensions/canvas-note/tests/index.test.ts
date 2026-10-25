@@ -144,8 +144,18 @@ test("extension registers only three tools; real handlers lazily serve and route
   assert.equal(JSON.parse((await response)[0].toString()).type, "ack");
   assert.equal(messages.length, 1);
   assert.match(messages[0], /修改这两个/);
-  assert.match(messages[0], /Hello/);
-  assert.match(messages[0], /x\^2/);
+  assert.equal(messages[0].includes("Hello"), false);
+  assert.equal(messages[0].includes("x^2"), false);
+  const feedback = JSON.parse(
+    await readFile(
+      join(dirname(String(page.documentPath)), "feedback-integration.json"),
+      "utf8",
+    ),
+  );
+  assert.equal(feedback.reply, "修改这两个");
+  assert.equal(feedback.blocks[0].block.spec.md, "Hello");
+  assert.equal(feedback.blocks[1].block.spec.latex, "x^2");
+  assert.ok(messages[0].includes("integration.json"));
   const publications: { type: string; baseVersion: number; version: number }[] =
     [];
   ws.on("message", (raw) => publications.push(JSON.parse(raw.toString())));
@@ -180,6 +190,16 @@ test("extension registers only three tools; real handlers lazily serve and route
     statuses.has("canvas-note"),
     false,
     "closing the last page clears the status",
+  );
+  assert.deepEqual(
+    JSON.parse(
+      await readFile(
+        join(dirname(String(page.documentPath)), "feedback-integration.json"),
+        "utf8",
+      ),
+    ),
+    feedback,
+    "document updates and server shutdown must retain the original feedback snapshot",
   );
   const reopened = await call("update_blocks", {
     blocks: [

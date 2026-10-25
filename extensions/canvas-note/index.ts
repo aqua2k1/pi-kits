@@ -79,7 +79,7 @@ export default function canvasNoteExtension(pi: ExtensionAPI) {
       server = await startCanvasNoteServer({
         ...config,
         store: docStore,
-        onReply: feedbackInbox.accept,
+        onReply: (feedback) => feedbackInbox.accept(feedback, docStore.path),
         onRenderError: (error) => {
           if (repairs >= 3) return;
           repairs++;
@@ -138,7 +138,7 @@ export default function canvasNoteExtension(pi: ExtensionAPI) {
     name: "insert_blocks",
     label: "Canvas Note · Insert blocks",
     description:
-      "Insert a nonempty array of blocks at index (default append). pageId defaults to current page, automatically created if absent. title is optional and appears in the outline; without it the outline shows the block type. text spec={md}; math={latex}; chart=native ECharts option; table={columns,rows}; divider={}. Batch is atomic. Returns stable block IDs and browser URL.",
+      "Insert blocks into a page in a single atomic batch. Returns stable block IDs and a browser URL.",
     parameters: InsertParams,
     outputSchema: Type.Object({
       pageId: Type.String(),
@@ -174,7 +174,7 @@ export default function canvasNoteExtension(pi: ExtensionAPI) {
     name: "update_blocks",
     label: "Canvas Note · Update blocks",
     description:
-      "Atomically update a nonempty array by blockId. Omitted fields stay unchanged; title changes the outline label and title:null clears it; spec is replaced completely, never deep-merged. type is a strong enum; changing type requires complete spec; type:null deletes the block.",
+      "Update or delete blocks by ID in a single atomic batch. Omitted fields remain unchanged; spec is replaced entirely.",
     parameters: UpdateParams,
     outputSchema: Type.Object({
       updated: strings,
@@ -200,7 +200,7 @@ export default function canvasNoteExtension(pi: ExtensionAPI) {
   });
   pi.on("session_start", async (_event, ctx) => {
     latestContext = ctx;
-    feedbackInbox.restore(ctx);
+    await feedbackInbox.restore(ctx);
     checkAddress(ctx);
   });
   pi.on("session_shutdown", () =>

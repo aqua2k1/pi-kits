@@ -24,7 +24,7 @@ flowchart LR
 | `index.ts` | 三工具、配置、用户反馈与服务生命周期 |
 | `core/model.ts` | TypeBox 契约、完整批次校验、文件读改写与提交订阅 |
 | `core/contracts.js` | Block、对齐、操作和消息枚举，内容校验、摘要与注册完整性检查 |
-| `core/feedback.ts` | 回复先存入会话，交付确认、重载恢复与去重 |
+| `core/feedback.ts` | 反馈文件持久化与会话轻量引用，交付确认、重载恢复与去重 |
 | `core/types.ts` | 核心层与服务层共用的反馈类型 |
 | `core/presentation.ts` | 文档身份、提示文本、工具结果与错误消息的纯构造 |
 | `server/index.ts` | 静态资源、操作增量、快照恢复、目录监听和反馈确认 |
@@ -36,18 +36,24 @@ flowchart LR
 
 ## 数据流
 
+反馈文件持久化与轻量引用交付为计划方案。
+
 ```mermaid
 sequenceDiagram
   participant Pi as Pi 工具
   participant JSON as JSON 文件
   participant Server as Web 服务
   participant Browser as 浏览器
+  participant Feedback as 反馈文件
+  participant Session as Pi 会话
   Pi->>JSON: 串行读改写与原子替换
   JSON-->>Server: 提交操作、基准版本和新版本
   Server->>Browser: operations（创建页、插入块、更新或删除块）
   Browser->>Server: 版本、所选 ID、用户回复
   Server->>JSON: 校验当前版本与内容
-  Server->>Pi: 提交含内容快照的 follow-up
+  Server->>Feedback: 原子保存完整反馈
+  Server->>Session: 保存轻量引用与待交付记录
+  Server->>Pi: followUp（用户回复、blockIds、version、snapshotPath、documentPath）
   Server-->>Browser: ack
 ```
 
@@ -98,8 +104,11 @@ Block 类型在 `core/contracts.js` 的 `BlockKind` 与 `blockDefinitions` 中�
 - 目录固定在左侧并独立滚动；目录只通过稳定 page/block ID 定位正文，折叠目录不得改变正文状态，避免导航操作干扰文档渲染。
 - 渲染错误每版本每 Block 只成功回报一次；重复快照不重复发送，发送失败可在后续快照重试，避免目录监听与显式同步重复触发修复。
 - `spec` 整体替换，换类型时需要新 spec，避免旧格式进入新渲染器。
-- 回复校验版本并附带原内容后才确认成功，避免引用更新后内容或丢失失败输入。
-- 回复在 ACK 前写入会话，只有消息正式进入上下文才标记交付；被拒绝的 prompt 在下次运行补交，避免确认成功却丢失回复。
+- 回复校验版本并保留所选块的完整快照后才确认成功，避免引用更新后内容或丢失失败输入。
+- 完整反馈包含 `requestId`、`version`、`reply` 和含完整快照的 `blocks`，保存为与 `doc.json` 并列的 `feedback-<requestId>.json`；不适合作文件名的 `requestId` 使用其哈希，避免非法路径。文件作为笔记长期保留，交付、重载和关闭服务不得删除，避免丢失用户引用的原内容。
+- 交付顺序固定为原子保存反馈文件、在 Pi 会话保存轻量引用、发送 `followUp`；ACK 前完成文件与引用持久化，避免确认成功却丢失回复。
+- 正常反馈与待交付恢复上下文均仅包含用户回复、`blockIds`、`version`、`snapshotPath` 和 `documentPath`，不包含块正文；模型按需用 `read` 读取 `snapshotPath`，修改前检查当前 `documentPath`，避免按旧快照覆盖后续更改。
+- 会话负责去重、待交付与交付确认；只有消息正式进入上下文才标记交付，被拒绝的 prompt 在下次运行补交。恢复旧会话尚未交付的完整反馈时先迁移为反馈文件与轻量引用，再按轻量上下文补交，避免重新注入块正文。
 - 同一 requestId 的成功回复去重，防止重试重复注入会话。
 - 关闭服务等待已接收的回复任务结束，关闭后的任务不得调用旧 Pi runtime。
 - 服务只在插入或更新后启动，关闭由网页按钮确认或最后一个连接断开触发，不注册命令，避免创建空页占用端口。

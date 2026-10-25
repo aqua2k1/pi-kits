@@ -13,20 +13,21 @@ import {
 } from "./contracts.js";
 
 export const BlockType = Type.Enum(BlockKind);
-export const Align = Type.Enum(Alignment, {
-  description:
-    "Block alignment. Defaults to left on insertion; omission preserves it on update.",
-});
+export const Align = Type.Enum(Alignment);
 export const BlockTitle = Type.String({
   minLength: 1,
   pattern: "\\S",
-  description:
-    "Outline label, not body content. Must contain non-whitespace text.",
 });
 const Spec = Type.Record(Type.String(), Type.Unknown());
 const blockMetadata = {
-  title: Type.Optional(BlockTitle),
-  align: Type.Optional(Align),
+  title: Type.Optional({
+    ...BlockTitle,
+    description: "Optional outline label.",
+  }),
+  align: Type.Optional({
+    ...Align,
+    description: "Block alignment; defaults to left.",
+  }),
 };
 export const InsertBlock = Type.Union([
   Type.Object({
@@ -93,20 +94,18 @@ export const UpdateParams = Type.Object({
       type: Type.Optional(
         Type.Union([BlockType, Type.Null()], {
           description:
-            "Omit to retain the type; null deletes the block. Changing type requires a complete spec.",
+            "Null deletes the block. Changing type requires a complete spec.",
         }),
       ),
       title: Type.Optional(
         Type.Union([BlockTitle, Type.Null()], {
-          description:
-            "Outline label, not body content. Null clears it; omission preserves it.",
+          description: "Outline label; null clears it.",
         }),
       ),
-      align: Type.Optional(Align),
+      align: Type.Optional({ ...Align, description: "Block alignment." }),
       spec: Type.Optional(
         Type.Record(Type.String(), Type.Unknown(), {
-          description:
-            "Complete replacement spec for the block's resulting type; never deep-merged.",
+          description: "Complete spec for the block's resulting type.",
         }),
       ),
     }),
