@@ -1,15 +1,81 @@
+import {
+  Alignment,
+  BlockKind,
+  blockDefinitions,
+  defineHandlers,
+  isAlignment,
+  isBlockKind,
+  MessageKind,
+  OperationKind,
+} from "../core/contracts.js";
+
 {
+  const blockHandlers = defineHandlers(BlockKind, {
+    [BlockKind.Text]: {
+      ...blockDefinitions[BlockKind.Text],
+      render(record, block) {
+        record.content.innerHTML = window.DOMPurify.sanitize(
+          window.marked.parse(block.spec.md),
+          { SANITIZE_NAMED_PROPS: true },
+        );
+      },
+    },
+    [BlockKind.Chart]: {
+      ...blockDefinitions[BlockKind.Chart],
+      reuse: true,
+      render(record, block) {
+        if (!record.chart) {
+          record.chart = window.echarts.init(record.content);
+          record.observer = new ResizeObserver(() => record.chart?.resize());
+          record.observer.observe(record.content);
+        }
+        record.chart.setOption(block.spec, { notMerge: true });
+      },
+    },
+    [BlockKind.Math]: {
+      ...blockDefinitions[BlockKind.Math],
+      render(record, block) {
+        window.katex.render(block.spec.latex, record.content, {
+          displayMode: true,
+          throwOnError: true,
+          trust: false,
+          strict: "error",
+        });
+      },
+    },
+    [BlockKind.Table]: {
+      ...blockDefinitions[BlockKind.Table],
+      render(record, block) {
+        const table = document.createElement("table");
+        const head = table.createTHead().insertRow();
+        for (const column of block.spec.columns) {
+          const cell = document.createElement("th");
+          cell.scope = "col";
+          cell.textContent = column;
+          head.append(cell);
+        }
+        const body = table.createTBody();
+        for (const row of block.spec.rows) {
+          const tr = body.insertRow();
+          for (const value of row) {
+            tr.insertCell().textContent = tableCellText(value);
+          }
+        }
+        record.content.append(table);
+      },
+    },
+    [BlockKind.Divider]: {
+      ...blockDefinitions[BlockKind.Divider],
+      render(record) {
+        record.content.append(document.createElement("hr"));
+      },
+    },
+  });
+
   const blockSummary = (block, pageTitle) => {
-    const text =
-      block.type === "text"
-        ? block.spec.md
-        : block.type === "math"
-          ? block.spec.latex
-          : block.type === "table"
-            ? block.spec.columns.join(" · ")
-            : block.type === "chart"
-              ? "Chart"
-              : "Divider";
+    if (!isBlockKind(block.type))
+      throw new Error(`Unknown block type: ${block.type}`);
+    const text = blockHandlers[block.type].summarize(block.spec);
     return `${pageTitle || "Untitled page"} · ${block.type}: ${String(text).replace(/\s+/g, " ").slice(0, 180)}`;
   };
 
@@ -46,7 +112,7 @@
     JSON.stringify({ ...context, reply });
 
   const replyMessage = (requestId, context, reply) => ({
-    type: "reply",
+    type: MessageKind.Reply,
     requestId,
     ...context,
     reply,
@@ -87,11 +153,177 @@
 
   const blockPresentation = (block) => ({
     revision: JSON.stringify([block.type, block.spec]),
-    align: block.align || "left",
+    align: block.align || Alignment.Left,
     label: `Select ${block.type} block ${block.id}`,
     className: `block-content content-${block.type}`,
   });
 
+  const validBlock = (block) => {
+    if (
+      !block ||
+      typeof block.id !== "string" ||
+      !block.id ||
+      !isBlockKind(block.type) ||
+      !isAlignment(block.align) ||
+      !block.spec ||
+      typeof block.spec !== "object" ||
+      Array.isArray(block.spec)
+    )
+      return false;
+    try {
+      blockHandlers[block.type].validate(block.spec);
+      return true;
+    } catch {
+      return false;
+    }
+  };
+
+  const operationHandlers = defineHandlers(OperationKind, {
+    [OperationKind.CreatePage]: {
+      validate(operation, context) {
+        const { pageFor, blockPage, validIndex, pages, addedPages } = context;
+        const page = operation.page;
+        if (
+          !page ||
+          typeof page.id !== "string" ||
+          !page.id ||
+          typeof page.title !== "string" ||
+          !Array.isArray(page.blocks) ||
+          page.blocks.length ||
+          pageFor(page.id) ||
+          blockPage(page.id) ||
+          !validIndex(operation.index, pages.size + addedPages.size)
+        )
+          return false;
+        addedPages.set(page.id, page);
+        return true;
+      },
+      apply(operation, context) {
+        const { doc, pageEntry, place, pagesRoot } = context;
+        const page = { ...operation.page, blocks: [] };
+        doc.pages.splice(operation.index, 0, page);
+        const entry = pageEntry(page);
+        place(pagesRoot, entry.element, operation.index);
+      },
+    },
+    [OperationKind.InsertBlocks]: {
+      validate(operation, context) {
+        const {
+          pageFor,
+          blockPage,
+          validIndex,
+          length,
+          removed,
+          addedBlocks,
+          lengths,
+        } = context;
+        const { pageId, index, blocks: inserted } = operation;
+        if (
+          !pageFor(pageId) ||
+          !Array.isArray(inserted) ||
+          !inserted.length ||
+          !validIndex(index, length(pageId))
+        )
+          return false;
+        for (const block of inserted) {
+          if (!validBlock(block) || blockPage(block.id) || pageFor(block.id))
+            return false;
+          removed.delete(block.id);
+          addedBlocks.set(block.id, pageId);
+        }
+        lengths.set(pageId, length(pageId) + inserted.length);
+        return true;
+      },
+      apply(operation, context) {
+        const { pages, blockRecord, place, render } = context;
+        const entry = pages.get(operation.pageId);
+        entry.page.blocks.splice(operation.index, 0, ...operation.blocks);
+        operation.blocks.forEach((block, offset) => {
+          const record = blockRecord(block, entry.page);
+          place(entry.body, record.element, operation.index + offset);
+          render(record, block);
+        });
+      },
+    },
+    [OperationKind.UpdateBlocks]: {
+      validate(operation, context) {
+        const { blockPage, removed, lengths, length } = context;
+        if (
+          !Array.isArray(operation.blocks) ||
+          !Array.isArray(operation.removed)
+        )
+          return false;
+        const seen = new Set();
+        for (const block of operation.blocks) {
+          if (!validBlock(block) || !blockPage(block.id) || seen.has(block.id))
+            return false;
+          seen.add(block.id);
+        }
+        for (const id of operation.removed) {
+          const pageId = blockPage(id);
+          if (!pageId || seen.has(id)) return false;
+          seen.add(id);
+          removed.add(id);
+          lengths.set(pageId, length(pageId) - 1);
+        }
+        return true;
+      },
+      apply(operation, context) {
+        const { blocks, pages, render, removeBlock } = context;
+        for (const block of operation.blocks) {
+          const record = blocks.get(block.id);
+          const page = pages.get(record.pageId).page;
+          page.blocks[page.blocks.indexOf(record.block)] = block;
+          record.block = block;
+          render(record, block);
+        }
+        for (const id of operation.removed) {
+          const record = blocks.get(id);
+          const page = pages.get(record.pageId).page;
+          page.blocks.splice(page.blocks.indexOf(record.block), 1);
+          removeBlock(id);
+        }
+      },
+    },
+  });
+
+  // Preflight only the referenced IDs; never mutate live state for an invalid batch.
+  const validOperations = (operations, pages, blocks) => {
+    if (!Array.isArray(operations) || !operations.length) return false;
+    const addedPages = new Map();
+    const addedBlocks = new Map();
+    const removed = new Set();
+    const lengths = new Map();
+    const pageFor = (id) => addedPages.get(id) || pages.get(id)?.page;
+    const blockPage = (id) =>
+      removed.has(id)
+        ? undefined
+        : addedBlocks.get(id) || blocks.get(id)?.pageId;
+    const length = (id) => lengths.get(id) ?? pageFor(id)?.blocks.length;
+    const validIndex = (index, size) =>
+      Number.isInteger(index) && index >= 0 && index <= size;
+    const context = {
+      pages,
+      addedPages,
+      addedBlocks,
+      removed,
+      lengths,
+      pageFor,
+      blockPage,
+      length,
+      validIndex,
+    };
+    for (const operation of operations) {
+      if (
+        !operation ||
+        typeof operation !== "object" ||
+        !Object.hasOwn(operationHandlers, operation.type) ||
+        !operationHandlers[operation.type].validate(operation, context)
+      )
+        return false;
+    }
+    return true;
+  };
   const errorPresentation = (error) => {
     const message = error instanceof Error ? error.message : String(error);
     const text = `Unable to render this block: ${message}`;
@@ -110,7 +342,10 @@
     const selection = new Set();
     const pages = new Map();
     const blocks = new Map();
+    const failedBlocks = new Set();
     let doc = null;
+    let awaitingSnapshot = true;
+    let documentId;
     let socket;
     let connected = false;
     let closing = false;
@@ -161,6 +396,7 @@
     }
 
     function reportError(record, error) {
+      failedBlocks.add(record.id);
       const { message, text } = errorPresentation(error);
       record.content.replaceChildren();
       const notice = document.createElement("p");
@@ -177,7 +413,7 @@
     function flushError(record) {
       if (record.renderError && !record.errorReported) {
         record.errorReported = send({
-          type: "render:error",
+          type: MessageKind.RenderError,
           version: record.errorVersion,
           blockId: record.id,
           message: record.renderError,
@@ -194,69 +430,29 @@
 
     function render(record, block) {
       const presentation = blockPresentation(block);
-      record.element.dataset.align = presentation.align;
-      record.checkbox.setAttribute("aria-label", presentation.label);
+      if (record.element.dataset.align !== presentation.align) {
+        record.element.dataset.align = presentation.align;
+      }
+      if (record.label !== presentation.label) {
+        record.checkbox.setAttribute("aria-label", presentation.label);
+        record.label = presentation.label;
+      }
       if (record.revision === presentation.revision) return;
-      const reuseChart = block.type === "chart" && record.chart;
-      if (!reuseChart) {
+      const handler = isBlockKind(block.type)
+        ? blockHandlers[block.type]
+        : undefined;
+      if (!handler?.reuse || !record.chart) {
         disposeChart(record);
         record.content.replaceChildren();
       }
       record.revision = presentation.revision;
+      failedBlocks.delete(record.id);
       record.errorReported = false;
       record.renderError = null;
       record.content.className = presentation.className;
       try {
-        switch (block.type) {
-          case "text":
-            record.content.innerHTML = window.DOMPurify.sanitize(
-              window.marked.parse(block.spec.md),
-              { SANITIZE_NAMED_PROPS: true },
-            );
-            break;
-          case "math":
-            window.katex.render(block.spec.latex, record.content, {
-              displayMode: true,
-              throwOnError: true,
-              trust: false,
-              strict: "error",
-            });
-            break;
-          case "table": {
-            const table = document.createElement("table");
-            const head = table.createTHead().insertRow();
-            for (const column of block.spec.columns) {
-              const cell = document.createElement("th");
-              cell.scope = "col";
-              cell.textContent = column;
-              head.append(cell);
-            }
-            const body = table.createTBody();
-            for (const row of block.spec.rows) {
-              const tr = body.insertRow();
-              for (const value of row) {
-                tr.insertCell().textContent = tableCellText(value);
-              }
-            }
-            record.content.append(table);
-            break;
-          }
-          case "divider":
-            record.content.append(document.createElement("hr"));
-            break;
-          case "chart":
-            if (!record.chart) {
-              record.chart = window.echarts.init(record.content);
-              record.observer = new ResizeObserver(() =>
-                record.chart?.resize(),
-              );
-              record.observer.observe(record.content);
-            }
-            record.chart.setOption(block.spec, { notMerge: true });
-            break;
-          default:
-            throw new Error(`Unknown block type: ${block.type}`);
-        }
+        if (!handler) throw new Error(`Unknown block type: ${block.type}`);
+        handler.render(record, block);
       } catch (error) {
         disposeChart(record);
         reportError(record, error);
@@ -288,64 +484,130 @@
       }
     }
 
+    function pageEntry(page) {
+      let entry = pages.get(page.id);
+      if (!entry) {
+        const element = document.createElement("article");
+        element.className = "page";
+        element.dataset.pageId = page.id;
+        const title = document.createElement("h1");
+        const body = document.createElement("div");
+        element.append(title, body);
+        entry = { element, title, body };
+        pages.set(page.id, entry);
+      }
+      entry.page = page;
+      if (entry.title.textContent !== page.title)
+        entry.title.textContent = page.title;
+      if (entry.title.hidden !== !page.title) entry.title.hidden = !page.title;
+      return entry;
+    }
+
+    function blockRecord(block, page) {
+      let record = blocks.get(block.id);
+      if (!record) {
+        record = createBlock(block.id);
+        blocks.set(block.id, record);
+      }
+      record.block = block;
+      record.pageId = page.id;
+      record.pageTitle = page.title;
+      return record;
+    }
+
+    function removeBlock(id) {
+      const record = blocks.get(id);
+      disposeChart(record);
+      record.element.remove();
+      blocks.delete(id);
+      failedBlocks.delete(id);
+      selection.delete(id);
+    }
+
+    function finishUpdate() {
+      const empty = doc.pages.length === 0;
+      if ($("empty").hidden !== !empty) $("empty").hidden = !empty;
+      const emptyText = "This canvas is empty. New pages will appear here.";
+      if ($("empty").textContent !== emptyText)
+        $("empty").textContent = emptyText;
+      connected = true;
+      retry = 0;
+      connectionState("connected", "Connected");
+      for (const id of failedBlocks) {
+        const record = blocks.get(id);
+        if (record.errorVersion !== doc.version) {
+          record.errorVersion = doc.version;
+          record.errorReported = false;
+        }
+        flushError(record);
+      }
+    }
+
+    // Full snapshots are only the bootstrap/recovery path. Reuse stable instances.
     function reconcile(snapshot) {
       doc = snapshot;
       const livePages = new Set();
       const liveBlocks = new Set();
       snapshot.pages.forEach((page, pageIndex) => {
         livePages.add(page.id);
-        let entry = pages.get(page.id);
-        if (!entry) {
-          const element = document.createElement("article");
-          element.className = "page";
-          element.dataset.pageId = page.id;
-          const title = document.createElement("h1");
-          const body = document.createElement("div");
-          element.append(title, body);
-          entry = { element, title, body };
-          pages.set(page.id, entry);
-        }
-        entry.title.textContent = page.title;
-        entry.title.hidden = !page.title;
+        const entry = pageEntry(page);
         place(pagesRoot, entry.element, pageIndex);
-        page.blocks.forEach((block, blockIndex) => {
+        page.blocks.forEach((block, index) => {
           liveBlocks.add(block.id);
-          let record = blocks.get(block.id);
-          if (!record) {
-            record = createBlock(block.id);
-            blocks.set(block.id, record);
-          }
-          record.block = block;
-          record.pageTitle = page.title;
-          place(entry.body, record.element, blockIndex);
+          const record = blockRecord(block, page);
+          place(entry.body, record.element, index);
           render(record, block);
         });
       });
-      for (const [id, record] of blocks) {
-        if (liveBlocks.has(id)) continue;
-        disposeChart(record);
-        record.element.remove();
-        blocks.delete(id);
-        selection.delete(id);
+      for (const id of blocks.keys()) {
+        if (!liveBlocks.has(id)) removeBlock(id);
       }
-      for (const [id, page] of pages) {
+      for (const [id, entry] of pages) {
         if (livePages.has(id)) continue;
-        page.element.remove();
+        entry.element.remove();
         pages.delete(id);
       }
-      $("empty").hidden = snapshot.pages.length > 0;
-      $("empty").textContent =
-        "This canvas is empty. New pages will appear here.";
-      connected = true;
-      retry = 0;
-      connectionState("connected", "Connected");
-      for (const record of blocks.values()) {
-        if (record.renderError) {
-          record.errorVersion = doc.version;
-          record.errorReported = false;
-          flushError(record);
-        }
+      awaitingSnapshot = false;
+      finishUpdate();
+    }
+
+    function requestSnapshot() {
+      if (awaitingSnapshot) return;
+      awaitingSnapshot = true;
+      connected = false;
+      connectionState("connecting", "Resyncing…");
+      if (!send({ type: MessageKind.Resync })) socket?.close();
+    }
+
+    // Consume committed operations directly; never scan/diff unrelated pages or blocks.
+    function consumeOperations(message) {
+      if (awaitingSnapshot) return;
+      if (
+        !doc ||
+        message.documentId !== documentId ||
+        message.baseVersion !== doc.version ||
+        message.version !== message.baseVersion + 1 ||
+        !validOperations(message.operations, pages, blocks)
+      ) {
+        requestSnapshot();
+        return;
       }
+      doc.version = message.version;
+      const context = {
+        doc,
+        pages,
+        blocks,
+        pagesRoot,
+        pageEntry,
+        blockRecord,
+        place,
+        render,
+        removeBlock,
+      };
+      for (const operation of message.operations) {
+        operationHandlers[operation.type].apply(operation, context);
+      }
+      finishUpdate();
     }
 
     $("reply").addEventListener("click", () => {
@@ -413,7 +675,7 @@
     });
 
     $("shutdown-confirm").addEventListener("click", () => {
-      if (!send({ type: "shutdown" })) {
+      if (!send({ type: MessageKind.Shutdown })) {
         $("shutdown-status").textContent = "连接已断开，请稍后重试。";
         return;
       }
@@ -438,6 +700,7 @@
     function connect() {
       if (closing) return;
       connected = false;
+      awaitingSnapshot = true;
       connectionState("connecting", retry ? "Reconnecting…" : "Connecting…");
       socket = new WebSocket(websocketUrl(location.protocol, location.host));
       socket.addEventListener("open", () => {
@@ -447,16 +710,23 @@
         const result = parseMessage(event.data);
         if (!result.parsed) return;
         const message = result.message;
-        if (message.type === "server:closing") {
+        if (message.type === MessageKind.ServerClosing) {
           serverClosing();
-        } else if (message.type === "snapshot" && !closing) {
+        } else if (message.type === MessageKind.Snapshot && !closing) {
+          documentId = message.documentId;
           const presentation = documentPresentation(message.documentId);
-          $("document-id").textContent = presentation.identity;
-          $("document-id").hidden = !presentation.identity;
-          document.title = presentation.title;
+          if ($("document-id").textContent !== presentation.identity) {
+            $("document-id").textContent = presentation.identity;
+            $("document-id").hidden = !presentation.identity;
+          }
+          if (document.title !== presentation.title) {
+            document.title = presentation.title;
+          }
           reconcile(message.doc);
+        } else if (message.type === MessageKind.Operations && !closing) {
+          consumeOperations(message);
         } else if (pending && message.requestId === pending) {
-          if (message.type === "ack") {
+          if (message.type === MessageKind.Ack) {
             pending = null;
             for (const id of replyContext.blockIds) {
               selection.delete(id);
@@ -471,7 +741,7 @@
             lastSubmission = null;
             dialog.close();
             updateControls();
-          } else if (message.type === "error") {
+          } else if (message.type === MessageKind.Error) {
             pending = null;
             $("reply-status").textContent = replyFailureText(message.message);
             updateControls();

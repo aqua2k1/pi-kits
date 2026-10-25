@@ -2,23 +2,78 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import { runInNewContext } from "node:vm";
+import {
+  BlockKind,
+  blockDefinitions,
+  OperationKind,
+} from "../core/contracts.js";
+import { clientGlobals, clientScript } from "./fixtures/client-script.ts";
 
 // Evaluate only the helper block: it must not require DOM, sockets, timers or runtime state.
 const source = readFileSync(
   new URL("../web/client.js", import.meta.url),
   "utf8",
 );
-const boundary = source.indexOf("\n  (() => {");
+const script = clientScript(source);
+const boundary = script.indexOf("\n  (() => {");
 assert.ok(boundary > 0);
-const sandbox: { helpers?: Record<string, (...args: unknown[]) => unknown> } =
-  {};
+const sandbox: typeof clientGlobals & {
+  helpers?: Record<string, (...args: unknown[]) => unknown>;
+  registries?: Record<string, Record<string, Record<string, unknown>>>;
+} = { ...clientGlobals };
 runInNewContext(
-  `${source.slice(0, boundary)}\n globalThis.helpers = {blockSummary, documentPresentation, tableCellText, selectedReply, replySignature, replyMessage, websocketUrl, parseMessage, controlState, blockPresentation, errorPresentation, replyFailureText, reconnectDelay};\n}`,
+  `${script.slice(0, boundary)}\n globalThis.helpers = {blockSummary, documentPresentation, tableCellText, selectedReply, replySignature, replyMessage, websocketUrl, parseMessage, controlState, blockPresentation, validOperations, errorPresentation, replyFailureText, reconnectDelay};\n globalThis.registries = { blocks: blockHandlers, operations: operationHandlers };\n}`,
   sandbox,
 );
 const helpers = sandbox.helpers;
 assert.ok(helpers);
 const plain = (value: unknown) => JSON.parse(JSON.stringify(value));
+
+test("browser registries cover shared kinds with complete behaviors", () => {
+  const registries = sandbox.registries;
+  assert.ok(registries);
+  assert.deepEqual(
+    Object.keys(registries.blocks).sort(),
+    Object.values(BlockKind).sort(),
+  );
+  assert.deepEqual(
+    Object.keys(registries.operations).sort(),
+    Object.values(OperationKind).sort(),
+  );
+  for (const kind of Object.values(BlockKind)) {
+    const handler: Record<string, unknown> = registries.blocks[kind];
+    assert.equal(handler.validate, blockDefinitions[kind].validate);
+    assert.equal(handler.summarize, blockDefinitions[kind].summarize);
+    assert.equal(typeof handler.render, "function");
+  }
+  for (const kind of Object.values(OperationKind)) {
+    assert.equal(typeof registries.operations[kind].validate, "function");
+    assert.equal(typeof registries.operations[kind].apply, "function");
+  }
+});
+
+test("new kinds without browser handlers fail during registration", () => {
+  for (const [name, kinds] of [
+    ["BlockKind", BlockKind],
+    ["OperationKind", OperationKind],
+  ] as const) {
+    assert.throws(
+      () =>
+        runInNewContext(`${script.slice(0, boundary)}\n}`, {
+          ...clientGlobals,
+          CanvasNoteContracts: {
+            ...clientGlobals.CanvasNoteContracts,
+            [name]: { ...kinds, New: "unregistered" },
+          },
+        }),
+      /Missing handler: unregistered/,
+    );
+  }
+  assert.throws(
+    () => helpers.blockSummary({ type: "unknown", spec: {} }, "Page"),
+    /Unknown block type/,
+  );
+});
 
 test("document identity is displayed verbatim without changing the directory name", () => {
   const id = "2026-10-25T04-21-14Z-242c9095-f0b3-45c6-ac79-7bd18a3a90b5";
@@ -72,6 +127,63 @@ test("browser selection and wire-message helpers preserve input state", () => {
   assert.equal(JSON.stringify(block), before);
   assert.deepEqual([...selection], ["b"]);
   assert.equal(records.get("b")?.block, block);
+});
+
+test("operation preflight validates only referenced IDs without mutating live records", () => {
+  const block = { id: "a", type: "text", align: "left", spec: { md: "A" } };
+  const page = { id: "p", title: "Page", blocks: [block] };
+  const pages = new Map([["p", { page }]]);
+  const blocks = new Map([["a", { block, pageId: "p" }]]);
+  const before = JSON.stringify(page);
+  const created = { id: "next", title: "Next", blocks: [] };
+  const inserted = { ...block, id: "b" };
+  const operations = [
+    { type: "page:create", page: created, index: 1 },
+    { type: "blocks:insert", pageId: "next", index: 0, blocks: [inserted] },
+    {
+      type: "blocks:update",
+      blocks: [{ ...inserted, align: "right" }],
+      removed: ["a"],
+    },
+  ];
+  assert.equal(helpers.validOperations(operations, pages, blocks), true);
+  for (const invalid of [
+    [],
+    [{ type: "unknown" }],
+    [{ type: "page:create", page: { ...created, id: "p" }, index: 1 }],
+    [
+      {
+        type: "blocks:insert",
+        pageId: "missing",
+        index: 0,
+        blocks: [inserted],
+      },
+    ],
+    [{ type: "blocks:insert", pageId: "p", index: 2, blocks: [inserted] }],
+    [
+      {
+        type: "blocks:insert",
+        pageId: "p",
+        index: 0,
+        blocks: [inserted, inserted],
+      },
+    ],
+    [
+      {
+        type: "blocks:update",
+        blocks: [{ ...block, id: "missing" }],
+        removed: [],
+      },
+    ],
+    [{ type: "blocks:update", blocks: [block], removed: ["a"] }],
+    [{ type: "blocks:update", blocks: [], removed: ["a", "a"] }],
+    [...operations, { type: "blocks:update", blocks: [block], removed: [] }],
+  ])
+    assert.equal(helpers.validOperations(invalid, pages, blocks), false);
+  assert.equal(JSON.stringify(page), before);
+  assert.equal(pages.size, 1);
+  assert.equal(blocks.size, 1);
+  assert.equal(blocks.get("a")?.block, block);
 });
 
 test("browser controls, rendering metadata and transport formatting are deterministic", () => {

@@ -1,3 +1,4 @@
+import { MessageKind } from "../core/contracts.js";
 import type { Document } from "../core/model.ts";
 import type { Feedback } from "../core/types.ts";
 
@@ -18,7 +19,7 @@ export function parseClientMessage(raw: string): Record<string, unknown> {
 export function parseReply(message: Record<string, unknown>): ReplyMessage {
   const { requestId, version, blockIds, reply } = message;
   if (
-    message.type !== "reply" ||
+    message.type !== MessageKind.Reply ||
     typeof requestId !== "string" ||
     !requestId ||
     requestId.length > 128 ||

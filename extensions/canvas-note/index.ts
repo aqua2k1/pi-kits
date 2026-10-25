@@ -97,7 +97,7 @@ export default function canvasNoteExtension(pi: ExtensionAPI) {
       });
       status();
     }
-    await server.sync();
+    await server.flush();
     return server;
   }
   const common = {
@@ -129,7 +129,7 @@ export default function canvasNoteExtension(pi: ExtensionAPI) {
           documentPath: docStore.path,
           version: (await docStore.read()).version,
         };
-        await server?.sync();
+        await server?.flush();
         return toolResult("Page created.", result);
       });
     },

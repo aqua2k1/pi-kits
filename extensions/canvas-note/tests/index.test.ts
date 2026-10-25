@@ -146,11 +146,31 @@ test("extension registers only three tools; real handlers lazily serve and route
   assert.match(messages[0], /修改这两个/);
   assert.match(messages[0], /Hello/);
   assert.match(messages[0], /x\^2/);
+  const publications: { type: string; baseVersion: number; version: number }[] =
+    [];
+  ws.on("message", (raw) => publications.push(JSON.parse(raw.toString())));
   await call("update_blocks", {
     blocks: [
       { blockId: (inserted.blockIds as string[])[0], spec: { md: "Updated" } },
     ],
   });
+  await call("new_page", { title: "Live page" });
+  await call("insert_blocks", {
+    blocks: [{ type: "text", spec: { md: "Live insert" } }],
+  });
+  await delay(100);
+  assert.deepEqual(
+    publications.map((msg) => msg.type),
+    ["operations", "operations", "operations"],
+  );
+  assert.deepEqual(
+    publications.map((msg) => [msg.baseVersion, msg.version]),
+    [
+      [2, 3],
+      [3, 4],
+      [4, 5],
+    ],
+  );
   const disconnected = once(ws, "close");
   ws.close();
   await disconnected;

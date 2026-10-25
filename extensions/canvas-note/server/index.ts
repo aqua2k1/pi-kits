@@ -7,7 +7,12 @@ import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { withFileMutationQueue } from "@earendil-works/pi-coding-agent";
 import { WebSocket, WebSocketServer } from "ws";
-import type { DocumentStore } from "../core/model.ts";
+import { MessageKind } from "../core/contracts.js";
+import {
+  type Document,
+  type DocumentStore,
+  documentFingerprint,
+} from "../core/model.ts";
 import type { Feedback, RenderErrorReport } from "../core/types.ts";
 import {
   errorMessage,
@@ -21,6 +26,13 @@ import {
 const require = createRequire(import.meta.url);
 const assetRoot = fileURLToPath(new URL("../web/", import.meta.url));
 const assets = new Map<string, [string, string]>([
+  [
+    "/core/contracts.js",
+    [
+      fileURLToPath(new URL("../core/contracts.js", import.meta.url)),
+      "text/javascript; charset=utf-8",
+    ],
+  ],
   ["/", [join(assetRoot, "client.html"), "text/html; charset=utf-8"]],
   [
     "/client.js",
@@ -194,22 +206,81 @@ export async function startCanvasNoteServer(options: ServerOptions) {
   const broadcast = (value: unknown) => {
     for (const ws of wss.clients) send(ws, value);
   };
-  const snapshot = async () => ({
-    type: "snapshot",
-    documentId: basename(dirname(store.path)),
-    doc: await store.read(),
-  });
+  const documentId = basename(dirname(store.path));
+  const baselines = new Map<WebSocket, string>();
   let syncing = Promise.resolve();
-  function sync() {
+  function enqueue(publish: () => void) {
     syncing = syncing
-      .then(async () => {
-        if (!closed) broadcast(await snapshot());
+      .then(() => {
+        if (!closed) publish();
       })
       .catch((error) => options.onError?.(error));
-    return syncing;
+  }
+  function sendSnapshot(ws: WebSocket, doc: Document, fingerprint: string) {
+    send(ws, { type: MessageKind.Snapshot, documentId, doc });
+    baselines.set(ws, fingerprint);
+  }
+  const unsubscribe = store.subscribe((commit) => {
+    enqueue(() => {
+      const fingerprint = documentFingerprint(commit.doc);
+      for (const ws of wss.clients) {
+        const baseline = baselines.get(ws);
+        // Connections receive no operations until their queued initial snapshot.
+        if (baseline === undefined) continue;
+        if (baseline === commit.before) {
+          send(ws, {
+            type: MessageKind.Operations,
+            documentId,
+            baseVersion: commit.baseVersion,
+            version: commit.doc.version,
+            operations: commit.operations,
+          });
+          baselines.set(ws, fingerprint);
+        } else if (baseline !== fingerprint) {
+          sendSnapshot(ws, commit.doc, fingerprint);
+        }
+      }
+    });
+  });
+  // Capture AND enqueue while holding the shared file queue. Enqueuing a read
+  // outside it could let a newer snapshot overtake an older commit notification.
+  async function capture(ws?: WebSocket) {
+    await withFileMutationQueue(store.path, async () => {
+      if (closed) return;
+      const doc = await store.read();
+      if (closed) return;
+      enqueue(() => {
+        const fingerprint = documentFingerprint(doc);
+        if (ws) {
+          if (wss.clients.has(ws)) sendSnapshot(ws, doc, fingerprint);
+        } else {
+          for (const client of wss.clients) {
+            if (baselines.has(client) && baselines.get(client) !== fingerprint)
+              sendSnapshot(client, doc, fingerprint);
+          }
+        }
+      });
+    });
+    await syncing;
+  }
+  const captures = new Set<Promise<void>>();
+  function requestCapture(ws?: WebSocket) {
+    if (closed) return;
+    const task = capture(ws)
+      .catch((error) => {
+        if (!closed) options.onError?.(error);
+      })
+      .finally(() => captures.delete(task));
+    captures.add(task);
+  }
+  async function flush() {
+    // A file-queue barrier includes every commit already accepted by the store.
+    await withFileMutationQueue(store.path, async () => {});
+    await syncing;
   }
   const watcher = watch(dirname(store.path), (_event, filename) => {
-    if (!filename || String(filename) === basename(store.path)) void sync();
+    if (!filename || String(filename) === basename(store.path))
+      requestCapture();
   });
   watcher.on("error", (error) => options.onError?.(error));
   http.on("upgrade", (req, socket, head) => {
@@ -224,6 +295,7 @@ export async function startCanvasNoteServer(options: ServerOptions) {
   wss.on("connection", (ws) => {
     clearTimeout(disconnectTimer);
     ws.on("close", () => {
+      baselines.delete(ws);
       if (closed || wss.clients.size > 0) return;
       // Allow reloads and transient reconnects without stopping the server.
       disconnectTimer = setTimeout(() => {
@@ -231,12 +303,7 @@ export async function startCanvasNoteServer(options: ServerOptions) {
       }, 1500);
     });
     ws.on("error", (error) => options.onError?.(error));
-    // Use the same queue as broadcasts so the initial snapshot cannot arrive after a newer one.
-    syncing = syncing
-      .then(async () => {
-        send(ws, await snapshot());
-      })
-      .catch((error) => options.onError?.(error));
+    requestCapture(ws);
     ws.on("message", (raw) => {
       void (async () => {
         let requestId: string | undefined;
@@ -245,11 +312,15 @@ export async function startCanvasNoteServer(options: ServerOptions) {
           const msg = parseClientMessage(raw.toString());
           requestId =
             typeof msg.requestId === "string" ? msg.requestId : undefined;
-          if (msg.type === "shutdown") {
+          if (msg.type === MessageKind.Resync) {
+            requestCapture(ws);
+            return;
+          }
+          if (msg.type === MessageKind.Shutdown) {
             requestShutdown("button");
             return;
           }
-          if (msg.type === "render:error") {
+          if (msg.type === MessageKind.RenderError) {
             const doc = await store.read();
             const report = renderErrorForDocument(msg, doc);
             if (!closed && report && !reported.has(report.key)) {
@@ -265,14 +336,14 @@ export async function startCanvasNoteServer(options: ServerOptions) {
           if (requests.has(requestId)) {
             if (requests.get(requestId) !== fingerprint)
               throw new Error("requestId already used");
-            send(ws, { type: "ack", requestId });
+            send(ws, { type: MessageKind.Ack, requestId });
             return;
           }
           const existing = pending.get(requestId);
           if (existing) {
             if ((await existing) !== fingerprint)
               throw new Error("requestId already used");
-            send(ws, { type: "ack", requestId });
+            send(ws, { type: MessageKind.Ack, requestId });
             return;
           }
           const operation = withFileMutationQueue(store.path, async () => {
@@ -288,13 +359,13 @@ export async function startCanvasNoteServer(options: ServerOptions) {
           pending.set(requestId, operation);
           try {
             await operation;
-            send(ws, { type: "ack", requestId });
+            send(ws, { type: MessageKind.Ack, requestId });
           } finally {
             pending.delete(requestId);
           }
         } catch (error) {
           send(ws, {
-            type: "error",
+            type: MessageKind.Error,
             requestId,
             message: errorMessage(error),
           });
@@ -307,9 +378,10 @@ export async function startCanvasNoteServer(options: ServerOptions) {
     closed = true;
     clearTimeout(disconnectTimer);
     watcher.close();
-    broadcast({ type: "server:closing" });
+    unsubscribe();
+    broadcast({ type: MessageKind.ServerClosing });
     closing = (async () => {
-      await Promise.allSettled([...pending.values()]);
+      await Promise.allSettled([...pending.values(), ...captures]);
       for (const ws of wss.clients) {
         ws.close(1001, "Canvas Note stopped");
         ws.terminate();
@@ -363,7 +435,9 @@ export async function startCanvasNoteServer(options: ServerOptions) {
       }
     }
   } catch (error) {
+    closed = true;
     watcher.close();
+    unsubscribe();
     wss.close();
     throw error;
   }
@@ -375,7 +449,7 @@ export async function startCanvasNoteServer(options: ServerOptions) {
   return {
     url,
     close,
-    sync,
+    flush,
     get clientCount() {
       return wss.clients.size;
     },

@@ -3,7 +3,42 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { type Document, DocumentStore } from "../core/model.ts";
+import { Value } from "typebox/value";
+import { Alignment, BlockKind } from "../core/contracts.js";
+import {
+  Align,
+  BlockType,
+  type Document,
+  type DocumentCommit,
+  DocumentStore,
+  documentFingerprint,
+  validateBlock,
+} from "../core/model.ts";
+
+test("TypeBox block and alignment contracts derive from shared enums", () => {
+  for (const [schema, kinds] of [
+    [BlockType, BlockKind],
+    [Align, Alignment],
+  ] as const) {
+    const values = Object.values(kinds);
+    assert.deepEqual(schema.enum, values);
+    for (const value of values) assert.ok(Value.Check(schema, value));
+    for (const value of ["unknown", "", null, 1, "toString"])
+      assert.equal(Value.Check(schema, value), false);
+  }
+  const block = { type: BlockKind.Text, spec: { md: "Unchanged" } };
+  const before = structuredClone(block);
+  validateBlock(block);
+  assert.deepEqual(block, before);
+  assert.throws(() => validateBlock({ type: BlockKind.Text, spec: {} }), {
+    message: "text: spec.md must be a string",
+  });
+  assert.throws(
+    // @ts-expect-error Runtime callers must reject unknown kinds too.
+    () => validateBlock({ type: "unknown", spec: {} }),
+    /Unknown block type:/,
+  );
+});
 
 async function fixture(t: { after: (fn: () => Promise<void>) => void }) {
   const dir = await mkdtemp(join(tmpdir(), "canvas-note-model-"));
@@ -11,6 +46,61 @@ async function fixture(t: { after: (fn: () => Promise<void>) => void }) {
   return new DocumentStore(join(dir, "doc.json"));
 }
 const text = (md: string) => ({ type: "text" as const, spec: { md } });
+
+test("commits publish atomic operation batches after persistence across stores", async (t) => {
+  const store = await fixture(t);
+  const commits: DocumentCommit[] = [];
+  const persisted: Promise<string>[] = [];
+  const unsubscribe = store.subscribe((commit) => {
+    commits.push(commit);
+    persisted.push(readFile(store.path, "utf8"));
+  });
+  const other = new DocumentStore(store.path);
+  const inserted = await other.insert({ blocks: [text("A"), text("B")] });
+  assert.equal(commits.length, 1);
+  const first = commits[0];
+  assert.equal(first.before, documentFingerprint({ version: 0, pages: [] }));
+  assert.equal(first.baseVersion, 0);
+  assert.equal(first.doc.version, 1);
+  assert.deepEqual(first.operations, [
+    {
+      type: "page:create",
+      page: { ...first.doc.pages[0], blocks: [] },
+      index: 0,
+    },
+    {
+      type: "blocks:insert",
+      pageId: inserted.pageId,
+      index: 0,
+      blocks: first.doc.pages[0].blocks,
+    },
+  ]);
+  assert.deepEqual(JSON.parse(await persisted[0]), first.doc);
+  await assert.rejects(other.update({ blocks: [{ blockId: "missing" }] }));
+  assert.equal(commits.length, 1);
+  await other.update({
+    blocks: [
+      { blockId: inserted.blockIds[0], align: "right" },
+      { blockId: inserted.blockIds[1], type: null },
+    ],
+  });
+  assert.deepEqual(commits[1].operations, [
+    {
+      type: "blocks:update",
+      blocks: commits[1].doc.pages[0].blocks,
+      removed: [inserted.blockIds[1]],
+    },
+  ]);
+  assert.equal(commits[1].before, documentFingerprint(first.doc));
+  await other.newPage({ title: "Next" });
+  assert.deepEqual(commits[2].operations, [
+    { type: "page:create", page: commits[2].doc.pages[1], index: 1 },
+  ]);
+  unsubscribe();
+  await other.newPage({ title: "Unobserved" });
+  assert.equal(commits.length, 3);
+  await Promise.all(persisted);
+});
 
 test("ordered insert, whole spec replacement, type change and deletion", async (t) => {
   const store = await fixture(t);

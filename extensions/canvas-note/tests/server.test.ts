@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { once } from "node:events";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { createServer as createPortBlocker } from "node:net";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
@@ -15,6 +15,225 @@ import {
   resolveCanvasPublicHost,
   startCanvasNoteServer,
 } from "../server/index.ts";
+
+test("HTTP serves the same shared ESM contracts with JavaScript MIME type", async (t) => {
+  const dir = await mkdtemp(join(tmpdir(), "canvas-note-contracts-"));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  const store = new DocumentStore(join(dir, "doc.json"));
+  const server = await startCanvasNoteServer({
+    host: "127.0.0.1",
+    port: 0,
+    store,
+    onReply: () => {},
+  });
+  t.after(() => server.close());
+  const response = await fetch(`${server.url}/core/contracts.js`);
+  assert.equal(response.status, 200);
+  assert.equal(
+    response.headers.get("content-type"),
+    "text/javascript; charset=utf-8",
+  );
+  assert.equal(
+    await response.text(),
+    await readFile(new URL("../core/contracts.js", import.meta.url), "utf8"),
+  );
+  const head = await fetch(`${server.url}/core/contracts.js`, {
+    method: "HEAD",
+  });
+  assert.equal(head.status, 200);
+  assert.equal(await head.text(), "");
+  const missing = await fetch(`${server.url}/core/model.ts`);
+  assert.equal(missing.status, 404);
+});
+
+test("normal commits only send ordered operations; external edits and resync use snapshots", async (t) => {
+  const dir = await mkdtemp(join(tmpdir(), "canvas-note-operations-"));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  const store = new DocumentStore(join(dir, "doc.json"));
+  await store.newPage({ title: "Initial" });
+  const errors: unknown[] = [];
+  const server = await startCanvasNoteServer({
+    host: "127.0.0.1",
+    port: 0,
+    store,
+    onReply: () => {},
+    onError: (error) => errors.push(error),
+  });
+  t.after(() => server.close());
+  const ws = new WebSocket(`${server.url.replace("http:", "ws:")}/ws`);
+  t.after(() => ws.terminate());
+  const all: Record<string, unknown>[] = [];
+  ws.on("message", (raw) => all.push(JSON.parse(raw.toString())));
+  const next = inbox(ws);
+  await next((msg) => msg.type === "snapshot");
+  const other = new DocumentStore(store.path);
+  await Promise.all(
+    Array.from({ length: 12 }, (_, i) =>
+      (i % 2 ? store : other).insert({
+        blocks: [{ type: "text", spec: { md: String(i) } }],
+      }),
+    ),
+  );
+  await store.newPage({ title: "Next" });
+  await server.flush();
+  await next((msg) => msg.type === "operations" && msg.version === 14);
+  // Let all rename notifications settle: none may duplicate tool commits as snapshots.
+  await delay(100);
+  assert.equal(all.filter((msg) => msg.type === "snapshot").length, 1);
+  const operations = all.filter((msg) => msg.type === "operations");
+  assert.deepEqual(
+    operations.map((msg) => [msg.baseVersion, msg.version]),
+    Array.from({ length: 13 }, (_, i) => [i + 1, i + 2]),
+  );
+
+  const external = await store.read();
+  external.pages[0].title = "Same-version external edit";
+  await writeFile(join(dir, "replacement"), JSON.stringify(external));
+  await rename(join(dir, "replacement"), store.path);
+  const changed = await next(
+    (msg) =>
+      msg.type === "snapshot" &&
+      JSON.stringify(msg.doc) === JSON.stringify(external),
+  );
+  assert.deepEqual(changed.doc, external);
+
+  // An external version gap followed immediately by a commit must not be
+  // interpreted as an operation against the old browser baseline.
+  external.version += 7;
+  external.pages[0].title = "Gap";
+  await writeFile(store.path, JSON.stringify(external));
+  await store.newPage({ title: "After gap" });
+  await server.flush();
+  await next(
+    (msg) =>
+      (msg.type === "snapshot" &&
+        (msg.doc as { version: number }).version === external.version + 1) ||
+      (msg.type === "operations" && msg.version === external.version + 1),
+  );
+  // Queue the tool mutation before writing externally, so its commit is
+  // guaranteed to beat the watcher's queued read (including same-version edits).
+  const raced = await store.read();
+  raced.pages[0].title = "External baseline before commit";
+  let committing!: Promise<{ pageId: string }>;
+  await withFileMutationQueue(store.path, async () => {
+    committing = store.newPage({ title: "Raced commit" });
+    await writeFile(store.path, JSON.stringify(raced));
+  });
+  await committing;
+  await server.flush();
+  const fallback = await next(
+    (msg) =>
+      msg.type === "snapshot" &&
+      (msg.doc as { version: number }).version === raced.version + 1,
+  );
+  assert.deepEqual(fallback.doc, await store.read());
+  for (let i = 1, version = 1; i < all.length; i++) {
+    const msg = all[i];
+    if (msg.type === "snapshot")
+      version = (msg.doc as { version: number }).version;
+    if (msg.type === "operations") {
+      assert.equal(
+        msg.baseVersion,
+        version,
+        "no operation may follow a snapshot with an obsolete baseline",
+      );
+      version = msg.version as number;
+    }
+  }
+  const resynced = once(ws, "message");
+  ws.send(JSON.stringify({ type: "resync" }));
+  const message = JSON.parse((await resynced)[0].toString());
+  assert.equal(message.type, "snapshot");
+  assert.deepEqual(message.doc, await store.read());
+  assert.deepEqual(errors, []);
+});
+
+test("connection snapshots and resync cannot be followed by older operations", async (t) => {
+  const dir = await mkdtemp(join(tmpdir(), "canvas-note-order-"));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  const store = new DocumentStore(join(dir, "doc.json"));
+  await store.newPage({ title: "Initial" });
+  const server = await startCanvasNoteServer({
+    host: "127.0.0.1",
+    port: 0,
+    store,
+    onReply: () => {},
+  });
+  t.after(() => server.close());
+  const ws = new WebSocket(`${server.url.replace("http:", "ws:")}/ws`);
+  t.after(() => ws.terminate());
+  const versions: number[] = [];
+  ws.on("message", (raw) => {
+    const msg = JSON.parse(raw.toString());
+    if (msg.type === "snapshot") versions.push(msg.doc.version);
+    if (msg.type === "operations") versions.push(msg.version);
+  });
+  const next = inbox(ws);
+  const writing = Promise.all(
+    Array.from({ length: 20 }, (_, i) => store.newPage({ title: String(i) })),
+  );
+  await next((msg) => msg.type === "snapshot");
+  ws.send(JSON.stringify({ type: "resync" }));
+  await writing;
+  await server.flush();
+  await next(
+    (msg) =>
+      (msg.type === "snapshot"
+        ? (msg.doc as { version: number }).version
+        : msg.version) === 21,
+  );
+  await delay(50);
+  assert.deepEqual(
+    versions,
+    [...versions].sort((a, b) => a - b),
+  );
+  assert.equal(versions.at(-1), 21);
+});
+
+test("close cancels queued captures and commit publications and unsubscribes", async (t) => {
+  const dir = await mkdtemp(join(tmpdir(), "canvas-note-cancel-"));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  const store = new DocumentStore(join(dir, "doc.json"));
+  await store.newPage({ title: "Initial" });
+  const errors: unknown[] = [];
+  const server = await startCanvasNoteServer({
+    host: "127.0.0.1",
+    port: 0,
+    store,
+    onReply: () => {},
+    onError: (error) => errors.push(error),
+  });
+  t.after(() => server.close());
+  const ws = new WebSocket(`${server.url.replace("http:", "ws:")}/ws`);
+  t.after(() => ws.terminate());
+  const next = inbox(ws);
+  await next((msg) => msg.type === "snapshot");
+  const publications: string[] = [];
+  ws.on("message", (raw) => publications.push(JSON.parse(raw.toString()).type));
+  let release!: () => void;
+  let acquired!: () => void;
+  const ready = new Promise<void>((resolve) => {
+    acquired = resolve;
+  });
+  const lock = withFileMutationQueue(store.path, async () => {
+    acquired();
+    await new Promise<void>((resolve) => {
+      release = resolve;
+    });
+  });
+  await ready;
+  const committing = store.newPage({ title: "Queued commit" });
+  ws.send(JSON.stringify({ type: "resync" }));
+  ws.send(JSON.stringify({ type: "invalid", requestId: "probe" }));
+  await next((msg) => msg.type === "error" && msg.requestId === "probe");
+  publications.length = 0;
+  const stopping = server.close();
+  release();
+  await Promise.all([lock, committing, stopping]);
+  await store.newPage({ title: "After close" });
+  assert.deepEqual(publications, ["server:closing"]);
+  assert.deepEqual(errors, []);
+});
 
 test("host selection detects SSH and explicit configuration always wins", () => {
   assert.equal(resolveCanvasHost(undefined, {}), "localhost");
@@ -131,16 +350,17 @@ test("real HTTP, WebSocket snapshots, atomic rename watch, reply acknowledgment 
   await store.update({
     blocks: [{ blockId: inserted.blockIds[0], spec: { md: "fixed" } }],
   });
-  const snapshot = await next(
-    (msg) =>
-      msg.type === "snapshot" && (msg.doc as { version: number }).version === 2,
-  );
-  assert.equal(snapshot.documentId, basename(dir));
-  assert.equal(
-    (snapshot.doc as { pages: { blocks: { spec: { md: string } }[] }[] })
-      .pages[0].blocks[0].spec.md,
-    "fixed",
-  );
+  const operations = await next((msg) => msg.type === "operations");
+  assert.equal(operations.documentId, basename(dir));
+  assert.equal(operations.baseVersion, 1);
+  assert.equal(operations.version, 2);
+  assert.deepEqual(operations.operations, [
+    {
+      type: "blocks:update",
+      blocks: (await store.read()).pages[0].blocks,
+      removed: [],
+    },
+  ]);
   const reply = {
     type: "reply",
     requestId: "reply-1",

@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import { MessageKind } from "../core/contracts.js";
 import type { Document } from "../core/model.ts";
 import {
   errorMessage,
@@ -23,7 +24,7 @@ const doc: Document = {
   ],
 };
 const input = {
-  type: "reply",
+  type: MessageKind.Reply,
   requestId: "r",
   version: 4,
   blockIds: ["b"],
@@ -56,6 +57,9 @@ test("protocol validators reject malformed, stale and unknown block references",
     { reply: "  " },
     { version: 1.5 },
     { type: "other" },
+    ...Object.values(MessageKind)
+      .filter((kind) => kind !== MessageKind.Reply)
+      .map((type) => ({ type })),
   ])
     assert.throws(() => parseReply({ ...input, ...patch }), /Invalid reply/);
   const parsed = parseReply(input);

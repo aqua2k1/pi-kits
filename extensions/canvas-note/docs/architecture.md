@@ -1,6 +1,6 @@
 # 架构
 
-插件串行修改 JSON，HTTP 服务提供本地渲染资源，WebSocket 始终同步完整文档；浏览器按稳定 ID 协调更新并回传多选回复。
+插件串行修改 JSON，落盘后记录操作，WebSocket 推送操作增量供浏览器消费；首次连接、重连和外部文件修改使用完整快照恢复。HTTP 服务提供本地渲染资源。
 
 ## 模块关系
 
@@ -13,6 +13,8 @@ flowchart LR
   server --> protocol["server/protocol.ts<br/>解析与数据投影"]
   server --> model
   server --> client["web/client.js<br/>渲染与多选回复"]
+  model --> contracts["core/contracts.js<br/>共享类型与内容定义"]
+  client --> contracts
 ```
 
 ## 文件地图
@@ -20,15 +22,16 @@ flowchart LR
 | 文件 | 职责 |
 |---|---|
 | `index.ts` | 三工具、配置、用户反馈与服务生命周期 |
-| `core/model.ts` | TypeBox 契约、完整批次校验、文件读改写 |
+| `core/model.ts` | TypeBox 契约、完整批次校验、文件读改写与提交订阅 |
+| `core/contracts.js` | Block、对齐、操作和消息枚举，内容校验、摘要与注册完整性检查 |
 | `core/feedback.ts` | 回复先存入会话，交付确认、重载恢复与去重 |
 | `core/types.ts` | 核心层与服务层共用的反馈类型 |
 | `core/presentation.ts` | 文档身份、提示文本、工具结果与错误消息的纯构造 |
-| `server/index.ts` | 静态资源、完整快照、目录监听和反馈确认 |
+| `server/index.ts` | 静态资源、操作增量、快照恢复、目录监听和反馈确认 |
 | `server/protocol.ts` | 消息解析、校验、指纹、反馈快照与错误投影 |
 | `web/client.html` | 页面与回复窗口骨架 |
 | `web/client.css` | 纸张、选择框、工具栏与弹窗样式 |
-| `web/client.js` | 按 ID 渲染、连接恢复、选择与提交 |
+| `web/client.js` | 消费操作、按 ID 渲染、连接恢复、选择与提交 |
 
 ## 数据流
 
@@ -39,15 +42,35 @@ sequenceDiagram
   participant Server as Web 服务
   participant Browser as 浏览器
   Pi->>JSON: 串行读改写与原子替换
-  JSON-->>Server: 目录变化通知
-  Server->>Browser: 完整 snapshot
+  JSON-->>Server: 提交操作、基准版本和新版本
+  Server->>Browser: operations（创建页、插入块、更新或删除块）
   Browser->>Server: 版本、所选 ID、用户回复
   Server->>JSON: 校验当前版本与内容
   Server->>Pi: 提交含内容快照的 follow-up
   Server-->>Browser: ack
 ```
 
-初次连接与重连发送完整快照；过期回复拒绝提交并保留浏览器输入。
+首次连接、重连、外部文件修改或客户端请求 `resync` 时发送完整 `snapshot`；过期回复拒绝提交并保留浏览器输入。
+
+## 操作协议
+
+```text
+{ type: "operations", documentId, baseVersion, version, operations: [
+  { type: "page:create", page: { id, title, blocks: [] }, index },
+  { type: "blocks:insert", pageId, index, blocks: [完整 Block] },
+  { type: "blocks:update", blocks: [完整 Block], removed: [blockId] }
+] }
+```
+
+一次原子变更对应一个版本和一个操作批次；自动创建页面后插入内容的两个操作属于同一批。更新操作携带完整的新 Block，不传 spec 的局部 patch。客户端预检整批引用和插入位置，按顺序直接修改本地文档与对应 DOM；正常更新不遍历整份文档求差。
+
+## 新增类型
+
+Block 类型在 `core/contracts.js` 的 `BlockKind` 与 `blockDefinitions` 中声明内容校验、摘要；浏览器在 `web/client.js` 的 `blockHandlers` 中补充渲染。TypeBox 枚举、客户端白名单和业务分派从这些定义派生，不再逐处维护类型列表。
+
+操作类型在 `OperationKind` 声明名称，在 `core/model.ts` 的 `Operation` 联合类型中定义载荷，在 `operationHandlers` 中集中实现预检与消费。通信消息和对齐分别使用 `MessageKind`、`Alignment`，不与 Block 枚举混用。
+
+共享模块使用 JSDoc 类型检查；注册表缺少或多出类型会抛错，测试同时检查每类行为齐全。浏览器以原生 ESM 导入 `/core/contracts.js`，服务只暴露该模块文件，不公开整个核心目录。
 
 ## 约束
 
@@ -55,6 +78,8 @@ sequenceDiagram
 
 - 工具成功结果的 `content` 使用固定提示，动态 ID、URL、文档路径与版本放在 `structuredContent` 和 `details`，避免重复序列化到文本。
 - `index.ts` 是唯一扩展入口，`core/` 不依赖 `server/` 或 `web/`，跨层反馈类型放在 `core/types.ts`，避免循环依赖。
+- `core/contracts.js` 是前后端共享的类型来源，不访问 DOM 或注册生命周期；Block 的内容校验与摘要只定义一次，浏览器只补充渲染行为，防止新增类型后前后端接受范围不一致。
+- Block 与操作注册表都检查枚举覆盖范围，业务只查表分派；新增类型缺少处理器时启动或测试直接失败，避免遗漏业务分支。
 - 服务从 `web/` 读取静态资源，HTTP 路径保持 `/client.js` 与 `/client.css`，目录调整不得改变浏览器资源协议。
 
 - JSON 固定保存在项目 `docs/canvas-notes/<UTC时间>-<UUID>/doc.json`，时间格式为 `YYYY-MM-DDTHH-mm-ssZ`，完整目录名写入会话条目，确保重载沿用同一文件且不同会话不互相覆盖。
@@ -63,9 +88,12 @@ sequenceDiagram
 - 未配置 host 时按 SSH 环境选择 `0.0.0.0` 或本地 `localhost`，显式配置始终优先，确保用户能覆盖自动监听策略。
 - 端口只在配置区间内分配，遇到占用重试，区间耗尽时报错，避免绑定范围外端口。
 - 所有读改写共用 Pi 文件队列，临时文件与目标文件同目录原子替换，避免并发覆盖和半份 JSON。
-- 监听目录而不是文件 inode，确保原子替换后持续收到变化。
-- 每次同步完整快照，不能只传最后一次变更，否则快速连续写入会漏操作。
-- 浏览器保留稳定 ID 的实例，未变化的内容不重绘，避免丢失图表交互状态。
+- 监听目录而不是文件 inode，确保原子替换后持续收到外部变化；同一路径的 Store 共享提交订阅，提交操作只在原子替换成功后发布，避免消费未保存内容。
+- 提交通知与快照读取在同一文件队列内排入发送队列，并按连接维护文档指纹；文件监听不重复发送已发布提交，外部同版本编辑仍触发完整快照，避免乱序和漏更新。
+- 操作仅作内存中的实时通知，不维护持久化事件日志；JSON 是恢复依据，首次连接与重连始终取完整快照。
+- 客户端只消费基准版本匹配、版本连续且文档身份一致的操作批次；不匹配时请求一次 `resync`，暂停消费和回复直到完整快照恢复，避免在错误基线上继续更新。
+- 浏览器正常路径直接消费 Block 和 Page 操作，不做全量差异比较；完整快照恢复才遍历协调。稳定 ID 保留原 DOM、选择和图表实例，删除、更换类型、渲染失败或页面退出时释放图表资源。
+- 渲染错误每版本每 Block 只成功回报一次；重复快照不重复发送，发送失败可在后续快照重试，避免目录监听与显式同步重复触发修复。
 - `spec` 整体替换，换类型时需要新 spec，避免旧格式进入新渲染器。
 - 回复校验版本并附带原内容后才确认成功，避免引用更新后内容或丢失失败输入。
 - 回复在 ACK 前写入会话，只有消息正式进入上下文才标记交付；被拒绝的 prompt 在下次运行补交，避免确认成功却丢失回复。
@@ -78,4 +106,4 @@ sequenceDiagram
 
 ## 测试
 
-`npm test --workspace canvas-note` 运行 `tests/*.test.ts`，覆盖原子批次、并发写入、真实 HTTP/WebSocket、快照、回复去重、过期反馈、服务重启与工具 handler。`tests/presentation.test.ts`、`tests/protocol.test.ts`、`tests/web.test.ts` 校验纯构造结果与输入不变性；反馈与模型测试同时校验投影阶段不提交状态。复杂公式样例集中在 `tests/fixtures/math.ts`。根测试覆盖实际 Pi 独立加载和生产依赖安装。
+`npm test --workspace canvas-note` 运行 `tests/*.test.ts`，覆盖原子批次、并发写入、提交订阅、真实 HTTP/WebSocket、操作增量、快照恢复、回复去重、过期反馈、服务重启与工具 handler。`tests/contracts.test.ts` 校验共享枚举、TypeBox 契约、内容定义与注册完整性；`tests/presentation.test.ts`、`tests/protocol.test.ts`、`tests/web.test.ts` 校验纯构造结果与输入不变性；反馈与模型测试同时校验投影阶段不提交状态。`tests/reconcile.test.ts` 通过 `tests/fixtures/browser.ts` 的最小浏览器环境执行完整客户端脚本，验证局部 DOM 写入、图表生命周期、选择保留和版本恢复。复杂公式样例集中在 `tests/fixtures/math.ts`。根测试覆盖实际 Pi 独立加载和生产依赖安装。

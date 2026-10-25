@@ -1,22 +1,19 @@
 import { randomUUID } from "node:crypto";
 import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
-import { dirname } from "node:path";
+import { dirname, resolve } from "node:path";
 import { withFileMutationQueue } from "@earendil-works/pi-coding-agent";
 import { type Static, Type } from "typebox";
 import { Value } from "typebox/value";
 
-export const BlockType = Type.Union([
-  Type.Literal("text"),
-  Type.Literal("chart"),
-  Type.Literal("math"),
-  Type.Literal("table"),
-  Type.Literal("divider"),
-]);
-export const Align = Type.Union([
-  Type.Literal("left"),
-  Type.Literal("center"),
-  Type.Literal("right"),
-]);
+import {
+  Alignment,
+  BlockKind,
+  OperationKind,
+  validateBlockContent,
+} from "./contracts.js";
+
+export const BlockType = Type.Enum(BlockKind);
+export const Align = Type.Enum(Alignment);
 const Spec = Type.Record(Type.String(), Type.Unknown());
 export const InsertBlock = Type.Object({
   type: BlockType,
@@ -62,22 +59,36 @@ export type Block = Static<typeof BlockSchema>;
 export type Document = Static<typeof DocumentSchema>;
 export type Page = Document["pages"][number];
 
+export type Operation =
+  | { type: typeof OperationKind.CreatePage; page: Page; index: number }
+  | {
+      type: typeof OperationKind.InsertBlocks;
+      pageId: string;
+      index: number;
+      blocks: Block[];
+    }
+  | {
+      type: typeof OperationKind.UpdateBlocks;
+      blocks: Block[];
+      removed: string[];
+    };
+
+export type DocumentCommit = {
+  before: string;
+  baseVersion: number;
+  doc: Document;
+  operations: Operation[];
+};
+
+export function documentFingerprint(doc: Document): string {
+  return JSON.stringify(doc);
+}
+
+// Same-path stores share notifications as well as the file mutation queue.
+const subscribers = new Map<string, Set<(commit: DocumentCommit) => void>>();
+
 export function validateBlock(block: Pick<Block, "type" | "spec">) {
-  const { type, spec } = block;
-  if (type === "text" && typeof spec.md !== "string")
-    throw new Error("text: spec.md must be a string");
-  if (type === "math" && typeof spec.latex !== "string")
-    throw new Error("math: spec.latex must be a string");
-  if (
-    type === "table" &&
-    (!Array.isArray(spec.columns) ||
-      !spec.columns.every((c) => typeof c === "string") ||
-      !Array.isArray(spec.rows) ||
-      !spec.rows.every(Array.isArray))
-  )
-    throw new Error(
-      "table: spec.columns must be strings and spec.rows must be arrays",
-    );
+  validateBlockContent(block.type, block.spec);
 }
 
 function decodeDocument(source: string): Document {
@@ -111,7 +122,7 @@ function blockValues(
 ): Block[] {
   return inputs.map((block, index) => ({
     ...block,
-    align: block.align ?? "left",
+    align: block.align ?? Alignment.Left,
     id: ids[index],
   }));
 }
@@ -173,6 +184,20 @@ function planUpdates(doc: Document, params: Static<typeof UpdateParams>) {
 export class DocumentStore {
   private currentPage?: string;
   constructor(readonly path: string) {}
+  subscribe(listener: (commit: DocumentCommit) => void): () => void {
+    const key = resolve(this.path);
+    let listeners = subscribers.get(key);
+    if (!listeners) {
+      listeners = new Set();
+      subscribers.set(key, listeners);
+    }
+    listeners.add(listener);
+    return () => {
+      listeners.delete(listener);
+      if (!listeners.size && subscribers.get(key) === listeners)
+        subscribers.delete(key);
+    };
+  }
   async read(): Promise<Document> {
     try {
       return decodeDocument(await readFile(this.path, "utf8"));
@@ -182,10 +207,15 @@ export class DocumentStore {
       throw error;
     }
   }
-  private mutate<T>(change: (doc: Document) => T): Promise<T> {
+  private mutate<T>(
+    change: (doc: Document, operations: Operation[]) => T,
+  ): Promise<T> {
     return withFileMutationQueue(this.path, async () => {
       const doc = await this.read();
-      const result = change(doc);
+      const before = documentFingerprint(doc);
+      const baseVersion = doc.version;
+      const operations: Operation[] = [];
+      const result = change(doc, operations);
       doc.version++;
       await mkdir(dirname(this.path), { recursive: true });
       const temporary = `${this.path}.${randomUUID()}.tmp`;
@@ -197,14 +227,29 @@ export class DocumentStore {
       } finally {
         await rm(temporary, { force: true });
       }
+      const commit = { before, baseVersion, doc, operations };
+      // Publish synchronously inside the file queue, only after atomic replacement.
+      // Observers cannot turn an already persisted mutation into a failed tool call.
+      for (const listener of subscribers.get(resolve(this.path)) ?? []) {
+        try {
+          listener(structuredClone(commit));
+        } catch {
+          // Listener failures are isolated from persistence and other subscribers.
+        }
+      }
       return result;
     });
   }
   async newPage(params: Static<typeof NewPageParams>) {
     if (!Value.Check(NewPageParams, params))
       throw new Error("Invalid page title");
-    const pageId = await this.mutate((doc) => {
+    const pageId = await this.mutate((doc, operations) => {
       const page = pageValue(randomUUID(), params.title);
+      operations.push({
+        type: OperationKind.CreatePage,
+        page,
+        index: doc.pages.length,
+      });
       doc.pages.push(page);
       return page.id;
     });
@@ -215,15 +260,28 @@ export class DocumentStore {
     if (!Value.Check(InsertParams, params))
       throw new Error("Invalid insert_blocks parameters");
     params.blocks.forEach(validateBlock);
-    const result = await this.mutate((doc) => {
+    const result = await this.mutate((doc, operations) => {
       const plan = planInsertion(doc, params, this.currentPage);
       const page = plan.page ?? pageValue(randomUUID(), "输出");
-      if (!plan.page) doc.pages.push(page);
+      if (!plan.page) {
+        operations.push({
+          type: OperationKind.CreatePage,
+          page: { ...page, blocks: [] },
+          index: doc.pages.length,
+        });
+        doc.pages.push(page);
+      }
       const blocks = blockValues(
         params.blocks,
         params.blocks.map(() => randomUUID()),
       );
       page.blocks.splice(plan.index, 0, ...blocks);
+      operations.push({
+        type: OperationKind.InsertBlocks,
+        pageId: page.id,
+        index: plan.index,
+        blocks,
+      });
       return insertionResult(page.id, blocks);
     });
     if (!params.pageId) this.currentPage = result.pageId;
@@ -232,13 +290,18 @@ export class DocumentStore {
   async update(params: Static<typeof UpdateParams>) {
     if (!Value.Check(UpdateParams, params))
       throw new Error("Invalid update_blocks parameters");
-    return this.mutate((doc) => {
+    return this.mutate((doc, operations) => {
       const { changes, updated, removed } = planUpdates(doc, params);
       for (const { page, old, next } of changes) {
         const index = page.blocks.indexOf(old);
         if (next === null) page.blocks.splice(index, 1);
         else page.blocks[index] = next;
       }
+      operations.push({
+        type: OperationKind.UpdateBlocks,
+        blocks: changes.flatMap(({ next }) => (next ? [next] : [])),
+        removed,
+      });
       return { updated, removed };
     });
   }
