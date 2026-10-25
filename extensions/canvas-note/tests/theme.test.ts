@@ -52,7 +52,7 @@ test("bundled theme is completely valid and overrides stylesheet defaults", asyn
   assert.equal(styles, themeStyles(value));
   assert.equal((styles.match(/: #/g) ?? []).length, Object.keys(value).length);
   const css = await readFile(
-    new URL("../web/client.css", import.meta.url),
+    new URL("../web/content.css", import.meta.url),
     "utf8",
   );
   for (const declaration of styles

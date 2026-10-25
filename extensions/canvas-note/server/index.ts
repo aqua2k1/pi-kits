@@ -41,6 +41,8 @@ const assets = new Map<string, [string, string]>([
     [join(assetRoot, "client.js"), "text/javascript; charset=utf-8"],
   ],
   ["/client.css", [join(assetRoot, "client.css"), "text/css; charset=utf-8"]],
+  ["/content.css", [join(assetRoot, "content.css"), "text/css; charset=utf-8"]],
+  ["/print.css", [join(assetRoot, "print.css"), "text/css; charset=utf-8"]],
   [
     "/vendor/marked.js",
     [
@@ -69,6 +71,13 @@ const assets = new Map<string, [string, string]>([
       require.resolve(
         "@highlightjs/cdn-assets/styles/base16/gruvbox-dark-hard.min.css",
       ),
+      "text/css",
+    ],
+  ],
+  [
+    "/vendor/highlight-print.css",
+    [
+      require.resolve("@highlightjs/cdn-assets/styles/atom-one-light.min.css"),
       "text/css",
     ],
   ],

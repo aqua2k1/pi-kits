@@ -184,6 +184,11 @@ export class Element extends Events {
   scrollIntoView() {
     this.count("scrollIntoView");
   }
+  querySelectorAll(tag: string) {
+    return subtree(this)
+      .slice(1)
+      .filter((node) => node.tagName === tag);
+  }
 
   createTHead() {
     return this.add("thead");
@@ -229,6 +234,8 @@ export function browser() {
     legacyAvailable: true,
     legacyCalls: 0,
   };
+  const printing = { calls: 0, fail: false };
+  const fonts = { ready: Promise.resolve() };
   const ids = new Map<string, Element>();
   const html = readFileSync(
     new URL("../../web/client.html", import.meta.url),
@@ -277,6 +284,7 @@ export function browser() {
     element: Element;
     options: unknown[];
     disposed: number;
+    resizes: number;
     setOption(option: unknown): void;
     dispose(): void;
     resize(): void;
@@ -322,17 +330,28 @@ export function browser() {
           element,
           options: [] as unknown[],
           disposed: 0,
+          resizes: 0,
           setOption(option: unknown) {
             this.options.push(option);
           },
           dispose() {
             this.disposed++;
           },
-          resize() {},
+          resize() {
+            this.resizes++;
+          },
         };
         charts.push(chart);
         return chart;
       },
+    },
+  });
+  Object.assign(window, {
+    print() {
+      printing.calls++;
+      if (printing.fail) throw new Error("printing unavailable");
+      window.emit("beforeprint");
+      window.emit("afterprint");
     },
   });
   // Run the entire client including its startup IIFE, binding its static ESM
@@ -347,6 +366,7 @@ export function browser() {
         getElementById: get,
         createElement,
         title: "Canvas Note",
+        fonts,
         body,
         execCommand(command: string) {
           assert.equal(command, "copy");
@@ -421,6 +441,8 @@ export function browser() {
     observers,
     window,
     clipboard,
+    printing,
+    fonts,
     body,
     runTimers() {
       for (const fn of [...timers.values()]) fn();

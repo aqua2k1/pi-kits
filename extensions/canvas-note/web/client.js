@@ -460,6 +460,7 @@ import {
     let replyContext = null;
     let pending = null;
     let lastSubmission = null;
+    let preparingPrint = false;
 
     function send(message) {
       if (socket?.readyState !== WebSocket.OPEN) return false;
@@ -484,6 +485,8 @@ import {
       $("reply").disabled = next.replyDisabled;
       $("clear").disabled = next.clearDisabled;
       $("shutdown").disabled = next.shutdownDisabled;
+      $("save-pdf").disabled = preparingPrint || !doc?.pages.length;
+      $("save-pdf").textContent = preparingPrint ? "Preparing…" : "Save PDF";
       $("submit").disabled = next.submitDisabled;
       $("reply-text").readOnly = next.readOnly;
       $("dismiss").disabled = next.readOnly;
@@ -920,6 +923,35 @@ import {
       }
       finishUpdate();
     }
+
+    function resizeChartsForPrint() {
+      for (const record of blocks.values()) {
+        record.chart?.resize({ animation: { duration: 0 } });
+      }
+    }
+
+    window.addEventListener("beforeprint", resizeChartsForPrint);
+    window.addEventListener("afterprint", resizeChartsForPrint);
+    $("save-pdf").addEventListener("click", async () => {
+      if (preparingPrint || !doc?.pages.length) return;
+      preparingPrint = true;
+      $("save-pdf").title = "";
+      updateControls();
+      try {
+        await Promise.all([
+          document.fonts?.ready,
+          ...Array.from(pagesRoot.querySelectorAll("img"), (image) =>
+            image.decode?.().catch(() => {}),
+          ),
+        ]);
+        window.print();
+      } catch (error) {
+        $("save-pdf").title = `Print failed: ${String(error)}`;
+      } finally {
+        preparingPrint = false;
+        updateControls();
+      }
+    });
 
     $("reply").addEventListener("click", () => {
       const selected = selectedReply(doc.version, selection, blocks);
