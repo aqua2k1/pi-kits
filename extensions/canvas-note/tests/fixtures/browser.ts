@@ -234,7 +234,23 @@ export function browser() {
     legacyAvailable: true,
     legacyCalls: 0,
   };
-  const printing = { calls: 0, fail: false };
+  const printing = { calls: 0, fail: false, active: false };
+  const themeColors: Record<string, Record<string, string>> = {
+    screen: {
+      text: "#ebdbb2",
+      muted: "#a89984",
+      border: "#665c54",
+      surface: "#282828",
+      background: "#1d2021",
+    },
+    print: {
+      text: "#222",
+      muted: "#555",
+      border: "#aaa",
+      surface: "#fff",
+      background: "#fff",
+    },
+  };
   const fonts = { ready: Promise.resolve() };
   const ids = new Map<string, Element>();
   const html = readFileSync(
@@ -285,6 +301,11 @@ export function browser() {
     options: unknown[];
     disposed: number;
     resizes: number;
+    flushes: number;
+    getZr(): { flush(): void };
+    initialTheme: unknown;
+    themes: unknown[];
+    setTheme(theme: unknown): void;
     setOption(option: unknown): void;
     dispose(): void;
     resize(): void;
@@ -304,6 +325,17 @@ export function browser() {
     }
   }
   const window = Object.assign(new Events(), {
+    getComputedStyle() {
+      return {
+        getPropertyValue(key: string) {
+          return (
+            themeColors[printing.active ? "print" : "screen"][
+              key.replace(/^--/, "")
+            ] ?? ""
+          );
+        },
+      };
+    },
     hljs,
     marked: {
       parse(md: string) {
@@ -325,12 +357,25 @@ export function browser() {
       },
     },
     echarts: {
-      init(element: Element) {
+      init(element: Element, theme: unknown) {
         const chart = {
           element,
+          initialTheme: theme,
+          themes: [] as unknown[],
+          setTheme(value: unknown) {
+            this.themes.push(value);
+          },
           options: [] as unknown[],
           disposed: 0,
           resizes: 0,
+          flushes: 0,
+          getZr() {
+            return {
+              flush: () => {
+                this.flushes++;
+              },
+            };
+          },
           setOption(option: unknown) {
             this.options.push(option);
           },
@@ -350,8 +395,10 @@ export function browser() {
     print() {
       printing.calls++;
       if (printing.fail) throw new Error("printing unavailable");
+      printing.active = true;
       window.emit("beforeprint");
       window.emit("afterprint");
+      printing.active = false;
     },
   });
   // Run the entire client including its startup IIFE, binding its static ESM
@@ -366,6 +413,7 @@ export function browser() {
         getElementById: get,
         createElement,
         title: "Canvas Note",
+        documentElement: createElement("html"),
         fonts,
         body,
         execCommand(command: string) {
@@ -442,6 +490,7 @@ export function browser() {
     window,
     clipboard,
     printing,
+    themeColors,
     fonts,
     body,
     runTimers() {

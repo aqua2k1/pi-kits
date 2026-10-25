@@ -332,6 +332,7 @@ test("real HTTP, WebSocket snapshots, atomic rename watch, reply acknowledgment 
   assert.match(await res.text(), /Canvas Note/);
   for (const path of [
     "/client.js",
+    "/chart-theme.js",
     "/client.css",
     "/content.css",
     "/print.css",

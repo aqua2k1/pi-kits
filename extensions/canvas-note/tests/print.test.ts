@@ -67,6 +67,11 @@ test("Save PDF waits for fonts and images and preserves document UI state", asyn
   assert.equal(checkbox.checked, true);
   assert.equal(b.get("pages").classList.contains("outline-collapsed"), true);
   assert.equal(b.charts[0].resizes, 2);
+  assert.equal(
+    b.charts[0].flushes,
+    2,
+    "print capture must not wait for a future animation frame",
+  );
   assert.equal(b.charts[0].options.length, 1);
   assert.equal(b.charts[0].disposed, 0);
   assert.equal(b.markdown.length, 1);
@@ -97,6 +102,57 @@ test("printing failure restores the button and browser print events resize exist
   assert.equal(b.charts[0].resizes, 4);
 });
 
+test("chart themes switch idempotently for print and restore cached screen colors", () => {
+  const b = browser();
+  const before = JSON.stringify(doc);
+  b.snapshot(doc);
+  const chart = b.charts[0];
+  const screen = chart.initialTheme as {
+    textStyle: { color: string };
+    color: string[];
+  };
+  assert.equal(screen.textStyle.color, "#ebdbb2");
+  assert.equal(screen.color[1], "#f2da87");
+  b.printing.active = true;
+  b.window.emit("beforeprint");
+  b.window.emit("beforeprint");
+  assert.equal(chart.themes.length, 1);
+  assert.equal((chart.themes[0] as typeof screen).textStyle.color, "#222");
+  assert.equal((chart.themes[0] as typeof screen).color[1], "#b57614");
+  b.operations(1, [
+    {
+      type: "blocks:insert",
+      pageId: "p",
+      index: 2,
+      blocks: [
+        {
+          id: "during-print",
+          type: "chart",
+          align: "left",
+          spec: { series: [] },
+        },
+      ],
+    },
+  ]);
+  assert.equal(
+    (b.charts[1].initialTheme as typeof screen).textStyle.color,
+    "#222",
+  );
+  // Some browsers fire afterprint while print media is still active.
+  b.window.emit("afterprint");
+  b.window.emit("afterprint");
+  assert.equal(chart.themes.length, 2);
+  assert.equal(chart.flushes, 4);
+  assert.equal((chart.themes[1] as typeof screen).textStyle.color, "#ebdbb2");
+  assert.equal(
+    (b.charts[1].themes[0] as typeof screen).textStyle.color,
+    "#ebdbb2",
+  );
+  assert.equal(chart.disposed, 0);
+  assert.equal(chart.options.length, 1);
+  assert.equal(JSON.stringify(doc), before);
+});
+
 test("shared content, screen chrome and print rules have separate stylesheet ownership", async () => {
   const [html, content, screen, print] = await Promise.all(
     ["client.html", "content.css", "client.css", "print.css"].map((name) =>
@@ -117,5 +173,6 @@ test("shared content, screen chrome and print rules have separate stylesheet own
   assert.match(print, /@page/);
   assert.match(print, /break-before:\s*page/);
   assert.match(print, /white-space:\s*pre-wrap/);
+  assert.match(print, /object-fit:\s*contain/);
   assert.doesNotMatch(print, /font-family:/);
 });

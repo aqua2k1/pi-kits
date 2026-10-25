@@ -40,6 +40,10 @@ const assets = new Map<string, [string, string]>([
     "/client.js",
     [join(assetRoot, "client.js"), "text/javascript; charset=utf-8"],
   ],
+  [
+    "/chart-theme.js",
+    [join(assetRoot, "chart-theme.js"), "text/javascript; charset=utf-8"],
+  ],
   ["/client.css", [join(assetRoot, "client.css"), "text/css; charset=utf-8"]],
   ["/content.css", [join(assetRoot, "content.css"), "text/css; charset=utf-8"]],
   ["/print.css", [join(assetRoot, "print.css"), "text/css; charset=utf-8"]],

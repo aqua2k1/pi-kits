@@ -111,6 +111,10 @@
   }
 
   /* Chromium finalizes paper width after beforeprint; scale the canvas with its host. */
+  .content-chart canvas {
+    object-fit: contain;
+  }
+
   .content-chart > div:first-child,
   .content-chart canvas {
     /* biome-ignore lint/complexity/noImportantStyles: Override ECharts inline sizing after Chromium finalizes paper layout. */

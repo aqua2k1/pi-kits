@@ -8,8 +8,26 @@ import {
   MessageKind,
   OperationKind,
 } from "../core/contracts.js";
+import { createChartTheme } from "./chart-theme.js";
 
 {
+  let chartThemeMode = "screen";
+  let screenChartTheme;
+  let printChartTheme;
+
+  function readChartTheme(mode) {
+    const styles = window.getComputedStyle(document.documentElement);
+    const colors = Object.fromEntries(
+      ["text", "muted", "border", "surface", "background"]
+        .map((key) => [key, styles.getPropertyValue(`--${key}`).trim()])
+        .filter(([, value]) => value),
+    );
+    return createChartTheme(colors, mode);
+  }
+
+  const currentChartTheme = () =>
+    chartThemeMode === "print" ? printChartTheme : screenChartTheme;
+
   const blockHandlers = defineHandlers(BlockKind, {
     [BlockKind.Text]: {
       ...blockDefinitions[BlockKind.Text],
@@ -52,7 +70,10 @@ import {
       reuse: true,
       render(record, block) {
         if (!record.chart) {
-          record.chart = window.echarts.init(record.content);
+          record.chart = window.echarts.init(
+            record.content,
+            currentChartTheme(),
+          );
           record.observer = new ResizeObserver(() => record.chart?.resize());
           record.observer.observe(record.content);
         }
@@ -437,6 +458,7 @@ import {
     Math.min(30000, 750 * 2 ** Math.min(retry, 6));
 
   (() => {
+    screenChartTheme = readChartTheme("screen");
     const $ = (id) => document.getElementById(id);
     const pagesRoot = $("pages");
     const outline = $("outline");
@@ -924,14 +946,22 @@ import {
       finishUpdate();
     }
 
-    function resizeChartsForPrint() {
+    function updateChartThemes(mode) {
+      const changed = chartThemeMode !== mode;
+      if (changed && mode === "print")
+        printChartTheme = readChartTheme("print");
+      chartThemeMode = mode;
       for (const record of blocks.values()) {
+        if (changed)
+          record.chart?.setTheme(currentChartTheme(), { silent: true });
         record.chart?.resize({ animation: { duration: 0 } });
+        // Printing may capture the canvas before the next animation frame.
+        record.chart?.getZr().flush();
       }
     }
 
-    window.addEventListener("beforeprint", resizeChartsForPrint);
-    window.addEventListener("afterprint", resizeChartsForPrint);
+    window.addEventListener("beforeprint", () => updateChartThemes("print"));
+    window.addEventListener("afterprint", () => updateChartThemes("screen"));
     $("save-pdf").addEventListener("click", async () => {
       if (preparingPrint || !doc?.pages.length) return;
       preparingPrint = true;

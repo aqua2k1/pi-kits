@@ -15,6 +15,7 @@ flowchart LR
   server --> client["web/client.js<br/>渲染与多选回复"]
   model --> contracts["core/contracts.js<br/>共享类型与内容定义"]
   client --> contracts
+  client --> chartTheme["web/chart-theme.js<br/>图表主题纯构造"]
 ```
 
 ## 文件地图
@@ -34,6 +35,7 @@ flowchart LR
 | `web/content.css` | 屏幕与打印共享的配色变量、字体和正文排版 |
 | `web/client.css` | 屏幕专属纸面布局、目录、选择框、工具栏与弹窗样式 |
 | `web/print.css` | 纸张、浅色配色、隐藏交互与分页规则 |
+| `web/chart-theme.js` | 从页面配色纯构造屏幕与打印图表主题 |
 | `web/client.js` | 消费操作、按 ID 渲染、固定 page/block 目录、连接恢复、选择与提交 |
 
 ## 数据流
@@ -101,8 +103,9 @@ Block 类型在 `core/contracts.js` 的 `BlockKind` 与 `blockDefinitions` 中�
 - Block 与操作注册表都检查枚举覆盖范围，业务只查表分派；新增类型缺少处理器时启动或测试直接失败，避免遗漏业务分支。
 - `theme.json` 是随扩展分发的网页配色资源，不是 Pi 设置；`/theme.css` 每次请求重新读取，只将白名单键的十六进制色值转换为 CSS 变量，缺失或无效项沿用基础样式，避免任意 CSS 注入和主题错误阻断文档。
 - 服务从 `web/` 读取静态资源，HTTP 路径保持 `/client.js`、`/client.css`、`/content.css` 与 `/print.css`，目录调整不得改变浏览器资源协议。
-- 正文样式只在 `content.css` 定义；网页布局与交互限制为 screen，打印只补差异并复用同一 DOM，避免维护两套 Block 渲染器。打印生命周期仅适配已有图表尺寸，不重建图表或改变文档、选择和目录状态。
-- Chrome 在 `beforeprint` 后才确定纸张最终宽度，打印样式必须约束 ECharts 首个画布容器及 canvas 的宽高，不调整 tooltip 容器，避免图表溢出覆盖下一个 Block。
+- 正文样式只在 `content.css` 定义；网页布局与交互限制为 screen，打印只补差异并复用同一 DOM，避免维护两套 Block 渲染器。打印生命周期只通过 ECharts `setTheme`、`resize` 和画布同步刷新适配已有图表，不重建图表或改变文档、选择和目录状态。
+- 图表主题默认值从 CSS 变量构造，用户 spec 的显式样式优先；主题不得写回文档或复制结果。屏幕主题在启动时缓存，打印主题在打印前读取，打印结束恢复缓存，避免浏览器结束事件仍处于 print 媒体时错误保留浅色主题。
+- Chrome 在 `beforeprint` 后才确定纸张最终宽度，打印样式必须约束 ECharts 首个画布容器及 canvas 的宽高，不调整 tooltip 容器，并保持画布内容纵横比，避免饼图变形或图表溢出覆盖下一个 Block。
 
 - JSON 固定保存在项目 `docs/canvas-notes/<UTC时间>-<UUID>/doc.json`，时间格式为 `YYYY-MM-DDTHH-mm-ssZ`，完整目录名写入会话条目，确保重载沿用同一文件且不同会话不互相覆盖。
 - JSON 是唯一权威状态，服务关闭不删除文件，确保重启后能恢复文档。
@@ -134,4 +137,4 @@ Block 类型在 `core/contracts.js` 的 `BlockKind` 与 `blockDefinitions` 中�
 
 ## 测试
 
-`npm test --workspace canvas-note` 运行 `tests/*.test.ts`，覆盖原子批次、并发写入、提交订阅、真实 HTTP/WebSocket、操作增量、快照恢复、回复去重、过期反馈、服务重启与工具 handler。`tests/contracts.test.ts` 校验共享枚举、内容定义与注册完整性，包含 Code 合法/非法内容、原样摘要与输入不变性；`tests/model.test.ts` 校验 TypeBox 联合 schema 覆盖、Code 插入与读取、整体替换、换类型、删除和原子失败；`tests/presentation.test.ts`、`tests/protocol.test.ts`、`tests/web.test.ts` 校验纯构造结果与输入不变性；反馈与模型测试同时校验投影阶段不提交状态。`tests/reconcile.test.ts` 通过 `tests/fixtures/browser.ts` 的最小浏览器环境执行完整客户端脚本，验证局部 DOM 写入、图表生命周期、选择保留和版本恢复。`tests/print.test.ts` 验证样式分层、字体图片就绪、打印重试与状态保留。复杂公式样例集中在 `tests/fixtures/math.ts`。根测试覆盖实际 Pi 独立加载和生产依赖安装。
+`npm test --workspace canvas-note` 运行 `tests/*.test.ts`，覆盖原子批次、并发写入、提交订阅、真实 HTTP/WebSocket、操作增量、快照恢复、回复去重、过期反馈、服务重启与工具 handler。`tests/contracts.test.ts` 校验共享枚举、内容定义与注册完整性，包含 Code 合法/非法内容、原样摘要与输入不变性；`tests/model.test.ts` 校验 TypeBox 联合 schema 覆盖、Code 插入与读取、整体替换、换类型、删除和原子失败；`tests/presentation.test.ts`、`tests/protocol.test.ts`、`tests/web.test.ts` 校验纯构造结果与输入不变性；反馈与模型测试同时校验投影阶段不提交状态。`tests/reconcile.test.ts` 通过 `tests/fixtures/browser.ts` 的最小浏览器环境执行完整客户端脚本，验证局部 DOM 写入、图表生命周期、选择保留和版本恢复。`tests/chart-theme.test.ts` 校验主题纯构造与真实 ECharts 显式样式优先；`tests/print.test.ts` 验证样式分层、字体图片就绪、打印重试与状态保留。复杂公式样例集中在 `tests/fixtures/math.ts`。根测试覆盖实际 Pi 独立加载和生产依赖安装。
