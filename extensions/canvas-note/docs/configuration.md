@@ -23,35 +23,37 @@
 
 ## 网页配色
 
+默认采用 Gruvbox 深色配色。
+
 配色资源位置：`extensions/canvas-note/theme.json`（扩展安装目录内）。修改后刷新网页生效，无需 `/reload`。各键均为字符串，接受 `#RGB`、`#RGBA`、`#RRGGBB`、`#RRGGBBAA`；省略或无效的值沿用默认配色，JSON 损坏或文件缺失时整页沿用默认配色。
 
 | 键 | 默认值 | 说明 |
 |---|---|---|
-| `background` | `#ebe7e4` | 网页背景 |
-| `surface` | `#f3f2f0` | 纸面、工具栏和弹窗 |
-| `text` | `#252f3d` | 正文与标题 |
-| `muted` | `#5c5752` | 辅助文字和占位提示 |
-| `accent` | `#4b607c` | 链接、主按钮、选中边框与焦点环 |
-| `accentHover` | `#354961` | 主按钮悬停背景 |
-| `onAccent` | `#ffffff` | 主按钮文字 |
-| `border` | `#8b847d59` | 分隔线与边框 |
-| `success` | `#47745b` | 已连接指示灯 |
-| `warning` | `#98642f` | 连接中指示灯与反馈提示 |
-| `error` | `#a04736` | 断连指示灯与渲染错误 |
+| `background` | `#1d2021` | 网页背景 |
+| `surface` | `#282828` | 纸面、工具栏和弹窗 |
+| `text` | `#ebdbb2` | 正文与标题 |
+| `muted` | `#a89984` | 辅助文字和占位提示 |
+| `accent` | `#fe8019` | 链接、主按钮、选中边框与焦点环 |
+| `accentHover` | `#d65d0e` | 主按钮悬停背景 |
+| `onAccent` | `#1d2021` | 主按钮文字 |
+| `border` | `#665c54` | 分隔线与边框 |
+| `success` | `#b8bb26` | 已连接指示灯 |
+| `warning` | `#fabd2f` | 连接中指示灯与反馈提示 |
+| `error` | `#fb4934` | 断连指示灯与渲染错误 |
 
 ```json
 {
-  "background": "#ebe7e4",
-  "surface": "#f3f2f0",
-  "text": "#252f3d",
-  "muted": "#5c5752",
-  "accent": "#4b607c",
-  "accentHover": "#354961",
-  "onAccent": "#ffffff",
-  "border": "#8b847d59",
-  "success": "#47745b",
-  "warning": "#98642f",
-  "error": "#a04736"
+  "background": "#1d2021",
+  "surface": "#282828",
+  "text": "#ebdbb2",
+  "muted": "#a89984",
+  "accent": "#fe8019",
+  "accentHover": "#d65d0e",
+  "onAccent": "#1d2021",
+  "border": "#665c54",
+  "success": "#b8bb26",
+  "warning": "#fabd2f",
+  "error": "#fb4934"
 }
 ```
 

@@ -1,27 +1,39 @@
 :root {
-  color-scheme: light;
-  --background: #ebe7e4;
-  --surface: #f3f2f0;
-  --text: #252f3d;
-  --muted: #5c5752;
-  --accent: #4b607c;
-  --accent-hover: #354961;
-  --on-accent: #ffffff;
-  --border: #8b847d59;
-  --success: #47745b;
-  --warning: #98642f;
-  --error: #a04736;
+  color-scheme: dark;
+  --background: #1d2021;
+  --surface: #282828;
+  --text: #ebdbb2;
+  --muted: #a89984;
+  --accent: #fe8019;
+  --accent-hover: #d65d0e;
+  --on-accent: #1d2021;
+  --border: #665c54;
+  --success: #b8bb26;
+  --warning: #fabd2f;
+  --error: #fb4934;
   --serif:
     "Iowan Old Style", "Palatino Linotype", "Noto Serif CJK SC", Georgia, serif;
   --mono: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
   --soft: color-mix(in srgb, var(--accent) 6%, var(--surface));
   --selection: color-mix(in srgb, var(--accent) 10%, var(--surface));
+  --font-size: 1rem;
+  --font-size-xs: 0.75rem;
+  --font-size-sm: 0.875rem;
+  --font-size-base: 1rem;
+  --font-size-lg: 1.125rem;
+  --font-size-h1: 2.25rem;
+  --font-size-h2: 1.875rem;
+  --font-size-h3: 1.5rem;
+  --font-size-h4: 1.125rem;
+  --font-weight-normal: 400;
+  --font-weight-medium: 500;
+  font-size: var(--font-size);
   font-family:
     system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   color: var(--text);
   background: var(--background);
   font-synthesis: none;
-  line-height: 1.7;
+  line-height: 1.5;
 }
 
 * {
@@ -100,7 +112,7 @@ button.primary:hover:not(:disabled) {
   border-top: 3px solid var(--accent);
   border-bottom: 1px solid var(--border);
   font-family: var(--mono);
-  font-size: 0.72rem;
+  font-size: var(--font-size-sm);
   line-height: 1.5;
 }
 .document-id {
@@ -108,7 +120,7 @@ button.primary:hover:not(:disabled) {
   min-width: 0;
   overflow: hidden;
   color: var(--muted);
-  font-size: 0.65rem;
+  font-size: var(--font-size-xs);
   white-space: nowrap;
   text-overflow: ellipsis;
 }
@@ -188,10 +200,10 @@ button.primary:hover:not(:disabled) {
   padding-bottom: 1.5rem;
   border-bottom: 1px solid var(--border);
   font-family: var(--serif);
-  font-size: clamp(2rem, 4vw, 3rem);
-  font-weight: 400;
+  font-size: var(--font-size-h1);
+  font-weight: var(--font-weight-medium);
   letter-spacing: -0.045em;
-  line-height: 1.15;
+  line-height: 1.2;
 }
 .block {
   position: relative;
@@ -237,23 +249,34 @@ button.primary:hover:not(:disabled) {
 }
 .block-content h1,
 .block-content h2,
-.block-content h3 {
+.block-content h3,
+.block-content h4 {
+  margin-bottom: 0.5rem;
   font-family: var(--serif);
-  font-weight: 400;
-  line-height: 1.3;
+  font-weight: var(--font-weight-medium);
   letter-spacing: -0.025em;
 }
 .block-content h1 {
-  font-size: 2rem;
+  font-size: var(--font-size-h1);
+  line-height: 1.2;
 }
 .block-content h2 {
-  font-size: 1.65rem;
+  font-size: var(--font-size-h2);
+  line-height: 1.3;
 }
 .block-content h3 {
-  font-size: 1.3rem;
+  font-size: var(--font-size-h3);
+  line-height: 1.4;
+}
+.block-content h4 {
+  font-size: var(--font-size-h4);
+  line-height: 1.4;
 }
 .block-content p {
-  margin: 0.9rem 0;
+  margin: 0 0 1rem;
+  font-size: var(--font-size-base);
+  font-weight: var(--font-weight-normal);
+  line-height: 1.6;
 }
 .block-content a {
   color: var(--accent);
@@ -304,7 +327,7 @@ button.primary:hover:not(:disabled) {
   display: inline-table;
   border-collapse: collapse;
   max-width: 100%;
-  font-size: 0.9rem;
+  font-size: var(--font-size-sm);
 }
 .block-content th,
 .block-content td {
@@ -315,8 +338,8 @@ button.primary:hover:not(:disabled) {
 .block-content th {
   background: var(--soft);
   font-family: var(--mono);
-  font-size: 0.8rem;
-  font-weight: 500;
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-medium);
 }
 .block-content tr:last-child td {
   border-bottom: 0;
@@ -345,14 +368,14 @@ button.primary:hover:not(:disabled) {
   background: color-mix(in srgb, var(--error) 5%, var(--surface));
   border-radius: 3px;
   font-family: var(--mono);
-  font-size: 0.8rem;
+  font-size: var(--font-size-xs);
 }
 .empty {
   text-align: center;
   color: var(--muted);
   margin: 10vh 1.5rem;
   font-family: var(--serif);
-  font-size: 1.5rem;
+  font-size: var(--font-size-h3);
 }
 
 dialog {
@@ -379,8 +402,9 @@ dialog::backdrop {
 #shutdown-title {
   margin: 0;
   font-family: var(--serif);
-  font-weight: 400;
-  font-size: 1.8rem;
+  font-weight: var(--font-weight-medium);
+  font-size: var(--font-size-h2);
+  line-height: 1.3;
   letter-spacing: -0.025em;
 }
 #dismiss {
@@ -391,7 +415,7 @@ dialog::backdrop {
 }
 .muted {
   color: var(--muted);
-  font-size: 0.85rem;
+  font-size: var(--font-size-sm);
 }
 #selected-summaries {
   max-height: 180px;
@@ -400,7 +424,7 @@ dialog::backdrop {
   border: 1px solid var(--border);
   border-radius: 3px;
   background: var(--soft);
-  font-size: 0.85rem;
+  font-size: var(--font-size-sm);
   overflow-wrap: anywhere;
 }
 #selected-summaries li + li {
@@ -410,7 +434,8 @@ label[for="reply-text"] {
   display: block;
   margin: 1.2rem 0 0.4rem;
   font-family: var(--mono);
-  font-size: 0.75rem;
+  font-size: var(--font-size-base);
+  font-weight: var(--font-weight-medium);
 }
 textarea {
   display: block;
@@ -428,7 +453,7 @@ textarea::placeholder {
 }
 #reply-status,
 #shutdown-status {
-  font-size: 0.85rem;
+  font-size: var(--font-size-sm);
   color: var(--warning);
   overflow-wrap: anywhere;
 }
@@ -439,7 +464,7 @@ textarea::placeholder {
   gap: 0.6rem;
   margin-top: 1rem;
   font-family: var(--mono);
-  font-size: 0.75rem;
+  font-size: var(--font-size-base);
 }
 
 @media (max-width: 1000px) {
@@ -459,7 +484,7 @@ textarea::placeholder {
     margin-bottom: 1.2rem;
   }
   .page > h1 {
-    font-size: 2rem;
+    font-size: var(--font-size-h1);
   }
   dialog {
     padding: 1.2rem;
