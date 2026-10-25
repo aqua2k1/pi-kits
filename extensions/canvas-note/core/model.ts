@@ -14,9 +14,11 @@ import {
 
 export const BlockType = Type.Enum(BlockKind);
 export const Align = Type.Enum(Alignment);
+export const BlockTitle = Type.String({ minLength: 1, pattern: "\\S" });
 const Spec = Type.Record(Type.String(), Type.Unknown());
 export const InsertBlock = Type.Object({
   type: BlockType,
+  title: Type.Optional(BlockTitle),
   align: Type.Optional(Align),
   spec: Spec,
 });
@@ -33,6 +35,7 @@ export const UpdateParams = Type.Object({
     Type.Object({
       blockId: Type.String(),
       type: Type.Optional(Type.Union([BlockType, Type.Null()])),
+      title: Type.Optional(Type.Union([BlockTitle, Type.Null()])),
       align: Type.Optional(Align),
       spec: Type.Optional(Spec),
     }),
@@ -42,6 +45,7 @@ export const UpdateParams = Type.Object({
 export const BlockSchema = Type.Object({
   id: Type.String(),
   type: BlockType,
+  title: Type.Optional(BlockTitle),
   align: Align,
   spec: Spec,
 });
@@ -168,11 +172,18 @@ function planUpdates(doc: Document, params: Static<typeof UpdateParams>) {
     }
     if (patch.type && patch.type !== old.type && patch.spec === undefined)
       throw new Error(`Block ${old.id}: changing type requires complete spec`);
+    const title =
+      patch.title === undefined
+        ? old.title
+        : patch.title === null
+          ? undefined
+          : patch.title;
     const next: Block = {
       id: old.id,
       type: patch.type ?? old.type,
       align: patch.align ?? old.align,
       spec: patch.spec ?? old.spec,
+      ...(title === undefined ? {} : { title }),
     };
     validateBlock(next);
     changes.push({ page, old, next });

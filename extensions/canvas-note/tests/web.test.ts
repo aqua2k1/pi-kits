@@ -92,6 +92,9 @@ test("document identity is displayed verbatim without changing the directory nam
     "utf8",
   );
   assert.match(html, /id="document-id"/);
+  assert.match(html, /<aside id="outline"/);
+  assert.match(html, /id="outline-tree"/);
+  assert.match(html, /aria-controls="outline-tree"/);
   assert.ok(
     source.includes('$("document-id").textContent = presentation.identity'),
   );

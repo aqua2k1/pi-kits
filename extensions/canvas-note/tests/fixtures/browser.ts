@@ -172,6 +172,9 @@ export class Element extends Events {
     this.open = false;
   }
   focus() {}
+  scrollIntoView() {
+    this.count("scrollIntoView");
+  }
 
   createTHead() {
     return this.add("thead");

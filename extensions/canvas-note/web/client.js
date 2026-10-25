@@ -79,6 +79,11 @@ import {
     return `${pageTitle || "Untitled page"} · ${block.type}: ${String(text).replace(/\s+/g, " ").slice(0, 180)}`;
   };
 
+  const blockLabel = (block) =>
+    typeof block.title === "string" && block.title.trim()
+      ? block.title
+      : block.type;
+
   const documentPresentation = (documentId) => {
     const identity = typeof documentId === "string" ? documentId : "";
     return {
@@ -154,7 +159,7 @@ import {
   const blockPresentation = (block) => ({
     revision: JSON.stringify([block.type, block.spec]),
     align: block.align || Alignment.Left,
-    label: `Select ${block.type} block ${block.id}`,
+    label: `Select ${blockLabel(block)} block ${block.id}`,
     className: `block-content content-${block.type}`,
   });
 
@@ -163,6 +168,8 @@ import {
       !block ||
       typeof block.id !== "string" ||
       !block.id ||
+      (typeof block.title !== "undefined" &&
+        (typeof block.title !== "string" || !/\S/.test(block.title))) ||
       !isBlockKind(block.type) ||
       !isAlignment(block.align) ||
       !block.spec ||
@@ -199,11 +206,12 @@ import {
         return true;
       },
       apply(operation, context) {
-        const { doc, pageEntry, place, pagesRoot } = context;
+        const { doc, pageEntry, place, pagesRoot, syncOutlinePage } = context;
         const page = { ...operation.page, blocks: [] };
         doc.pages.splice(operation.index, 0, page);
         const entry = pageEntry(page);
         place(pagesRoot, entry.element, operation.index);
+        syncOutlinePage(page.id, operation.index);
       },
     },
     [OperationKind.InsertBlocks]: {
@@ -235,13 +243,15 @@ import {
         return true;
       },
       apply(operation, context) {
-        const { pages, blockRecord, place, render } = context;
+        const { pages, blockRecord, place, render, syncOutlineBlock } = context;
         const entry = pages.get(operation.pageId);
         entry.page.blocks.splice(operation.index, 0, ...operation.blocks);
         operation.blocks.forEach((block, offset) => {
+          const index = operation.index + offset;
           const record = blockRecord(block, entry.page);
-          place(entry.body, record.element, operation.index + offset);
+          place(entry.body, record.element, index);
           render(record, block);
+          syncOutlineBlock(operation.pageId, block, index);
         });
       },
     },
@@ -269,18 +279,29 @@ import {
         return true;
       },
       apply(operation, context) {
-        const { blocks, pages, render, removeBlock } = context;
+        const {
+          blocks,
+          pages,
+          render,
+          removeBlock,
+          syncOutlineBlock,
+          removeOutlineBlock,
+        } = context;
         for (const block of operation.blocks) {
           const record = blocks.get(block.id);
           const page = pages.get(record.pageId).page;
-          page.blocks[page.blocks.indexOf(record.block)] = block;
+          const index = page.blocks.indexOf(record.block);
+          page.blocks[index] = block;
           record.block = block;
           render(record, block);
+          syncOutlineBlock(record.pageId, block, index);
         }
         for (const id of operation.removed) {
           const record = blocks.get(id);
           const page = pages.get(record.pageId).page;
-          page.blocks.splice(page.blocks.indexOf(record.block), 1);
+          const index = page.blocks.indexOf(record.block);
+          page.blocks.splice(index, 1);
+          removeOutlineBlock(record.pageId, id);
           removeBlock(id);
         }
       },
@@ -338,10 +359,15 @@ import {
   (() => {
     const $ = (id) => document.getElementById(id);
     const pagesRoot = $("pages");
+    const outline = $("outline");
+    const outlineTree = $("outline-tree");
+    const outlineList = $("outline-list");
+    const outlineToggle = $("outline-toggle");
     const dialog = $("reply-dialog");
     const selection = new Set();
     const pages = new Map();
     const blocks = new Map();
+    const outlinePages = new Map();
     const failedBlocks = new Set();
     let doc = null;
     let awaitingSnapshot = true;
@@ -484,6 +510,175 @@ import {
       }
     }
 
+    function scrollToOutlineTarget(target) {
+      target?.scrollIntoView?.({ behavior: "smooth", block: "start" });
+    }
+
+    function outlineBlockLabel(block) {
+      return blockLabel(block);
+    }
+
+    function setOutlinePageExpanded(entry) {
+      entry.children.hidden = !entry.expanded;
+      entry.toggle.textContent = entry.expanded ? "▾" : "▸";
+      entry.toggle.setAttribute("aria-expanded", String(entry.expanded));
+      entry.toggle.setAttribute(
+        "aria-label",
+        `${entry.expanded ? "Collapse" : "Expand"} ${entry.label}`,
+      );
+    }
+
+    function createOutlinePage(page) {
+      const element = document.createElement("li");
+      element.className = "outline-page";
+      element.dataset.pageId = page.id;
+      const row = document.createElement("div");
+      row.className = "outline-page-row";
+      const toggle = document.createElement("button");
+      toggle.type = "button";
+      toggle.className = "outline-page-toggle";
+      const link = document.createElement("button");
+      link.type = "button";
+      link.className = "outline-link outline-page-link";
+      const children = document.createElement("ul");
+      children.className = "outline-children";
+      const entry = {
+        pageId: page.id,
+        element,
+        toggle,
+        link,
+        children,
+        blocks: new Map(),
+        expanded: true,
+        label: "",
+      };
+      toggle.addEventListener("click", () => {
+        entry.expanded = !entry.expanded;
+        setOutlinePageExpanded(entry);
+      });
+      link.addEventListener("click", () => {
+        scrollToOutlineTarget(pages.get(entry.pageId)?.element);
+      });
+      row.append(toggle, link);
+      element.append(row, children);
+      setOutlinePageExpanded(entry);
+      return entry;
+    }
+
+    function createOutlineBlock(block, pageId) {
+      const element = document.createElement("li");
+      element.className = "outline-block";
+      element.dataset.blockId = block.id;
+      const link = document.createElement("button");
+      link.type = "button";
+      link.className = "outline-link outline-block-link";
+      link.addEventListener("click", () => {
+        scrollToOutlineTarget(blocks.get(block.id)?.element);
+      });
+      element.append(link);
+      return { pageId, element, link, label: "" };
+    }
+
+    function syncOutlinePageEntry(pageId, pageIndex) {
+      const pageEntry = pages.get(pageId);
+      if (!pageEntry) {
+        const stale = outlinePages.get(pageId);
+        stale?.element.remove();
+        outlinePages.delete(pageId);
+        return;
+      }
+      let entry = outlinePages.get(pageId);
+      if (!entry) {
+        entry = createOutlinePage(pageEntry.page);
+        outlinePages.set(pageId, entry);
+      }
+      const pageLabel = pageEntry.page.title || "Untitled page";
+      if (entry.label !== pageLabel) {
+        entry.label = pageLabel;
+        entry.link.textContent = pageLabel;
+        entry.link.setAttribute("aria-label", `Go to ${pageLabel}`);
+        setOutlinePageExpanded(entry);
+      }
+      const index = pageIndex ?? doc.pages.indexOf(pageEntry.page);
+      if (index >= 0) place(outlineList, entry.element, index);
+      return entry;
+    }
+
+    function syncOutlineBlock(pageId, block, blockIndex) {
+      const pageEntry = pages.get(pageId);
+      const entry = syncOutlinePageEntry(pageId);
+      if (!pageEntry || !entry) return;
+      let blockEntry = entry.blocks.get(block.id);
+      if (!blockEntry) {
+        blockEntry = createOutlineBlock(block, pageId);
+        entry.blocks.set(block.id, blockEntry);
+      }
+      const label = outlineBlockLabel(block);
+      if (blockEntry.label !== label) {
+        blockEntry.label = label;
+        blockEntry.link.textContent = label;
+        blockEntry.link.setAttribute(
+          "aria-label",
+          `Go to ${entry.label}, ${label}`,
+        );
+      }
+      const index = blockIndex ?? pageEntry.page.blocks.indexOf(block);
+      if (index >= 0) place(entry.children, blockEntry.element, index);
+    }
+
+    function removeOutlineBlock(pageId, blockId) {
+      const entry = outlinePages.get(pageId);
+      const blockEntry = entry?.blocks.get(blockId);
+      if (!blockEntry) return;
+      blockEntry.element.remove();
+      entry.blocks.delete(blockId);
+    }
+
+    function syncOutlinePage(pageId, pageIndex) {
+      const pageEntry = pages.get(pageId);
+      const entry = syncOutlinePageEntry(pageId, pageIndex);
+      if (!pageEntry || !entry) return;
+      const liveBlocks = new Set();
+      pageEntry.page.blocks.forEach((block, blockIndex) => {
+        liveBlocks.add(block.id);
+        syncOutlineBlock(pageId, block, blockIndex);
+      });
+      for (const [id] of entry.blocks) {
+        if (!liveBlocks.has(id)) removeOutlineBlock(pageId, id);
+      }
+    }
+
+    function syncOutline() {
+      if (!doc) return;
+      const livePages = new Set();
+      doc.pages.forEach((page, pageIndex) => {
+        livePages.add(page.id);
+        syncOutlinePage(page.id, pageIndex);
+      });
+      for (const [id, entry] of outlinePages) {
+        if (livePages.has(id)) continue;
+        entry.element.remove();
+        outlinePages.delete(id);
+      }
+    }
+
+    function setOutlineCollapsed(collapsed) {
+      outline.classList.toggle("collapsed", collapsed);
+      outlineTree.hidden = collapsed;
+      pagesRoot.classList.toggle("outline-collapsed", collapsed);
+      outlineToggle.textContent = collapsed ? "›" : "‹";
+      outlineToggle.setAttribute("aria-expanded", String(!collapsed));
+      outlineToggle.setAttribute(
+        "aria-label",
+        collapsed ? "Expand contents" : "Collapse contents",
+      );
+    }
+
+    outlineToggle.addEventListener("click", () => {
+      setOutlineCollapsed(!outline.classList.contains("collapsed"));
+    });
+    setOutlineCollapsed(false);
+
     function pageEntry(page) {
       let entry = pages.get(page.id);
       if (!entry) {
@@ -567,6 +762,7 @@ import {
         entry.element.remove();
         pages.delete(id);
       }
+      syncOutline();
       awaitingSnapshot = false;
       finishUpdate();
     }
@@ -603,6 +799,9 @@ import {
         place,
         render,
         removeBlock,
+        syncOutlinePage,
+        syncOutlineBlock,
+        removeOutlineBlock,
       };
       for (const operation of message.operations) {
         operationHandlers[operation.type].apply(operation, context);

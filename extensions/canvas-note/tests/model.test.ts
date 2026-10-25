@@ -7,6 +7,7 @@ import { Value } from "typebox/value";
 import { Alignment, BlockKind } from "../core/contracts.js";
 import {
   Align,
+  BlockTitle,
   BlockType,
   type Document,
   type DocumentCommit,
@@ -46,6 +47,47 @@ async function fixture(t: { after: (fn: () => Promise<void>) => void }) {
   return new DocumentStore(join(dir, "doc.json"));
 }
 const text = (md: string) => ({ type: "text" as const, spec: { md } });
+
+test("optional block titles persist, update, clear and validate", async (t) => {
+  const store = await fixture(t);
+  const inserted = await store.insert({
+    blocks: [
+      { type: "text", title: "Introduction", spec: { md: "A" } },
+      { type: "math", spec: { latex: "x" } },
+    ],
+  });
+  let blocks = (await store.read()).pages[0].blocks;
+  assert.equal(blocks[0].title, "Introduction");
+  assert.equal(blocks[1].title, undefined);
+  assert.ok(Value.Check(BlockTitle, "Introduction"));
+  assert.equal(Value.Check(BlockTitle, "  "), false);
+  await store.update({
+    blocks: [{ blockId: inserted.blockIds[0], title: "Summary" }],
+  });
+  blocks = (await store.read()).pages[0].blocks;
+  assert.equal(blocks[0].title, "Summary");
+  await store.update({
+    blocks: [{ blockId: inserted.blockIds[0], align: "right" }],
+  });
+  assert.equal((await store.read()).pages[0].blocks[0].title, "Summary");
+  const before = await readFile(store.path, "utf8");
+  await assert.rejects(
+    store.update({ blocks: [{ blockId: inserted.blockIds[0], title: " " }] }),
+    /Invalid update_blocks parameters/,
+  );
+  assert.equal(await readFile(store.path, "utf8"), before);
+  await store.update({
+    blocks: [{ blockId: inserted.blockIds[0], title: null }],
+  });
+  blocks = (await store.read()).pages[0].blocks;
+  assert.equal(blocks[0].title, undefined);
+  await assert.rejects(
+    store.insert({
+      blocks: [{ type: "text", title: "  ", spec: { md: "invalid" } }],
+    }),
+    /Invalid insert_blocks parameters/,
+  );
+});
 
 test("commits publish atomic operation batches after persistence across stores", async (t) => {
   const store = await fixture(t);

@@ -27,6 +27,9 @@
   --font-size-h4: 1.125rem;
   --font-weight-normal: 400;
   --font-weight-medium: 500;
+  --outline-width: 15rem;
+  --outline-collapsed-width: 3rem;
+  --toolbar-height: 5rem;
   font-size: var(--font-size);
   font-family:
     system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
@@ -106,7 +109,8 @@ button.primary:hover:not(:disabled) {
   align-items: center;
   gap: 0.6rem 1rem;
   overflow-x: auto;
-  min-height: 80px;
+  height: var(--toolbar-height);
+  min-height: var(--toolbar-height);
   padding: 1rem clamp(1rem, 4vw, 4rem);
   background: var(--surface);
   border-top: 3px solid var(--accent);
@@ -183,11 +187,130 @@ button.primary:hover:not(:disabled) {
   background: var(--error);
 }
 
+.outline {
+  position: fixed;
+  top: var(--toolbar-height);
+  bottom: 0;
+  left: 0;
+  z-index: 9;
+  display: flex;
+  width: var(--outline-width);
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--surface);
+  border-right: 1px solid var(--border);
+  box-shadow: 0 0 2rem color-mix(in srgb, var(--background) 35%, transparent);
+  transition: width 160ms ease;
+}
+.outline.collapsed {
+  width: var(--outline-collapsed-width);
+}
+.outline-header {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  min-height: 3.25rem;
+  padding: 0.65rem 0.75rem;
+  border-bottom: 1px solid var(--border);
+  font-family: var(--mono);
+  font-size: var(--font-size-xs);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.outline-title {
+  overflow: hidden;
+  color: var(--muted);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.outline-toggle {
+  flex-shrink: 0;
+  width: 1.75rem;
+  min-height: 1.75rem;
+  padding: 0;
+  border-color: transparent;
+  font-size: var(--font-size-lg);
+  line-height: 1;
+}
+.outline.collapsed .outline-header {
+  justify-content: center;
+  padding-inline: 0.35rem;
+}
+.outline.collapsed .outline-title {
+  display: none;
+}
+#outline-tree {
+  min-height: 0;
+  overflow: auto;
+  padding: 0.75rem 0.5rem 2rem;
+}
+.outline-list,
+.outline-children {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.outline-page + .outline-page {
+  margin-top: 0.35rem;
+}
+.outline-page-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.15rem;
+}
+.outline-page-toggle {
+  flex: 0 0 1.5rem;
+  width: 1.5rem;
+  min-height: 1.8rem;
+  padding: 0;
+  border-color: transparent;
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: var(--font-size-sm);
+  line-height: 1;
+}
+.outline-link {
+  display: block;
+  min-width: 0;
+  flex: 1;
+  padding: 0.35rem 0.45rem;
+  border-color: transparent;
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+  overflow-wrap: anywhere;
+}
+.outline-link:hover:not(:disabled) {
+  background: var(--selection);
+  border-color: transparent;
+}
+.outline-page-link {
+  font-weight: var(--font-weight-medium);
+}
+.outline-children {
+  margin: 0.2rem 0 0 1.5rem;
+  padding-left: 0.4rem;
+  border-left: 1px solid var(--border);
+}
+.outline-block-link {
+  color: var(--muted);
+  font-size: var(--font-size-xs);
+  line-height: 1.4;
+}
+
 #pages {
+  margin-left: var(--outline-width);
   padding: clamp(1.5rem, 5vw, 4.5rem) 1rem 5rem;
   scroll-margin-top: 8rem;
+  transition: margin-left 160ms ease;
+}
+#pages.outline-collapsed {
+  margin-left: var(--outline-collapsed-width);
 }
 .page {
+  scroll-margin-top: 6rem;
   width: min(100%, 860px);
   margin: 0 auto 3rem;
   padding: clamp(1.25rem, 5vw, 4.5rem);
@@ -206,6 +329,7 @@ button.primary:hover:not(:disabled) {
   line-height: 1.2;
 }
 .block {
+  scroll-margin-top: 6rem;
   position: relative;
   margin: 0.6rem -0.6rem;
   padding: 0.85rem 0.65rem 0.85rem 2.35rem;
@@ -479,6 +603,15 @@ textarea::placeholder {
 @media (max-width: 600px) {
   .toolbar {
     gap: 0.6rem;
+  }
+  .outline {
+    width: min(var(--outline-width), 82vw);
+  }
+  #pages {
+    margin-left: 0;
+  }
+  #pages.outline-collapsed {
+    margin-left: var(--outline-collapsed-width);
   }
   .page {
     margin-bottom: 1.2rem;

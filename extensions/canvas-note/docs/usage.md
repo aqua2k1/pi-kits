@@ -7,8 +7,8 @@ const { pageId } = await tools.new_page({ title: "销售分析" });
 const result = await tools.insert_blocks({
   pageId,
   blocks: [
-    { type: "text", spec: { md: "## 结论\n**增长明显**，*仍需观察*。" } },
-    { type: "chart", spec: {
+    { type: "text", title: "结论", spec: { md: "## 结论\n**增长明显**，*仍需观察*。" } },
+    { type: "chart", title: "月度趋势", spec: {
       xAxis: { type: "category", data: ["一月", "二月"] },
       yAxis: { type: "value" },
       series: [{ type: "bar", data: [120, 180] }]
@@ -26,6 +26,7 @@ const result = await tools.insert_blocks({
 | `index` | 从 0 开始，在该位置之前插入；省略或超过末尾时追加 |
 | `blocks` | 非空数组，单个内容也使用数组 |
 | `type` | `text`、`chart`、`math`、`table`、`divider` |
+| `title` | 可选目录标题；省略时目录显示 Block 类型 |
 | `align` | `left`（默认）、`center`、`right` |
 | `spec` | text 为 `{md}`；chart 为 ECharts option；math 为 `{latex}`；table 为 `{columns: string[], rows: unknown[][]}`；divider 为 `{}` |
 
@@ -42,7 +43,7 @@ await tools.update_blocks({ blocks: [
 ] });
 ```
 
-省略字段保持不变，`spec` 整体替换。改变 `type` 时同时提供新 `spec`；`type: null` 删除 Block。每批操作全成功或全失败。读取工具返回的文档路径可检查最新内容和 ID。
+省略字段保持不变，`title` 更新目录标题，传入 `title: null` 清除标题；`spec` 整体替换。改变 `type` 时同时提供新 `spec`；`type: null` 删除 Block。每批操作全成功或全失败。读取工具返回的文档路径可检查最新内容和 ID。
 
 ## 多选回复
 

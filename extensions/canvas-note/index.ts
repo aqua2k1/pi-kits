@@ -106,7 +106,7 @@ export default function canvasNoteExtension(pi: ExtensionAPI) {
       description:
         "Canvas Note: browser document pages containing Markdown text, ECharts charts and LaTeX math.",
       instructions:
-        "new_page creates a semantic page without starting the server. insert_blocks starts it lazily. Blocks are always arrays, including single elements. text spec={md:string}; math spec={latex:string}; chart spec=native ECharts option (JSON only); table spec={columns:string[],rows:unknown[][]}; divider spec={}. align is left (default), center or right. Use returned blockIds with update_blocks. spec replaces the entire old spec. Read the returned documentPath with the read tool to inspect current content and IDs. Explicit pageId is required when composing concurrent multi-page work.",
+        "new_page creates a semantic page without starting the server. insert_blocks starts it lazily. Blocks are always arrays, including single elements. title is optional block metadata used by the outline; without it the outline shows the block type. text spec={md:string}; math spec={latex:string}; chart spec=native ECharts option (JSON only); table spec={columns:string[],rows:unknown[][]}; divider spec={}. align is left (default), center or right. Use returned blockIds with update_blocks. spec replaces the entire old spec. Read the returned documentPath with the read tool to inspect current content and IDs. Explicit pageId is required when composing concurrent multi-page work.",
     },
     executionMode: "sequential" as const,
   };
@@ -139,7 +139,7 @@ export default function canvasNoteExtension(pi: ExtensionAPI) {
     name: "insert_blocks",
     label: "Canvas Note · Insert blocks",
     description:
-      "Insert a nonempty array of blocks at index (default append). pageId defaults to current page, automatically created if absent. text spec={md}; math={latex}; chart=native ECharts option; table={columns,rows}; divider={}. Batch is atomic. Returns stable block IDs and browser URL. Starts the server lazily.",
+      "Insert a nonempty array of blocks at index (default append). pageId defaults to current page, automatically created if absent. title is optional and appears in the outline; without it the outline shows the block type. text spec={md}; math={latex}; chart=native ECharts option; table={columns,rows}; divider={}. Batch is atomic. Returns stable block IDs and browser URL. Starts the server lazily.",
     parameters: InsertParams,
     outputSchema: Type.Object({
       pageId: Type.String(),
@@ -175,7 +175,7 @@ export default function canvasNoteExtension(pi: ExtensionAPI) {
     name: "update_blocks",
     label: "Canvas Note · Update blocks",
     description:
-      "Atomically update a nonempty array by blockId. Omitted fields stay unchanged; spec is replaced completely, never deep-merged. type is a strong enum; changing type requires complete spec; type:null deletes the block. Starts/restarts the server lazily.",
+      "Atomically update a nonempty array by blockId. Omitted fields stay unchanged; title changes the outline label and title:null clears it; spec is replaced completely, never deep-merged. type is a strong enum; changing type requires complete spec; type:null deletes the block. Starts/restarts the server lazily.",
     parameters: UpdateParams,
     outputSchema: Type.Object({
       updated: strings,

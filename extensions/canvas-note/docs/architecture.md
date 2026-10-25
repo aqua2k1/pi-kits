@@ -30,9 +30,9 @@ flowchart LR
 | `server/index.ts` | 静态资源、操作增量、快照恢复、目录监听和反馈确认 |
 | `server/theme.ts` | 从扩展根目录 theme.json 读取配色，校验后生成主题 CSS |
 | `server/protocol.ts` | 消息解析、校验、指纹、反馈快照与错误投影 |
-| `web/client.html` | 页面与回复窗口骨架 |
+| `web/client.html` | 页面、固定目录与回复窗口骨架 |
 | `web/client.css` | 文档站式布局、默认色彩变量、选择框、工具栏与弹窗样式 |
-| `web/client.js` | 消费操作、按 ID 渲染、连接恢复、选择与提交 |
+| `web/client.js` | 消费操作、按 ID 渲染、固定 page/block 目录、连接恢复、选择与提交 |
 
 ## 数据流
 
@@ -67,7 +67,7 @@ sequenceDiagram
 
 ## 新增类型
 
-Block 类型在 `core/contracts.js` 的 `BlockKind` 与 `blockDefinitions` 中声明内容校验、摘要；浏览器在 `web/client.js` 的 `blockHandlers` 中补充渲染。TypeBox 枚举、客户端白名单和业务分派从这些定义派生，不再逐处维护类型列表。
+Block 类型在 `core/contracts.js` 的 `BlockKind` 与 `blockDefinitions` 中声明内容校验、摘要；Block 的可选 `title` 是公共元数据，目录优先显示它，没有时回退到 `type`；浏览器在 `web/client.js` 的 `blockHandlers` 中补充渲染。TypeBox 枚举、客户端白名单和业务分派从这些定义派生，不再逐处维护类型列表。
 
 操作类型在 `OperationKind` 声明名称，在 `core/model.ts` 的 `Operation` 联合类型中定义载荷，在 `operationHandlers` 中集中实现预检与消费。通信消息和对齐分别使用 `MessageKind`、`Alignment`，不与 Block 枚举混用。
 
@@ -94,7 +94,8 @@ Block 类型在 `core/contracts.js` 的 `BlockKind` 与 `blockDefinitions` 中�
 - 提交通知与快照读取在同一文件队列内排入发送队列，并按连接维护文档指纹；文件监听不重复发送已发布提交，外部同版本编辑仍触发完整快照，避免乱序和漏更新。
 - 操作仅作内存中的实时通知，不维护持久化事件日志；JSON 是恢复依据，首次连接与重连始终取完整快照。
 - 客户端只消费基准版本匹配、版本连续且文档身份一致的操作批次；不匹配时请求一次 `resync`，暂停消费和回复直到完整快照恢复，避免在错误基线上继续更新。
-- 浏览器正常路径直接消费 Block 和 Page 操作，不做全量差异比较；完整快照恢复才遍历协调。稳定 ID 保留原 DOM、选择和图表实例，删除、更换类型、渲染失败或页面退出时释放图表资源。
+- 浏览器正常路径直接消费 Block 和 Page 操作，不做全量差异比较；完整快照恢复才遍历协调。稳定 ID 保留原 DOM、选择、图表实例和目录条目，删除、更换类型、渲染失败或页面退出时释放图表资源。
+- 目录固定在左侧并独立滚动；目录只通过稳定 page/block ID 定位正文，折叠目录不得改变正文状态，避免导航操作干扰文档渲染。
 - 渲染错误每版本每 Block 只成功回报一次；重复快照不重复发送，发送失败可在后续快照重试，避免目录监听与显式同步重复触发修复。
 - `spec` 整体替换，换类型时需要新 spec，避免旧格式进入新渲染器。
 - 回复校验版本并附带原内容后才确认成功，避免引用更新后内容或丢失失败输入。

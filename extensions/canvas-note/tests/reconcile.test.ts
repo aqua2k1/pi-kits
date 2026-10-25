@@ -30,6 +30,16 @@ const content = (element: ReturnType<ReturnType<typeof browser>["block"]>) =>
   element.children[1];
 const blockOrder = (element: ReturnType<ReturnType<typeof browser>["page"]>) =>
   element.children[1].children.map((block) => block.dataset.blockId);
+const outlinePage = (b: ReturnType<typeof browser>, id: string) => {
+  const entry = subtree(b.get("outline-list")).find(
+    (node) =>
+      node.dataset.pageId === id && node.classList.contains("outline-page"),
+  );
+  assert.ok(entry);
+  return entry;
+};
+const outlineBlockOrder = (b: ReturnType<typeof browser>, id: string) =>
+  outlinePage(b, id).children[1].children.map((block) => block.dataset.blockId);
 
 const update = (blocks: Block[], removed: string[] = []): Operation => ({
   type: "blocks:update",
@@ -41,6 +51,89 @@ const select = (b: ReturnType<typeof browser>, id: string) => {
   checkbox.checked = true;
   checkbox.emit("change");
 };
+
+test("outline mirrors pages and blocks and supports fixed navigation and collapse", () => {
+  const b = browser();
+  b.snapshot(initial());
+  const outline = b.get("outline-list");
+  assert.deepEqual(
+    outline.children.map((entry) => entry.dataset.pageId),
+    ["p1", "p2"],
+  );
+  assert.deepEqual(
+    subtree(outline)
+      .filter((entry) => entry.dataset.blockId)
+      .map((entry) => entry.dataset.blockId),
+    ["a", "b", "c", "d"],
+  );
+  const firstBlock = subtree(outline).find(
+    (entry) =>
+      entry.dataset.blockId === "a" &&
+      entry.classList.contains("outline-block"),
+  );
+  assert.equal(firstBlock?.children[0].textContent, "text");
+
+  const firstPage = outline.children[0];
+  const firstPageToggle = subtree(firstPage).find((entry) =>
+    entry.classList.contains("outline-page-toggle"),
+  );
+  assert.ok(firstPageToggle);
+  firstPageToggle.emit("click");
+  const firstPageChildren = subtree(firstPage).find((entry) =>
+    entry.classList.contains("outline-children"),
+  );
+  assert.equal(firstPageChildren?.hidden, true);
+  firstPageToggle.emit("click");
+  assert.equal(firstPageChildren?.hidden, false);
+
+  const blockItem = subtree(outline).find(
+    (entry) =>
+      entry.dataset.blockId === "b" &&
+      entry.classList.contains("outline-block"),
+  );
+  assert.ok(blockItem);
+  const blockLink = blockItem.children[0];
+  blockLink.emit("click");
+  assert.equal(b.block("b").writes.scrollIntoView, 1);
+  const pageItem = subtree(outline).find(
+    (entry) =>
+      entry.dataset.pageId === "p2" && entry.classList.contains("outline-page"),
+  );
+  assert.ok(pageItem);
+  const pageLink = subtree(pageItem).find((entry) =>
+    entry.classList.contains("outline-page-link"),
+  );
+  assert.ok(pageLink);
+  pageLink.emit("click");
+  assert.equal(b.page("p2").writes.scrollIntoView, 1);
+
+  b.get("outline-toggle").emit("click");
+  assert.equal(b.get("outline").classList.contains("collapsed"), true);
+  assert.equal(b.get("outline-tree").hidden, true);
+  assert.equal(b.get("pages").classList.contains("outline-collapsed"), true);
+  b.get("outline-toggle").emit("click");
+  assert.equal(b.get("outline-tree").hidden, false);
+});
+
+test("outline uses optional titles and falls back to type without rendering content again", () => {
+  const b = browser();
+  b.snapshot(
+    document([page("p", [{ ...text("a"), title: "Overview" }, chart("c")])]),
+  );
+  const entries = outlinePage(b, "p").children[1].children;
+  const a = entries[0];
+  const c = entries[1];
+  assert.equal(a.children[0].textContent, "Overview");
+  assert.equal(c.children[0].textContent, "chart");
+  const markdownCount = b.markdown.length;
+  b.operations(1, [update([{ ...text("a"), title: "Renamed" }])]);
+  assert.equal(entries[0], a);
+  assert.equal(a.children[0].textContent, "Renamed");
+  assert.equal(b.markdown.length, markdownCount);
+  b.operations(2, [update([text("a")])]);
+  assert.equal(a.children[0].textContent, "text");
+  assert.equal(b.markdown.length, markdownCount);
+});
 
 test("operations create a page and insert complete blocks in one batch, then insert in the middle", () => {
   const b = browser();
@@ -62,6 +155,11 @@ test("operations create a page and insert complete blocks in one batch, then ins
   );
   assert.equal(b.page("new").children[0].textContent, "New page");
   assert.deepEqual(blockOrder(b.page("new")), ["x", "z"]);
+  assert.deepEqual(
+    b.get("outline-list").children.map((entry) => entry.dataset.pageId),
+    ["p1", "new", "p2"],
+  );
+  assert.deepEqual(outlineBlockOrder(b, "new"), ["x", "z"]);
   assert.equal(writeCount(oldTree), 0);
   const x = b.block("x");
   const z = b.block("z");
@@ -75,6 +173,7 @@ test("operations create a page and insert complete blocks in one batch, then ins
     },
   ]);
   assert.deepEqual(blockOrder(b.page("new")), ["x", "y", "fresh-chart", "z"]);
+  assert.deepEqual(outlineBlockOrder(b, "new"), ["x", "y", "fresh-chart", "z"]);
   assert.equal(b.block("x"), x);
   assert.equal(b.block("z"), z);
   assert.equal(writeCount([...oldTree, ...subtree(x), ...subtree(z)]), 0);
