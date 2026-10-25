@@ -348,6 +348,7 @@ test("real HTTP, WebSocket snapshots, atomic rename watch, reply acknowledgment 
     "/vendor/highlight.css",
     "/vendor/highlight-print.css",
     "/vendor/katex.js",
+    "/vendor/marked-katex.js",
     "/vendor/katex.css",
     "/vendor/fonts/KaTeX_Main-Regular.woff2",
   ])

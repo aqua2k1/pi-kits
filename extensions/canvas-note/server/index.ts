@@ -92,6 +92,13 @@ const assets = new Map<string, [string, string]>([
     [require.resolve("katex/dist/katex.min.js"), "text/javascript"],
   ],
   [
+    "/vendor/marked-katex.js",
+    [
+      join(dirname(require.resolve("marked-katex-extension")), "index.umd.js"),
+      "text/javascript",
+    ],
+  ],
+  [
     "/vendor/katex.css",
     [require.resolve("katex/dist/katex.min.css"), "text/css"],
   ],

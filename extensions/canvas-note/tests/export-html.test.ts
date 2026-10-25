@@ -59,6 +59,24 @@ test("standalone HTML embeds resources and restores interactive charts in a real
       "text/javascript",
       await readFile(require.resolve("echarts/dist/echarts.min.js")),
     ],
+    "/vendor/katex.js": [
+      "text/javascript",
+      await readFile(require.resolve("katex/dist/katex.min.js")),
+    ],
+    "/vendor/marked.js": [
+      "text/javascript",
+      await readFile(join(require.resolve("marked"), "../marked.umd.js")),
+    ],
+    "/vendor/marked-katex.js": [
+      "text/javascript",
+      await readFile(
+        join(require.resolve("marked-katex-extension"), "../index.umd.js"),
+      ),
+    ],
+    "/vendor/purify.js": [
+      "text/javascript",
+      await readFile(require.resolve("dompurify/dist/purify.min.js")),
+    ],
     "/style.css": [
       "text/css",
       '@font-face { font-family: test; src: url("/font.woff2"); } .content-chart { height: 300px; }',
@@ -69,13 +87,22 @@ test("standalone HTML embeds resources and restores interactive charts in a real
       '<svg xmlns="http://www.w3.org/2000/svg" width="2" height="2"><rect width="2" height="2"/></svg>',
     ],
   };
-  const fixture = `<!doctype html><html><head><link rel="stylesheet" href="/style.css"></head><body>
+  const fixture = `<!doctype html><html><head><link rel="stylesheet" href="/style.css">
+    <script defer src="/vendor/katex.js"></script>
+    <script defer src="/vendor/marked.js"></script>
+    <script defer src="/vendor/marked-katex.js"></script>
+    <script defer src="/vendor/purify.js"></script>
+    </head><body>
     <main id="pages" class="outline-collapsed"><section class="page"><h1>Export</h1>
     <div class="block selected" data-block-id="chart"><input class="block-select"><div class="block-content content-chart"><canvas></canvas></div><button class="block-copy">Copy</button></div>
     <p><code>&lt;script&gt;not executable&lt;/script&gt;</code><img src="/image.svg" srcset="/image.svg 2x"></p></section></main>
     <script type="module">
       import { buildHtml } from '/export-html.js';
       const pages = document.getElementById('pages');
+      const formula = document.createElement('p');
+      formula.innerHTML = DOMPurify.sanitize(new marked.Marked(markedKatex({ nonStandard: true, trust: false, throwOnError: true })).parse('能量$E=mc^2$满足关系。'));
+      pages.append(formula);
+      if (!formula.querySelector('.katex')) throw new Error('Inline math was not rendered');
       const before = pages.outerHTML;
       try {
         const html = await buildHtml({ title: 'Export <test>', pages, theme: {}, charts: [{ id: 'chart', option: {
@@ -135,6 +162,7 @@ test("standalone HTML embeds resources and restores interactive charts in a real
     assert.match(html, /data:font\/woff2;base64,/);
     assert.match(html, /data:image\/svg\+xml;base64,/);
     assert.match(html, /\\u003c\/script>/);
+    assert.match(html, /class="katex"/);
     // Close the HTTP server before opening the downloaded file.
     await new Promise<void>((resolve) => server.close(() => resolve()));
     const file = join(dir, "export.html");
@@ -154,6 +182,7 @@ test("standalone HTML embeds resources and restores interactive charts in a real
     );
     assert.match(offline.stdout, /<canvas[^>]+width=/);
     assert.match(offline.stdout, /_echarts_instance_=/);
+    assert.match(offline.stdout, /class="katex"/);
     assert.doesNotMatch(
       offline.stdout,
       /<script>window.injected=true<\/script>/,

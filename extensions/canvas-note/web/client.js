@@ -38,13 +38,25 @@ import { exportHtml } from "./export-html.js";
     }
   };
 
+  function renderMarkdown(md) {
+    const parser = new window.marked.Marked(
+      window.markedKatex({
+        nonStandard: true,
+        throwOnError: true,
+        trust: false,
+        strict: "error",
+      }),
+    );
+    return parser.parse(md);
+  }
+
   const blockHandlers = defineHandlers(BlockKind, {
     [BlockKind.Text]: {
       ...blockDefinitions[BlockKind.Text],
       copyText: blockDefinitions[BlockKind.Text].summarize,
       render(record, block) {
         record.content.innerHTML = window.DOMPurify.sanitize(
-          window.marked.parse(block.spec.md),
+          renderMarkdown(block.spec.md),
           { SANITIZE_NAMED_PROPS: true },
         );
         openMarkdownLinksInNewTabs(record.content);

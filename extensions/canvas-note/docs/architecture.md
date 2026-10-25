@@ -91,6 +91,10 @@ sequenceDiagram
 
 浏览器使用随扩展分发的 Highlight.js common build 本地资源。首例显式语言受支持时高亮，后两例以纯文本展示；空语言同样按纯文本处理，不进行自动语言检测。代码采用 Gruvbox 配色，只读展示，不执行代码。
 
+## Markdown 公式
+
+文本渲染通过独立的 Marked 实例接入 `marked-katex-extension`，启用 `nonStandard` 解析紧邻中文的美元符号公式。插件在 KaTeX 之后从本地 UMD 资源加载；公式沿用 `throwOnError: true`、`trust: false`、`strict: "error"`，结果统一经 DOMPurify 清理。Markdown 公式随现有正文 DOM 打印和导出，不增加导出脚本。
+
 ## 新增类型
 
 Block 类型在 `core/contracts.js` 的 `BlockKind` 与 `blockDefinitions` 中声明内容校验、摘要；Block 的可选 `title` 是公共元数据，目录优先显示它，没有时回退到 `type`；浏览器在 `web/client.js` 的 `blockHandlers` 中补充渲染。TypeBox 枚举、客户端白名单和业务分派从这些定义派生，不再逐处维护类型列表。
@@ -151,4 +155,4 @@ Block 类型在 `core/contracts.js` 的 `BlockKind` 与 `blockDefinitions` 中�
 
 `tests/changes.test.ts` 用冻结输入验证纯变更可组合、显式 ID、版本不变和失败时输入不变；`tests/model.test.ts`、`tests/server.test.ts` 继续覆盖 Store 的落盘与同步行为。
 
-`npm test --workspace canvas-note` 运行 `tests/*.test.ts`，覆盖原子批次、并发写入、提交订阅、真实 HTTP/WebSocket、操作增量、快照恢复、回复去重、过期反馈、服务重启与工具 handler。`tests/contracts.test.ts` 校验共享枚举、内容定义与注册完整性，包含 Code 合法/非法内容、原样摘要与输入不变性；`tests/model.test.ts` 校验 TypeBox 联合 schema 覆盖、Code 插入与读取、整体替换、换类型、删除和原子失败；`tests/presentation.test.ts`、`tests/protocol.test.ts`、`tests/web.test.ts` 校验纯构造结果与输入不变性；反馈与模型测试同时校验投影阶段不提交状态。`tests/reconcile.test.ts` 通过 `tests/fixtures/browser.ts` 的最小浏览器环境执行完整客户端脚本，验证局部 DOM 写入、图表生命周期、选择保留和版本恢复。`tests/chart-theme.test.ts` 校验主题纯构造与真实 ECharts 显式样式优先；`tests/print.test.ts` 验证样式分层、字体图片就绪、打印重试与状态保留。复杂公式样例集中在 `tests/fixtures/math.ts`。`tests/export-html.test.ts` 覆盖导出失败后的控件恢复；检测到 Chromium 时验证资源内嵌、在线 DOM 不变、脚本安全序列化和离线图表恢复。根测试覆盖实际 Pi 独立加载和生产依赖安装。
+`npm test --workspace canvas-note` 运行 `tests/*.test.ts`，覆盖原子批次、并发写入、提交订阅、真实 HTTP/WebSocket、操作增量、快照恢复、回复去重、过期反馈、服务重启与工具 handler。`tests/contracts.test.ts` 校验共享枚举、内容定义与注册完整性，包含 Code 合法/非法内容、原样摘要与输入不变性；`tests/model.test.ts` 校验 TypeBox 联合 schema 覆盖、Code 插入与读取、整体替换、换类型、删除和原子失败；`tests/presentation.test.ts`、`tests/protocol.test.ts`、`tests/web.test.ts` 校验纯构造结果与输入不变性；反馈与模型测试同时校验投影阶段不提交状态。`tests/reconcile.test.ts` 通过 `tests/fixtures/browser.ts` 的最小浏览器环境执行完整客户端脚本，验证局部 DOM 写入、图表生命周期、选择保留和版本恢复。`tests/chart-theme.test.ts` 校验主题纯构造与真实 ECharts 显式样式优先；`tests/print.test.ts` 验证样式分层、字体图片就绪、打印重试与状态保留。`tests/math.test.ts` 使用真实 Marked 和 KaTeX 覆盖 Markdown 行内与展示公式、中文相邻、代码、转义及解析错误；复杂公式样例集中在 `tests/fixtures/math.ts`。`tests/export-html.test.ts` 覆盖导出失败后的控件恢复；检测到 Chromium 时验证资源内嵌、在线 DOM 不变、脚本安全序列化和离线图表恢复。根测试覆盖实际 Pi 独立加载和生产依赖安装。

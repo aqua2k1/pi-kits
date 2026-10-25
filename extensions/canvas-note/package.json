@@ -26,6 +26,7 @@
     "echarts": "^6.0.0",
     "katex": "^0.16.22",
     "marked": "^17.0.0",
+    "marked-katex-extension": "^5.1.13",
     "ws": "^8.18.2"
   },
   "peerDependencies": {

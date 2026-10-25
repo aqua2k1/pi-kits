@@ -44,6 +44,17 @@ const result = await tools.insert_blocks({
 
 工具落盘后推送创建、插入、更新或删除操作，网页直接更新对应页面和内容块；未涉及的图表和选择保持原样。首次连接、重连、版本不连续或外部文件修改时同步完整文档。工具返回不等待浏览器完成渲染。
 
+## Markdown 公式
+
+```js
+await tools.insert_blocks({ blocks: [
+  { type: "text", spec: { md: String.raw`能量$E=mc^2$。` } },
+  { type: "text", spec: { md: "$$\n" + String.raw`\sum_{i=1}^{n} i = \frac{n(n+1)}{2}` + "\n$$" } }
+] });
+```
+
+Markdown 使用 `$...$` 渲染行内公式，使用 `$$...$$` 渲染展示公式；多行公式的起止 `$$` 各占一行。公式可紧邻中文，行内代码和围栏代码保持原文。普通美元符号写成 `\$`，例如 `\$5`。公式渲染结果随 PDF 和单文件 HTML 一起导出。
+
 ## 展示代码
 
 ```js

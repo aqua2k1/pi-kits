@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { runInNewContext } from "node:vm";
+import markedKatex from "marked-katex-extension";
 import type { Document, Operation } from "../../core/model.ts";
 import { clientGlobals, clientScript } from "./client-script.ts";
 
@@ -337,11 +338,14 @@ export function browser() {
       };
     },
     hljs,
+    markedKatex,
     marked: {
-      parse(md: string) {
-        markdown.push(md);
-        if (md === "BROKEN") throw new Error("invalid markdown");
-        return `<p>${md}</p>`;
+      Marked: class {
+        parse(md: string) {
+          markdown.push(md);
+          if (md === "BROKEN") throw new Error("invalid markdown");
+          return `<p>${md}</p>`;
+        }
       },
     },
     DOMPurify: {
