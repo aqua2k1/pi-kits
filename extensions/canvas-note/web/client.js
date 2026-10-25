@@ -38,6 +38,23 @@ import { exportHtml } from "./export-html.js";
     }
   };
 
+  function exportMenuPosition(anchor, menu, viewport) {
+    const gap = 6;
+    const edge = 8;
+    return {
+      left: Math.max(
+        edge,
+        Math.min(anchor.right - menu.width, viewport.width - menu.width - edge),
+      ),
+      top: Math.max(
+        edge,
+        anchor.bottom + gap + menu.height <= viewport.height - edge
+          ? anchor.bottom + gap
+          : anchor.top - menu.height - gap,
+      ),
+    };
+  }
+
   function renderMarkdown(md) {
     const parser = new window.marked.Marked(
       window.markedKatex({
@@ -569,6 +586,21 @@ import { exportHtml } from "./export-html.js";
       }
     }
 
+    function positionExportMenu() {
+      const menu = $("export-menu");
+      if (!menu.matches?.(":popover-open")) return;
+      const position = exportMenuPosition(
+        $("export-toggle").getBoundingClientRect(),
+        menu.getBoundingClientRect(),
+        { width: window.innerWidth, height: window.innerHeight },
+      );
+      menu.style.left = `${position.left}px`;
+      menu.style.top = `${position.top}px`;
+    }
+    $("export-menu").addEventListener("toggle", positionExportMenu);
+    window.addEventListener("resize", positionExportMenu);
+    window.addEventListener("scroll", positionExportMenu, true);
+
     function updateControls() {
       const next = controlState({
         count: selection.size,
@@ -593,6 +625,7 @@ import { exportHtml } from "./export-html.js";
       $("dismiss").disabled = next.readOnly;
       $("cancel").disabled = next.readOnly;
       $("submit").textContent = next.submitLabel;
+      positionExportMenu();
       if (dialog.open && next.staleWarning) {
         $("reply-status").textContent =
           "The document has changed. Your reply is preserved. Close and reopen this dialog to reply to the latest selection.";
@@ -1051,6 +1084,7 @@ import { exportHtml } from "./export-html.js";
         await exportHtml({
           title: document.title,
           pages: pagesRoot,
+          outline,
           charts: doc.pages.flatMap((page) =>
             page.blocks
               .filter(

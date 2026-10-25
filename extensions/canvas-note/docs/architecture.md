@@ -136,7 +136,7 @@ Block 类型在 `core/contracts.js` 的 `BlockKind` 与 `blockDefinitions` 中�
 - 页修改必须有有效变更，重名、空标题、删除与重命名混用或未知 ID 均不写入、不发布提交，避免无效版本；删除当前页仅在落盘成功后清空指针，下次隐式插入创建新页。
 - 页修改仅 flush 已运行服务，不启动或重启监听，避免仅管理页面时占用端口。
 - `spec` 整体替换，换类型时需要新 spec，避免旧格式进入新渲染器。
-- HTML 导出只克隆正文，不修改在线 DOM 或图表实例；资源全部内嵌，离线脚本只恢复 ECharts，不加载在线客户端，避免导出文件连接服务。图表配置序列化转义 `<`，避免内容提前结束脚本标签。
+- HTML 导出克隆正文和目录，不修改在线 DOM 或图表实例；资源全部内嵌，目录按钮转为稳定锚点链接，离线脚本只恢复目录折叠和 ECharts，不加载在线客户端，避免导出文件连接服务。图表配置序列化转义 `<`，避免内容提前结束脚本标签。
 - 复制内容从当前 Block 数据按类型投影，不读取渲染 DOM，避免混入按钮、高亮标签或旧内容；复制按钮不得改变多选状态，剪贴板回退使用的临时元素在成功或失败后均清理。
 - Code 只在显式 `language` 被本地 Highlight.js common build 支持时高亮；省略、空或未知语言保留纯文本，避免猜测语言改变展示。代码只读且不执行，HTML 内容必须作为文字处理，避免代码块触发脚本。
 - 回复校验版本并保留所选块的完整快照后才确认成功，避免引用更新后内容或丢失失败输入。
@@ -155,4 +155,4 @@ Block 类型在 `core/contracts.js` 的 `BlockKind` 与 `blockDefinitions` 中�
 
 `tests/changes.test.ts` 用冻结输入验证纯变更可组合、显式 ID、版本不变和失败时输入不变；`tests/model.test.ts`、`tests/server.test.ts` 继续覆盖 Store 的落盘与同步行为。
 
-`npm test --workspace canvas-note` 运行 `tests/*.test.ts`，覆盖原子批次、并发写入、提交订阅、真实 HTTP/WebSocket、操作增量、快照恢复、回复去重、过期反馈、服务重启与工具 handler。`tests/contracts.test.ts` 校验共享枚举、内容定义与注册完整性，包含 Code 合法/非法内容、原样摘要与输入不变性；`tests/model.test.ts` 校验 TypeBox 联合 schema 覆盖、Code 插入与读取、整体替换、换类型、删除和原子失败；`tests/presentation.test.ts`、`tests/protocol.test.ts`、`tests/web.test.ts` 校验纯构造结果与输入不变性；反馈与模型测试同时校验投影阶段不提交状态。`tests/reconcile.test.ts` 通过 `tests/fixtures/browser.ts` 的最小浏览器环境执行完整客户端脚本，验证局部 DOM 写入、图表生命周期、选择保留和版本恢复。`tests/chart-theme.test.ts` 校验主题纯构造与真实 ECharts 显式样式优先；`tests/print.test.ts` 验证样式分层、字体图片就绪、打印重试与状态保留。`tests/math.test.ts` 使用真实 Marked 和 KaTeX 覆盖 Markdown 行内与展示公式、中文相邻、代码、转义及解析错误；复杂公式样例集中在 `tests/fixtures/math.ts`。`tests/export-html.test.ts` 覆盖导出失败后的控件恢复；检测到 Chromium 时验证资源内嵌、在线 DOM 不变、脚本安全序列化和离线图表恢复。根测试覆盖实际 Pi 独立加载和生产依赖安装。
+`npm test --workspace canvas-note` 运行 `tests/*.test.ts`，覆盖原子批次、并发写入、提交订阅、真实 HTTP/WebSocket、操作增量、快照恢复、回复去重、过期反馈、服务重启与工具 handler。`tests/contracts.test.ts` 校验共享枚举、内容定义与注册完整性，包含 Code 合法/非法内容、原样摘要与输入不变性；`tests/model.test.ts` 校验 TypeBox 联合 schema 覆盖、Code 插入与读取、整体替换、换类型、删除和原子失败；`tests/presentation.test.ts`、`tests/protocol.test.ts`、`tests/web.test.ts` 校验纯构造结果与输入不变性；反馈与模型测试同时校验投影阶段不提交状态。`tests/reconcile.test.ts` 通过 `tests/fixtures/browser.ts` 的最小浏览器环境执行完整客户端脚本，验证局部 DOM 写入、图表生命周期、选择保留和版本恢复。`tests/chart-theme.test.ts` 校验主题纯构造与真实 ECharts 显式样式优先；`tests/print.test.ts` 验证样式分层、字体图片就绪、打印重试与状态保留。`tests/math.test.ts` 使用真实 Marked 和 KaTeX 覆盖 Markdown 行内与展示公式、中文相邻、代码、转义及解析错误；复杂公式样例集中在 `tests/fixtures/math.ts`。`tests/export-html.test.ts` 覆盖导出失败后的控件恢复；检测到 Chromium 时验证资源内嵌、在线 DOM 不变、脚本安全序列化、离线目录跳转与折叠和图表恢复。根测试覆盖实际 Pi 独立加载和生产依赖安装。

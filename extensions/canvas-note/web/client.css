@@ -122,7 +122,9 @@
   }
   .export-menu {
     position: fixed;
-    inset: var(--toolbar-height) 1rem auto auto;
+    inset: auto;
+    max-height: calc(100dvh - 16px);
+    overflow: auto;
     margin: 0;
     padding: 0.5rem;
     border: 1px solid var(--border);

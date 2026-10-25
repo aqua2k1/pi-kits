@@ -15,6 +15,29 @@ const require = createRequire(import.meta.url);
 const chromium = process.env.CHROMIUM_PATH || "chromium";
 const hasChromium = spawnSync(chromium, ["--version"]).status === 0;
 
+test("export menu repositions on opening, viewport resize and toolbar scrolling", () => {
+  const b = browser();
+  let right = 500;
+  const menu = Object.assign(b.get("export-menu"), {
+    matches: () => true,
+    getBoundingClientRect: () => ({ width: 160, height: 100 }),
+  });
+  Object.assign(b.get("export-toggle"), {
+    getBoundingClientRect: () => ({ right, top: 20, bottom: 60 }),
+  });
+  Object.assign(b.window, { innerWidth: 800, innerHeight: 600 });
+  menu.emit("toggle");
+  assert.equal(menu.style.left, "340px");
+  assert.equal(menu.style.top, "66px");
+  right = 200;
+  b.window.emit("scroll");
+  assert.equal(menu.style.left, "40px");
+  right = 500;
+  Object.assign(b.window, { innerWidth: 320 });
+  b.window.emit("resize");
+  assert.equal(menu.style.left, "152px");
+});
+
 test("HTML export controls recover after failure without affecting PDF or selection", async () => {
   const b = browser();
   assert.equal(b.get("save-html").disabled, true);
@@ -77,6 +100,14 @@ test("standalone HTML embeds resources and restores interactive charts in a real
       "text/javascript",
       await readFile(require.resolve("dompurify/dist/purify.min.js")),
     ],
+    "/client.css": [
+      "text/css",
+      await readFile(new URL("../web/client.css", import.meta.url), "utf8"),
+    ],
+    "/content.css": [
+      "text/css",
+      await readFile(new URL("../web/content.css", import.meta.url), "utf8"),
+    ],
     "/style.css": [
       "text/css",
       '@font-face { font-family: test; src: url("/font.woff2"); } .content-chart { height: 300px; }',
@@ -87,13 +118,17 @@ test("standalone HTML embeds resources and restores interactive charts in a real
       '<svg xmlns="http://www.w3.org/2000/svg" width="2" height="2"><rect width="2" height="2"/></svg>',
     ],
   };
-  const fixture = `<!doctype html><html><head><link rel="stylesheet" href="/style.css">
+  const fixture = `<!doctype html><html><head><link rel="stylesheet" href="/content.css"><link rel="stylesheet" href="/client.css"><link rel="stylesheet" href="/style.css">
     <script defer src="/vendor/katex.js"></script>
     <script defer src="/vendor/marked.js"></script>
     <script defer src="/vendor/marked-katex.js"></script>
     <script defer src="/vendor/purify.js"></script>
     </head><body>
-    <main id="pages" class="outline-collapsed"><section class="page"><h1>Export</h1>
+    <aside id="outline" class="outline collapsed" aria-label="Document outline">
+      <div class="outline-header"><span class="outline-title">Contents</span><button id="outline-toggle" aria-controls="outline-tree" aria-expanded="false">›</button></div>
+      <nav id="outline-tree" hidden><ul class="outline-list"><li class="outline-page" data-page-id="p"><div class="outline-page-row"><button class="outline-page-toggle" aria-expanded="true">▾</button><button class="outline-link outline-page-link">Export</button></div><ul class="outline-children"><li class="outline-block" data-block-id="chart"><button class="outline-link outline-block-link">Chart</button></li></ul></li></ul></nav>
+    </aside>
+    <main id="pages" class="outline-collapsed"><section class="page" data-page-id="p"><h1>Export</h1>
     <div class="block selected" data-block-id="chart"><input class="block-select"><div class="block-content content-chart"><canvas></canvas></div><button class="block-copy">Copy</button></div>
     <p><code>&lt;script&gt;not executable&lt;/script&gt;</code><img src="/image.svg" srcset="/image.svg 2x"></p></section></main>
     <script type="module">
@@ -103,13 +138,18 @@ test("standalone HTML embeds resources and restores interactive charts in a real
       formula.innerHTML = DOMPurify.sanitize(new marked.Marked(markedKatex({ nonStandard: true, trust: false, throwOnError: true })).parse('能量$E=mc^2$满足关系。'));
       pages.append(formula);
       if (!formula.querySelector('.katex')) throw new Error('Inline math was not rendered');
-      const before = pages.outerHTML;
+      const outline = document.getElementById('outline');
+      const before = pages.outerHTML + outline.outerHTML;
       try {
-        const html = await buildHtml({ title: 'Export <test>', pages, theme: {}, charts: [{ id: 'chart', option: {
+        const html = await buildHtml({ title: 'Export <test>', pages, outline, theme: {}, charts: [{ id: 'chart', option: {
           title: { text: '<' + '/script><script>window.injected=true<' + '/script>' },
           tooltip: {}, xAxis: { data: ['a'] }, yAxis: {}, series: [{ type: 'bar', data: [3] }]
         }}] });
-        if (before !== pages.outerHTML) throw new Error('Live DOM changed');
+        if (before !== pages.outerHTML + outline.outerHTML) throw new Error('Live DOM changed');
+        const noCharts = await buildHtml({ title: 'Text only', pages, outline, theme: {}, charts: [] });
+        if (noCharts.includes('echarts.min.js')) throw new Error('Unnecessary chart library');
+        const textOnly = new DOMParser().parseFromString(noCharts, 'text/html');
+        if (!textOnly.querySelector('#outline') || !textOnly.querySelector('script')) throw new Error('Text-only outline missing');
         await fetch('/result', { method: 'POST', body: html });
       } catch (error) { await fetch('/failure', { method: 'POST', body: String(error) }); }
     </script></body></html>`;
@@ -166,7 +206,32 @@ test("standalone HTML embeds resources and restores interactive charts in a real
     // Close the HTTP server before opening the downloaded file.
     await new Promise<void>((resolve) => server.close(() => resolve()));
     const file = join(dir, "export.html");
-    await writeFile(file, html);
+    const checks = `<script>
+      try {
+        const outline = document.getElementById('outline');
+        const toggle = document.getElementById('outline-toggle');
+        const pages = document.getElementById('pages');
+        if (!outline.classList.contains('collapsed') || !pages.classList.contains('outline-collapsed')) throw new Error('Initial collapse lost');
+        toggle.click();
+        if (outline.classList.contains('collapsed') || document.getElementById('outline-tree').hidden || toggle.getAttribute('aria-expanded') !== 'true') throw new Error('Expand failed');
+        const pageToggle = outline.querySelector('.outline-page-toggle');
+        pageToggle.click();
+        if (!outline.querySelector('.outline-children').hidden || pageToggle.getAttribute('aria-expanded') !== 'false') throw new Error('Page collapse failed');
+        pageToggle.click();
+        if (outline.querySelector('.outline-children').hidden) throw new Error('Page expand failed');
+        for (const link of outline.querySelectorAll('a.outline-link')) {
+          link.click();
+          if (!document.getElementById(decodeURIComponent(location.hash.slice(1)))) throw new Error('Broken navigation');
+        }
+        toggle.click();
+        if (!pages.classList.contains('outline-collapsed')) throw new Error('Collapse failed');
+        document.body.dataset.outlineTest = 'passed';
+      } catch (error) { document.body.dataset.outlineTest = String(error); }
+    </script>`;
+    await writeFile(
+      file,
+      html.replace(/<\/body><\/html>$/, `${checks}</body></html>`),
+    );
     const offline = await run(
       chromium,
       [
@@ -182,6 +247,9 @@ test("standalone HTML embeds resources and restores interactive charts in a real
     );
     assert.match(offline.stdout, /<canvas[^>]+width=/);
     assert.match(offline.stdout, /_echarts_instance_=/);
+    assert.match(offline.stdout, /data-outline-test="passed"/);
+    assert.match(html, /href="#canvas-page-p"/);
+    assert.match(html, /href="#canvas-block-chart"/);
     assert.match(offline.stdout, /class="katex"/);
     assert.doesNotMatch(
       offline.stdout,

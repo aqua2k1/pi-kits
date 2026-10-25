@@ -1,5 +1,5 @@
 // A standalone read-only snapshot: reuse rendered content, not the live client.
-export async function buildHtml({ title, pages, charts, theme }) {
+export async function buildHtml({ title, pages, outline, charts, theme }) {
   const output = document.implementation.createHTMLDocument(title);
   output.documentElement.lang = document.documentElement.lang;
   output.head.insertAdjacentHTML(
@@ -7,7 +7,38 @@ export async function buildHtml({ title, pages, charts, theme }) {
     '<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">',
   );
   const root = pages.cloneNode(true);
-  root.classList.remove("outline-collapsed");
+  const sidebar = outline?.cloneNode(true);
+  if (!sidebar) root.classList.remove("outline-collapsed");
+  if (sidebar) {
+    const targets = new Map();
+    for (const node of root.querySelectorAll(
+      "[data-page-id], [data-block-id]",
+    )) {
+      const key = node.dataset.blockId
+        ? `block-${node.dataset.blockId}`
+        : `page-${node.dataset.pageId}`;
+      node.id = `canvas-${key}`;
+      targets.set(key, node.id);
+    }
+    for (const button of sidebar.querySelectorAll(".outline-link")) {
+      const block = button.closest(".outline-block");
+      const key = block
+        ? `block-${block.dataset.blockId}`
+        : `page-${button.closest(".outline-page").dataset.pageId}`;
+      const target = targets.get(key);
+      if (!target) continue;
+      const link = output.createElement("a");
+      link.className = button.className;
+      link.textContent = button.textContent;
+      link.href = `#${encodeURIComponent(target)}`;
+      link.setAttribute(
+        "aria-label",
+        button.getAttribute("aria-label") || button.textContent,
+      );
+      button.replaceWith(link);
+    }
+    output.body.append(sidebar);
+  }
   for (const node of root.querySelectorAll(
     ".block-select, .block-copy, script, picture source",
   ))
@@ -77,8 +108,14 @@ export async function buildHtml({ title, pages, charts, theme }) {
     output.head.append(style);
   }
   const layout = output.createElement("style");
-  layout.textContent =
-    "@media screen { #pages, #pages.outline-collapsed { margin-left: 0; } .block { padding: .85rem .65rem; } }";
+  layout.textContent = `@media screen {
+      :root { --toolbar-height: 0px; }
+      html { scroll-behavior: smooth; }
+      ${sidebar ? "" : "#pages, #pages.outline-collapsed { margin-left: 0; }"}
+      .block { padding: .85rem .65rem; }
+      .page, .block { scroll-margin-top: 1.5rem; }
+      .outline-link { text-decoration: none; }
+    }`;
   output.head.append(layout);
   await Promise.all(
     Array.from(root.querySelectorAll("img"), async (image) => {
@@ -106,18 +143,49 @@ export async function buildHtml({ title, pages, charts, theme }) {
     script.textContent = source.replace(/<\/script/gi, "<\\/script");
     output.body.append(script);
   }
-  if (snapshots.length) {
-    addScript(await resource("/vendor/echarts.js"));
+  if (snapshots.length) addScript(await resource("/vendor/echarts.js"));
+  if (snapshots.length || sidebar) {
     const data = JSON.stringify({
       charts: snapshots,
       theme: snapshotTheme,
     }).replace(/</g, "\\u003c");
-    addScript(`(${restoreCharts.toString()})(${data});`);
+    addScript(`(${restoreDocument.toString()})(${data});`);
   }
   return `<!doctype html>\n${output.documentElement.outerHTML}`;
 }
 
-function restoreCharts({ charts, theme }) {
+function restoreDocument({ charts, theme }) {
+  const outline = document.getElementById("outline");
+  if (outline) {
+    const tree = document.getElementById("outline-tree");
+    const toggle = document.getElementById("outline-toggle");
+    toggle.addEventListener("click", () => {
+      const collapsed = outline.classList.toggle("collapsed");
+      tree.hidden = collapsed;
+      document
+        .getElementById("pages")
+        .classList.toggle("outline-collapsed", collapsed);
+      toggle.textContent = collapsed ? "›" : "‹";
+      toggle.setAttribute("aria-expanded", String(!collapsed));
+      toggle.setAttribute(
+        "aria-label",
+        collapsed ? "Expand contents" : "Collapse contents",
+      );
+    });
+    for (const button of outline.querySelectorAll(".outline-page-toggle")) {
+      button.addEventListener("click", () => {
+        const page = button.closest(".outline-page");
+        const children = page.querySelector(".outline-children");
+        children.hidden = !children.hidden;
+        button.textContent = children.hidden ? "▸" : "▾";
+        button.setAttribute("aria-expanded", String(!children.hidden));
+        button.setAttribute(
+          "aria-label",
+          `${children.hidden ? "Expand" : "Collapse"} ${page.querySelector(".outline-page-link").textContent}`,
+        );
+      });
+    }
+  }
   const instances = [];
   for (const { id, option } of charts) {
     const container = Array.from(
@@ -125,6 +193,7 @@ function restoreCharts({ charts, theme }) {
     ).find((node) => node.dataset.exportChart === id);
     const chart = window.echarts.init(container, theme);
     chart.setOption(option);
+    new ResizeObserver(() => chart.resize()).observe(container);
     instances.push(chart);
   }
   const resize = () => {

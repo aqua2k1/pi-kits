@@ -23,12 +23,45 @@ const sandbox: typeof clientGlobals & {
   registries?: Record<string, Record<string, Record<string, unknown>>>;
 } = { ...clientGlobals };
 runInNewContext(
-  `${script.slice(0, boundary)}\n globalThis.helpers = {blockSummary, documentPresentation, tableCellText, blockCopyText, selectedReply, replySignature, replyMessage, websocketUrl, parseMessage, controlState, blockPresentation, validOperations, errorPresentation, replyFailureText, reconnectDelay, openMarkdownLinksInNewTabs};\n globalThis.registries = { blocks: blockHandlers, operations: operationHandlers };\n}`,
+  `${script.slice(0, boundary)}\n globalThis.helpers = {blockSummary, documentPresentation, tableCellText, blockCopyText, selectedReply, replySignature, replyMessage, websocketUrl, parseMessage, controlState, blockPresentation, validOperations, errorPresentation, replyFailureText, reconnectDelay, openMarkdownLinksInNewTabs, exportMenuPosition};\n globalThis.registries = { blocks: blockHandlers, operations: operationHandlers };\n}`,
   sandbox,
 );
 const helpers = sandbox.helpers;
 assert.ok(helpers);
 const plain = (value: unknown) => JSON.parse(JSON.stringify(value));
+
+test("export menu follows its trigger and stays inside the viewport", () => {
+  assert.deepEqual(
+    plain(
+      helpers.exportMenuPosition(
+        { right: 500, top: 20, bottom: 60 },
+        { width: 160, height: 100 },
+        { width: 800, height: 600 },
+      ),
+    ),
+    { left: 340, top: 66 },
+  );
+  assert.deepEqual(
+    plain(
+      helpers.exportMenuPosition(
+        { right: 90, top: 220, bottom: 260 },
+        { width: 160, height: 100 },
+        { width: 320, height: 300 },
+      ),
+    ),
+    { left: 8, top: 114 },
+  );
+  assert.deepEqual(
+    plain(
+      helpers.exportMenuPosition(
+        { right: 900, top: 20, bottom: 60 },
+        { width: 160, height: 100 },
+        { width: 320, height: 300 },
+      ),
+    ),
+    { left: 152, top: 66 },
+  );
+});
 
 test("browser registries cover shared kinds with complete behaviors", () => {
   const registries = sandbox.registries;
