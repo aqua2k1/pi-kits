@@ -80,7 +80,7 @@ sequenceDiagram
 
 ## Code Block
 
-`BlockKind.Code = 'code'`，内容为 `{ code: string, language?: string }`；`code` 允许空字符串，`language` 允许省略、空字符串或未知字符串。共享定义校验字段类型，摘要原样返回 `spec.code`。内部 `InsertBlock` 联合 schema 包含 code 分支；工具参数 `InsertBlocksToolParams` 只声明一次公共字段，`spec` 分支从内部 schema 派生并标明所属类型。工具执行前用严格的 `InsertBlocksParams` 检查类型与内容的匹配，避免开放的图表分支放过错误组合；更新仍整体替换 `spec`，换类型必须提供完整的新内容。
+`BlockKind.Code = 'code'`，内容为 `{ code: string, language?: string }`；`code` 允许空字符串，`language` 允许省略、空字符串或未知字符串。共享定义校验字段类型，摘要原样返回 `spec.code`。内部 `InsertBlock` 联合 schema 包含 code 分支；工具参数 `InsertBlocksToolParams` 只声明一次 `title`、`align` 公共字段，`anyOf` 分支从内部 schema 派生 `type` 与 `spec`，保持类型与内容的关联，避免开放的图表分支放过其他类型的错误内容。工具执行前继续用 `InsertBlocksParams` 校验；更新仍整体替换 `spec`，换类型必须提供完整的新内容。
 
 ```js
 { type: "code", spec: { code: "const answer = 42;", language: "javascript" } }

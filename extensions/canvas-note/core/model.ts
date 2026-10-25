@@ -124,17 +124,16 @@ export const InsertBlocksParams = Type.Object({
 export const InsertBlocksToolParams = Type.Object({
   ...InsertBlocksParams.properties,
   blocks: Type.Array(
-    Type.Object({
-      type: BlockType,
-      ...blockMetadata,
-      spec: Type.Union(
-        InsertBlock.anyOf.map((block) => ({
-          ...block.properties.spec,
-          description: `${block.properties.type.const}: ${"description" in block.properties.spec ? block.properties.spec.description : "Block content object."}`,
-        })),
-        { description: "Content must match the selected block type." },
-      ),
-    }),
+    {
+      ...Type.Object(blockMetadata),
+      required: ["type", "spec"],
+      anyOf: InsertBlock.anyOf.map((block) => ({
+        properties: {
+          type: block.properties.type,
+          spec: block.properties.spec,
+        },
+      })),
+    },
     { minItems: 1 },
   ),
 });

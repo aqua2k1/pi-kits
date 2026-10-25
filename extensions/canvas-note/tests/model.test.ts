@@ -3,6 +3,7 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
+import { Compile } from "typebox/compile";
 import { Value } from "typebox/value";
 import { Alignment, BlockKind } from "../core/contracts.js";
 import {
@@ -51,6 +52,7 @@ test("insert schemas constrain specs by kind and preserve open content", () => {
     new Set(InsertBlock.anyOf.map((schema) => schema.properties.type.const)),
     new Set(Object.values(BlockKind)),
   );
+  const compiled = Compile(InsertBlocksToolParams);
   for (const block of [
     { type: BlockKind.Text, spec: { md: "", extra: true } },
     { type: BlockKind.Math, spec: { latex: "x" } },
@@ -69,6 +71,8 @@ test("insert schemas constrain specs by kind and preserve open content", () => {
     { type: BlockKind.Divider, spec: { arbitrary: true } },
   ]) {
     assert.ok(Value.Check(InsertBlock, block));
+    assert.ok(Value.Check(InsertBlocksToolParams, { blocks: [block] }));
+    assert.ok(compiled.Check({ blocks: [block] }));
     assert.ok(
       Value.Check(UpdateBlocksParams, {
         blocks: [{ blockId: "id", spec: block.spec }],
@@ -98,19 +102,31 @@ test("insert schemas constrain specs by kind and preserve open content", () => {
     { type: BlockKind.Table, spec: { columns: [], rows: [1] } },
     { type: "unknown", spec: {} },
     { type: BlockKind.Chart, spec: [] },
-  ])
+  ]) {
     assert.equal(Value.Check(InsertBlock, block), false);
+    assert.equal(
+      Value.Check(InsertBlocksToolParams, { blocks: [block] }),
+      false,
+    );
+    assert.equal(compiled.Check({ blocks: [block] }), false);
+  }
 });
 
 test("tool insert schema shares metadata and retains all content shapes", () => {
   const block = InsertBlocksToolParams.properties.blocks.items;
-  assert.deepEqual(block.properties.type.enum, Object.values(BlockKind));
+  assert.deepEqual(Object.keys(block.properties), ["title", "align"]);
+  assert.deepEqual(
+    block.anyOf.map((branch) => branch.properties.type.const),
+    InsertBlock.anyOf.map((branch) => branch.properties.type.const),
+  );
   assert.deepEqual(block.required, ["type", "spec"]);
   assert.deepEqual(
-    block.properties.spec.anyOf,
+    block.anyOf,
     InsertBlock.anyOf.map((branch) => ({
-      ...branch.properties.spec,
-      description: `${branch.properties.type.const}: ${"description" in branch.properties.spec ? branch.properties.spec.description : "Block content object."}`,
+      properties: {
+        type: branch.properties.type,
+        spec: branch.properties.spec,
+      },
     })),
   );
   const serialized = JSON.stringify(InsertBlocksToolParams);
@@ -131,11 +147,18 @@ test("tool insert schema shares metadata and retains all content shapes", () => 
     { blocks: [{ type: "text", spec: null }] },
     { blocks: [{ type: "text", title: " ", spec: { md: "A" } }] },
     { blocks: [{ type: "text", align: "unknown", spec: { md: "A" } }] },
-  ])
+    { blocks: [{}] },
+    { blocks: [{ spec: { md: "A" } }] },
+    { blocks: [{ type: "chart" }] },
+    { blocks: [{ type: "text", spec: { latex: "x" } }] },
+    { blocks: [{ type: "math", spec: { md: "A" } }] },
+    { blocks: [{ type: "code", spec: { md: "A" } }] },
+    { blocks: [{ type: "table", spec: { code: "A" } }] },
+    { blocks: [text("A"), { type: "text", spec: { latex: "x" } }] },
+  ]) {
     assert.equal(Value.Check(InsertBlocksToolParams, params), false);
-  const mismatched = { blocks: [{ type: "text", spec: { latex: "x" } }] };
-  assert.ok(Value.Check(InsertBlocksToolParams, mismatched));
-  assert.equal(Value.Check(InsertBlocksParams, mismatched), false);
+    assert.equal(Compile(InsertBlocksToolParams).Check(params), false);
+  }
 });
 
 async function fixture(t: { after: (fn: () => Promise<void>) => void }) {
