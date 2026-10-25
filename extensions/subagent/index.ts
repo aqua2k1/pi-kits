@@ -33,6 +33,11 @@ import {
 import { SubagentStatusWidget } from "./ui/status-widget.ts";
 import { showSubagentViews } from "./ui/views.ts";
 
+const namespace = {
+  name: "subagent",
+  description:
+    "Delegate tasks to independent agent sessions and manage their lifecycle and results.",
+};
 const agentId = Type.String({ minLength: 1, description: "Subagent ID" });
 const runtimeConfig = Type.Optional(
   Type.Object(
@@ -140,6 +145,7 @@ export function registerSubagents(
   pi.registerTool(
     defineTool({
       name: "subagent",
+      namespace,
       label: "Subagent",
       renderCall: subagentCallRenderer("Subagent", (id) =>
         manager?.list().find((agent) => agent.id === id),
@@ -259,6 +265,7 @@ export function registerSubagents(
   pi.registerTool(
     defineTool({
       name: "resume_subagent",
+      namespace,
       label: "Resume subagent",
       renderCall: subagentCallRenderer("Resume subagent", (id) =>
         manager?.list().find((agent) => agent.id === id),
@@ -316,6 +323,7 @@ export function registerSubagents(
   pi.registerTool(
     defineTool({
       name: "list_subagent_types",
+      namespace,
       label: "Subagent types",
       renderCall: renderSubagentTypesCall,
       renderResult: renderSubagentTypesResult,
@@ -346,6 +354,7 @@ export function registerSubagents(
   pi.registerTool(
     defineTool({
       name: "get_subagent_result",
+      namespace,
       label: "Subagent result",
       renderCall: subagentCallRenderer("Subagent result", (id) =>
         manager?.list().find((agent) => agent.id === id),
@@ -373,6 +382,7 @@ export function registerSubagents(
   pi.registerTool(
     defineTool({
       name: "steer_subagent",
+      namespace,
       label: "Steer subagent",
       renderCall: subagentCallRenderer("Steer subagent", (id) =>
         manager?.list().find((agent) => agent.id === id),
@@ -401,6 +411,7 @@ export function registerSubagents(
   pi.registerTool(
     defineTool({
       name: "stop_subagent",
+      namespace,
       label: "Stop subagent",
       renderCall: subagentCallRenderer("Stop subagent", (id) =>
         manager?.list().find((agent) => agent.id === id),

@@ -105,6 +105,29 @@ function captureFetch(
   return checkMachineOutput(tools[0]);
 }
 
+test("search and fetch share the web-kits namespace without changing exposure", () => {
+  const search = captureSearch();
+  const fetch = captureFetch();
+  assert.deepEqual(search.namespace, {
+    name: "web-kits",
+    description:
+      "Search the web and fetch URL content into local files for reading.",
+  });
+  assert.equal(fetch.namespace, search.namespace);
+  for (const tool of [search, fetch]) {
+    assert.equal(
+      tool.exposure,
+      undefined,
+      "default direct exposure is unchanged",
+    );
+    assert.equal(
+      tool.defaultActive,
+      undefined,
+      "default activation is unchanged",
+    );
+  }
+});
+
 test("the extension entrypoint validates config before registering tools", async () => {
   const names: string[] = [];
   await webToolsExtension(

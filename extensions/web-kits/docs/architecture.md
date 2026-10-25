@@ -97,6 +97,7 @@ GitHub 处理器返回空结果时转原生 HTTP；HTTP 原始响应先流式写
 
 ## 约束
 
+- `web_search` 与 `web_fetch` 共享 `web-kits` namespace，保持 Codemode 分组与发现入口一致；工具名称、参数和默认 direct 暴露保持不变。
 - `index.ts` 将同一文件与环境快照交给工具和诊断命令，保持状态展示与实际请求一致；`index.test.ts` 和 `commands.test.ts` 检查启动后读取次数。
 - `composition.ts` 负责具体服务组装，`core/router.ts` 仅调用工厂与路由，保证未使用的服务不会触发认证或配置检查；`composition.test.ts` 覆盖惰性构造与凭据隔离。
 - 搜索路由保留服务返回的脱敏查询，防止原始输入覆盖清理结果；`core/router.test.ts` 检查返回查询，`composition.test.ts` 检查回退中的凭据反射。

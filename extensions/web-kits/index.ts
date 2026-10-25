@@ -36,6 +36,12 @@ import {
   MIN_MAX_RESULTS,
 } from "./shared/limits.ts";
 
+const namespace = {
+  name: "web-kits",
+  description:
+    "Search the web and fetch URL content into local files for reading.",
+};
+
 function searchParameters(maxResults: number) {
   return Type.Object({
     query: Type.String({
@@ -111,6 +117,7 @@ export function registerWebSearchTool(
 ): void {
   pi.registerTool({
     name: "web_search",
+    namespace,
     label: "Web Search",
     renderCall: renderSearchCall,
     renderResult: renderSearchResult,
@@ -159,6 +166,7 @@ export function registerWebFetchTool(
   const fetchRuntime = dependencies.fetchRuntime ?? createFetchRuntime();
   pi.registerTool({
     name: "web_fetch",
+    namespace,
     label: "Web Fetch",
     renderCall: renderFetchCall,
     renderResult: renderFetchResult,

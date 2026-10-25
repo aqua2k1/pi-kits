@@ -212,6 +212,31 @@ for (const failures of [1, 3]) {
   });
 }
 
+test("all six tools share the subagent namespace without changing exposure", () => {
+  const capture = registrations();
+  registerSubagents(capture.pi, {} as MuxAdapter);
+  assert.equal(capture.definitions.size, 6);
+  const namespace = capture.definitions.get("subagent")?.namespace;
+  assert.deepEqual(namespace, {
+    name: "subagent",
+    description:
+      "Delegate tasks to independent agent sessions and manage their lifecycle and results.",
+  });
+  for (const tool of capture.definitions.values()) {
+    assert.equal(tool.namespace, namespace, tool.name);
+    assert.equal(
+      tool.exposure,
+      undefined,
+      "default direct exposure is unchanged",
+    );
+    assert.equal(
+      tool.defaultActive,
+      undefined,
+      "default activation is unchanged",
+    );
+  }
+});
+
 test("tool prompts stay runtime-neutral while runtime_config documents native review", () => {
   const capture = registrations();
   registerSubagents(capture.pi, {} as MuxAdapter);
