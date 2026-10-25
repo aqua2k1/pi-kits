@@ -20,6 +20,30 @@ import {
         );
       },
     },
+    [BlockKind.Code]: {
+      ...blockDefinitions[BlockKind.Code],
+      render(record, block) {
+        const language = block.spec.language?.trim().toLowerCase();
+        if (language) {
+          const label = document.createElement("div");
+          label.className = "code-language";
+          label.textContent = block.spec.language;
+          record.content.append(label);
+        }
+        const pre = document.createElement("pre");
+        const code = document.createElement("code");
+        code.textContent = block.spec.code;
+        if (language && window.hljs?.getLanguage(language)) {
+          code.className = "hljs";
+          code.innerHTML = window.DOMPurify.sanitize(
+            window.hljs.highlight(block.spec.code, { language }).value,
+            { ALLOWED_TAGS: ["span"], ALLOWED_ATTR: ["class"] },
+          );
+        }
+        pre.append(code);
+        record.content.append(pre);
+      },
+    },
     [BlockKind.Chart]: {
       ...blockDefinitions[BlockKind.Chart],
       reuse: true,

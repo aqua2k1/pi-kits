@@ -51,6 +51,16 @@ test("insert schemas constrain specs by kind and preserve open content", () => {
   for (const block of [
     { type: BlockKind.Text, spec: { md: "", extra: true } },
     { type: BlockKind.Math, spec: { latex: "x" } },
+    { type: BlockKind.Code, spec: { code: "" } },
+    {
+      type: BlockKind.Code,
+      spec: { code: "const x = 1;", language: "javascript" },
+    },
+    { type: BlockKind.Code, spec: { code: "plain", language: "" } },
+    {
+      type: BlockKind.Code,
+      spec: { code: "plain", language: "unknown-language", extra: true },
+    },
     { type: BlockKind.Table, spec: { columns: ["A"], rows: [[1, null, {}]] } },
     { type: BlockKind.Chart, spec: { arbitrary: true } },
     { type: BlockKind.Divider, spec: { arbitrary: true } },
@@ -66,6 +76,21 @@ test("insert schemas constrain specs by kind and preserve open content", () => {
     { type: BlockKind.Text, spec: {} },
     { type: BlockKind.Text, spec: { md: 1 } },
     { type: BlockKind.Math, spec: { latex: false } },
+    ...[
+      {},
+      { code: null },
+      { code: 1 },
+      { code: false },
+      { code: [] },
+      { code: {} },
+      { code: "x", language: null },
+      { code: "x", language: 1 },
+      { code: "x", language: false },
+      { code: "x", language: [] },
+      { code: "x", language: {} },
+    ].map((spec) => ({ type: BlockKind.Code, spec })),
+    { type: BlockKind.Code, spec: [] },
+    { type: BlockKind.Code, spec: null },
     { type: BlockKind.Table, spec: { columns: [1], rows: [] } },
     { type: BlockKind.Table, spec: { columns: [], rows: [1] } },
     { type: "unknown", spec: {} },
@@ -206,6 +231,119 @@ test("ordered insert, whole spec replacement, type change and deletion", async (
   assert.equal((await store.read()).version, 5);
 });
 
+test("code blocks persist, replace specs, change types and delete", async (t) => {
+  const store = await fixture(t);
+  const inserted = await store.insert({
+    blocks: [
+      {
+        type: BlockKind.Code,
+        title: "Example",
+        spec: { code: "const x = 1;", language: "javascript" },
+      },
+      { type: BlockKind.Code, spec: { code: "", language: "" } },
+      {
+        type: BlockKind.Code,
+        spec: { code: "plain", language: "unknown-language" },
+      },
+    ],
+  });
+  const [id] = inserted.blockIds;
+  assert.deepEqual(
+    (await new DocumentStore(store.path).read()).pages[0].blocks.map(
+      (block) => block.spec,
+    ),
+    [
+      { code: "const x = 1;", language: "javascript" },
+      { code: "", language: "" },
+      { code: "plain", language: "unknown-language" },
+    ],
+  );
+  await store.update({ blocks: [{ blockId: id, spec: { code: "" } }] });
+  assert.deepEqual((await store.read()).pages[0].blocks[0], {
+    id,
+    type: BlockKind.Code,
+    title: "Example",
+    align: "left",
+    spec: { code: "" },
+  });
+  await store.update({
+    blocks: [
+      { blockId: id, type: BlockKind.Text, spec: { md: "Explanation" } },
+    ],
+  });
+  assert.deepEqual((await store.read()).pages[0].blocks[0].spec, {
+    md: "Explanation",
+  });
+  await store.update({
+    blocks: [
+      {
+        blockId: id,
+        type: BlockKind.Code,
+        spec: { code: "print(1)", language: "python" },
+      },
+    ],
+  });
+  const block = (await store.read()).pages[0].blocks[0];
+  assert.equal(block.id, id);
+  assert.equal(block.type, BlockKind.Code);
+  assert.deepEqual(block.spec, { code: "print(1)", language: "python" });
+  assert.deepEqual(
+    await store.update({ blocks: [{ blockId: id, type: null }] }),
+    {
+      updated: [],
+      removed: [id],
+    },
+  );
+  assert.deepEqual(
+    (await store.read()).pages[0].blocks.map((item) => item.id),
+    inserted.blockIds.slice(1),
+  );
+});
+
+test("invalid code updates and type changes fail atomically without publishing", async (t) => {
+  const store = await fixture(t);
+  const inserted = await store.insert({
+    blocks: [
+      text("unchanged"),
+      { type: BlockKind.Code, spec: { code: "old", language: "javascript" } },
+    ],
+  });
+  const [textId, codeId] = inserted.blockIds;
+  const commits: DocumentCommit[] = [];
+  t.after(store.subscribe((commit) => commits.push(commit)));
+  const before = await readFile(store.path, "utf8");
+  for (const patch of [
+    { blockId: codeId, spec: {} },
+    { blockId: codeId, spec: { language: "python" } },
+    { blockId: codeId, spec: { code: 1 } },
+    { blockId: codeId, spec: { code: "new", language: null } },
+    { blockId: textId, type: BlockKind.Code },
+    { blockId: textId, type: BlockKind.Code, spec: { md: "wrong spec" } },
+  ]) {
+    await assert.rejects(
+      store.update({
+        blocks: [
+          {
+            blockId: patch.blockId === codeId ? textId : codeId,
+            align: "right",
+          },
+          patch,
+        ],
+      }),
+      /code:|requires complete spec/,
+    );
+    assert.equal(await readFile(store.path, "utf8"), before);
+    assert.equal(commits.length, 0);
+  }
+  await store.update({
+    blocks: [{ blockId: codeId, spec: { code: "recovered" } }],
+  });
+  assert.equal(commits.length, 1);
+  assert.deepEqual((await store.read()).pages[0].blocks[1].spec, {
+    code: "recovered",
+  });
+});
+
 test("batch validation is atomic and queue recovers from errors", async (t) => {
   const store = await fixture(t);
   const inserted = await store.insert({ blocks: [text("old")] });
@@ -258,6 +396,12 @@ test("read decodes and validates documents without writing or selecting a page",
           },
           { id: "chart", type: "chart", align: "left", spec: {} },
           { id: "divider", type: "divider", align: "left", spec: {} },
+          {
+            id: "code",
+            type: BlockKind.Code,
+            align: "left",
+            spec: { code: "", language: "unknown-language" },
+          },
         ],
       },
     ],
@@ -282,6 +426,9 @@ test("read decodes and validates documents without writing or selecting a page",
   for (const [type, spec, error] of [
     ["text", { md: 1 }, /text: spec.md/],
     ["math", { latex: false }, /math: spec.latex/],
+    [BlockKind.Code, {}, /code:/],
+    [BlockKind.Code, { code: false }, /code:/],
+    [BlockKind.Code, { code: "x", language: null }, /code:/],
     ["table", { columns: [1], rows: [[]] }, /table: spec.columns/],
     ["table", { columns: ["A"], rows: [1] }, /table: spec.columns/],
   ] as const) {

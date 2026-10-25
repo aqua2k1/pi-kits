@@ -25,14 +25,31 @@ const result = await tools.insert_blocks({
 | `pageId` | 目标页；省略使用当前页，没有页时创建“输出”页 |
 | `index` | 从 0 开始，在该位置之前插入；省略或超过末尾时追加 |
 | `blocks` | 非空数组，单个内容也使用数组 |
-| `type` | `text`、`chart`、`math`、`table`、`divider` |
+| `type` | `text`、`chart`、`math`、`table`、`divider`、`code` |
 | `title` | 可选目录标题；省略时目录显示 Block 类型 |
 | `align` | `left`（默认）、`center`、`right` |
-| `spec` | text 为 `{md}`；chart 为 ECharts option；math 为 `{latex}`；table 为 `{columns: string[], rows: unknown[][]}`；divider 为 `{}` |
+| `spec` | text 为 `{md}`；chart 为 ECharts option；math 为 `{latex}`；table 为 `{columns: string[], rows: unknown[][]}`；divider 为 `{}`；code 为 `{code: string, language?: string}` |
 
 工具调用按顺序执行；跨页组合调用时显式传入 `pageId`。图表配置使用纯 JSON。
 
 工具落盘后推送创建、插入、更新或删除操作，网页直接更新对应页面和内容块；未涉及的图表和选择保持原样。首次连接、重连、版本不连续或外部文件修改时同步完整文档。工具返回不等待浏览器完成渲染。
+
+## 展示代码
+
+```js
+const { blockIds } = await tools.insert_blocks({ blocks: [
+  { type: "code", title: "示例", spec: { code: "const answer = 42;", language: "javascript" } },
+  { type: "code", spec: { code: "<自定义内容>", language: "unknown-language" } },
+  { type: "code", spec: { code: "" } }
+] });
+await tools.update_blocks({ blocks: [
+  { blockId: blockIds[0], spec: { code: "console.log(42);" } }
+] });
+```
+
+`code` 必须是字符串，可为空；`language` 可省略或为任意字符串，包括空字符串和未知语言。显式指定本地高亮资源支持的语言时按 Gruvbox 配色高亮；省略、空或未知语言均显示纯文本，不自动猜测语言。高亮资源随扩展安装，浏览器无需访问 CDN。代码块只读展示，不执行代码，HTML 也作为代码文字显示。
+
+示例更新整体替换 `spec`，因此移除原来的 `language`，改为纯文本展示；只传 `{language: "python"}` 会因缺少 `code` 使整批失败。
 
 ## 修改与删除
 

@@ -1,8 +1,14 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
+import { createRequire } from "node:module";
 import { runInNewContext } from "node:vm";
 import type { Document, Operation } from "../../core/model.ts";
 import { clientGlobals, clientScript } from "./client-script.ts";
+
+const require = createRequire(import.meta.url);
+const hljs = runInNewContext(
+  `${readFileSync(require.resolve("@highlightjs/cdn-assets/highlight.min.js"), "utf8")}\nhljs;`,
+);
 
 type Listener = (event: Record<string, unknown>) => void;
 
@@ -280,6 +286,7 @@ export function browser() {
     }
   }
   const window = Object.assign(new Events(), {
+    hljs,
     marked: {
       parse(md: string) {
         markdown.push(md);

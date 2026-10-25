@@ -53,6 +53,19 @@ export const InsertBlock = Type.Union([
     }),
   }),
   Type.Object({
+    type: Type.Literal(BlockKind.Code),
+    ...blockMetadata,
+    spec: Type.Object({
+      code: Type.String({ description: "Source code, preserved verbatim." }),
+      language: Type.Optional(
+        Type.String({
+          description:
+            "Highlight.js language or alias; omitted or unsupported uses plain text.",
+        }),
+      ),
+    }),
+  }),
+  Type.Object({
     type: Type.Literal(BlockKind.Chart),
     ...blockMetadata,
     spec: Type.Record(Type.String(), Type.Unknown(), {

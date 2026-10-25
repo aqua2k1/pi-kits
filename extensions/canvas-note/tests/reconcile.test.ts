@@ -52,6 +52,73 @@ const select = (b: ReturnType<typeof browser>, id: string) => {
   checkbox.emit("change");
 };
 
+test("code blocks use the bundled highlighter and preserve source without executing markup", () => {
+  const b = browser();
+  const source =
+    'const html = "<script>alert(1)</script>";\n\tconsole.log(html);';
+  const block: Block = {
+    id: "code",
+    type: "code",
+    align: "left",
+    spec: { code: source, language: "JS" },
+  };
+  const doc = document([page("p", [block, chart("chart")])]);
+  b.snapshot(doc);
+  const rendered = content(b.block("code"));
+  assert.equal(rendered.children[0].textContent, "JS");
+  const code = rendered.children[1].children[0];
+  assert.equal(code.tagName, "code");
+  assert.equal(code.className, "hljs");
+  assert.equal(code.textContent, source);
+  assert.match(code.innerHTML, /hljs-keyword/);
+  assert.match(code.innerHTML, /&lt;script&gt;/);
+  assert.equal(code.innerHTML.includes("<script>"), false);
+  const before = writeCount(subtree(b.get("pages")));
+  b.snapshot(doc);
+  assert.equal(writeCount(subtree(b.get("pages"))), before);
+  select(b, "code");
+  const next = { ...block, spec: { code: "print(42)", language: "python" } };
+  b.operations(1, [update([next])]);
+  assert.match(
+    content(b.block("code")).children[1].children[0].innerHTML,
+    /hljs/,
+  );
+  assert.equal(b.block("code").children[0].checked, true);
+  b.operations(2, [update([text("code", "Now text")])]);
+  assert.equal(content(b.block("code")).innerHTML, "<p>Now text</p>");
+  b.operations(3, [update([{ ...block, id: "chart" }])]);
+  assert.equal(b.charts[0].disposed, 1);
+  assert.match(
+    content(b.block("chart")).children[1].children[0].innerHTML,
+    /hljs-keyword/,
+  );
+  b.operations(4, [update([], ["chart"])]);
+  assert.deepEqual(blockOrder(b.page("p")), ["code"]);
+});
+
+test("code blocks without a supported explicit language remain plain text", () => {
+  const b = browser();
+  const source = "<img src=x onerror=alert(1)>\n  <b>raw</b>";
+  const blocks: Block[] = [undefined, "", "unknown-language", "<script>"].map(
+    (language, i) => ({
+      id: `code-${i}`,
+      type: "code",
+      align: "left",
+      spec: { code: source, ...(language === undefined ? {} : { language }) },
+    }),
+  );
+  b.snapshot(document([page("p", blocks)]));
+  for (const block of blocks) {
+    const rendered = content(b.block(block.id));
+    const pre = rendered.children.at(-1);
+    assert.equal(pre?.tagName, "pre");
+    const code = pre.children[0];
+    assert.equal(code.textContent, source);
+    assert.equal(code.innerHTML, "");
+    assert.equal(code.className, "");
+  }
+});
+
 test("outline mirrors pages and blocks and supports fixed navigation and collapse", () => {
   const b = browser();
   b.snapshot(initial());

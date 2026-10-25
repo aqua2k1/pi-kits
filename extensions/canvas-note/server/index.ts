@@ -57,6 +57,22 @@ const assets = new Map<string, [string, string]>([
     [require.resolve("echarts/dist/echarts.min.js"), "text/javascript"],
   ],
   [
+    "/vendor/highlight.js",
+    [
+      require.resolve("@highlightjs/cdn-assets/highlight.min.js"),
+      "text/javascript",
+    ],
+  ],
+  [
+    "/vendor/highlight.css",
+    [
+      require.resolve(
+        "@highlightjs/cdn-assets/styles/base16/gruvbox-dark-hard.min.css",
+      ),
+      "text/css",
+    ],
+  ],
+  [
     "/vendor/katex.js",
     [require.resolve("katex/dist/katex.min.js"), "text/javascript"],
   ],

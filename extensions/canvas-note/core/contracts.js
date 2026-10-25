@@ -2,6 +2,7 @@
 
 export const BlockKind = Object.freeze({
   Text: "text",
+  Code: "code",
   Chart: "chart",
   Math: "math",
   Table: "table",
@@ -63,6 +64,15 @@ const definitions = {
         throw new Error("text: spec.md must be a string");
     },
     summarize: (spec) => /** @type {string} */ (spec.md),
+  },
+  [BlockKind.Code]: {
+    validate(spec) {
+      if (typeof spec.code !== "string")
+        throw new Error("code: spec.code must be a string");
+      if (spec.language !== undefined && typeof spec.language !== "string")
+        throw new Error("code: spec.language must be a string");
+    },
+    summarize: (spec) => /** @type {string} */ (spec.code),
   },
   [BlockKind.Chart]: {
     validate(_spec) {},

@@ -39,6 +39,47 @@ test("shared enums and definitions are frozen and guards derive from them", () =
     assert.equal(isAlignment(unknown), false);
 });
 
+test("code content accepts empty and unknown languages and summarizes verbatim", () => {
+  assert.equal(BlockKind.Code, "code");
+  const code = '<script>alert("只读")</script>\nconst answer = 42;';
+  for (const spec of [
+    { code: "" },
+    { code },
+    { code, language: "javascript" },
+    { code, language: "" },
+    { code, language: "unknown-language", extra: { keep: true } },
+  ]) {
+    const before = structuredClone(spec);
+    Object.freeze(spec);
+    validateBlockContent(BlockKind.Code, spec);
+    blockDefinitions[BlockKind.Code].validate(spec);
+    assert.equal(blockDefinitions[BlockKind.Code].summarize(spec), spec.code);
+    assert.deepEqual(spec, before);
+  }
+  for (const spec of [
+    {},
+    { code: null },
+    { code: 1 },
+    { code: false },
+    { code: [] },
+    { code: {} },
+    { code, language: null },
+    { code, language: 1 },
+    { code, language: false },
+    { code, language: [] },
+    { code, language: {} },
+  ]) {
+    const before = structuredClone(spec);
+    Object.freeze(spec);
+    assert.throws(() => validateBlockContent(BlockKind.Code, spec), /code:/);
+    assert.throws(
+      () => blockDefinitions[BlockKind.Code].validate(spec),
+      /code:/,
+    );
+    assert.deepEqual(spec, before);
+  }
+});
+
 test("registries require exactly the enum value keyset at runtime and typecheck", () => {
   const kinds = Object.freeze({ One: "one", Two: "two" });
   const handlers = { one: () => 1, two: () => "two" };

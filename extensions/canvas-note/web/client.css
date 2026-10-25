@@ -435,6 +435,24 @@ button.primary:hover:not(:disabled) {
   background: none;
   border: 0;
 }
+.content-code {
+  text-align: left;
+}
+.content-code .code-language {
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: var(--font-size-sm);
+  margin-bottom: 0.35rem;
+}
+.content-code pre {
+  margin: 0;
+  white-space: pre;
+  tab-size: 4;
+}
+.content-code pre code {
+  display: block;
+  overflow: visible;
+}
 .block-content blockquote {
   margin-inline: 0;
   padding: 0.25rem 1rem;

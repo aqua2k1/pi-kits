@@ -36,8 +36,6 @@ flowchart LR
 
 ## 数据流
 
-反馈文件持久化与轻量引用交付为计划方案。
-
 ```mermaid
 sequenceDiagram
   participant Pi as Pi 工具
@@ -70,6 +68,18 @@ sequenceDiagram
 ```
 
 一次原子变更对应一个版本和一个操作批次；自动创建页面后插入内容的两个操作属于同一批。更新操作携带完整的新 Block，不传 spec 的局部 patch。客户端预检整批引用和插入位置，按顺序直接修改本地文档与对应 DOM；正常更新不遍历整份文档求差。
+
+## Code Block
+
+`BlockKind.Code = 'code'`，内容为 `{ code: string, language?: string }`；`code` 允许空字符串，`language` 允许省略、空字符串或未知字符串。共享定义校验字段类型，摘要原样返回 `spec.code`。`InsertBlock` 联合 schema 包含 code 分支；更新仍整体替换 `spec`，换类型必须提供完整的新内容。
+
+```js
+{ type: "code", spec: { code: "const answer = 42;", language: "javascript" } }
+{ type: "code", spec: { code: "<plain text>", language: "unknown-language" } }
+{ type: "code", spec: { code: "" } }
+```
+
+浏览器使用随扩展分发的 Highlight.js common build 本地资源。首例显式语言受支持时高亮，后两例以纯文本展示；空语言同样按纯文本处理，不进行自动语言检测。代码采用 Gruvbox 配色，只读展示，不执行代码。
 
 ## 新增类型
 
@@ -104,6 +114,7 @@ Block 类型在 `core/contracts.js` 的 `BlockKind` 与 `blockDefinitions` 中�
 - 目录固定在左侧并独立滚动；目录只通过稳定 page/block ID 定位正文，折叠目录不得改变正文状态，避免导航操作干扰文档渲染。
 - 渲染错误每版本每 Block 只成功回报一次；重复快照不重复发送，发送失败可在后续快照重试，避免目录监听与显式同步重复触发修复。
 - `spec` 整体替换，换类型时需要新 spec，避免旧格式进入新渲染器。
+- Code 只在显式 `language` 被本地 Highlight.js common build 支持时高亮；省略、空或未知语言保留纯文本，避免猜测语言改变展示。代码只读且不执行，HTML 内容必须作为文字处理，避免代码块触发脚本。
 - 回复校验版本并保留所选块的完整快照后才确认成功，避免引用更新后内容或丢失失败输入。
 - 完整反馈包含 `requestId`、`version`、`reply` 和含完整快照的 `blocks`，保存为与 `doc.json` 并列的 `feedback-<requestId>.json`；不适合作文件名的 `requestId` 使用其哈希，避免非法路径。文件作为笔记长期保留，交付、重载和关闭服务不得删除，避免丢失用户引用的原内容。
 - 交付顺序固定为原子保存反馈文件、在 Pi 会话保存轻量引用、发送 `followUp`；ACK 前完成文件与引用持久化，避免确认成功却丢失回复。
@@ -118,4 +129,4 @@ Block 类型在 `core/contracts.js` 的 `BlockKind` 与 `blockDefinitions` 中�
 
 ## 测试
 
-`npm test --workspace canvas-note` 运行 `tests/*.test.ts`，覆盖原子批次、并发写入、提交订阅、真实 HTTP/WebSocket、操作增量、快照恢复、回复去重、过期反馈、服务重启与工具 handler。`tests/contracts.test.ts` 校验共享枚举、TypeBox 契约、内容定义与注册完整性；`tests/presentation.test.ts`、`tests/protocol.test.ts`、`tests/web.test.ts` 校验纯构造结果与输入不变性；反馈与模型测试同时校验投影阶段不提交状态。`tests/reconcile.test.ts` 通过 `tests/fixtures/browser.ts` 的最小浏览器环境执行完整客户端脚本，验证局部 DOM 写入、图表生命周期、选择保留和版本恢复。复杂公式样例集中在 `tests/fixtures/math.ts`。根测试覆盖实际 Pi 独立加载和生产依赖安装。
+`npm test --workspace canvas-note` 运行 `tests/*.test.ts`，覆盖原子批次、并发写入、提交订阅、真实 HTTP/WebSocket、操作增量、快照恢复、回复去重、过期反馈、服务重启与工具 handler。`tests/contracts.test.ts` 校验共享枚举、内容定义与注册完整性，包含 Code 合法/非法内容、原样摘要与输入不变性；`tests/model.test.ts` 校验 TypeBox 联合 schema 覆盖、Code 插入与读取、整体替换、换类型、删除和原子失败；`tests/presentation.test.ts`、`tests/protocol.test.ts`、`tests/web.test.ts` 校验纯构造结果与输入不变性；反馈与模型测试同时校验投影阶段不提交状态。`tests/reconcile.test.ts` 通过 `tests/fixtures/browser.ts` 的最小浏览器环境执行完整客户端脚本，验证局部 DOM 写入、图表生命周期、选择保留和版本恢复。复杂公式样例集中在 `tests/fixtures/math.ts`。根测试覆盖实际 Pi 独立加载和生产依赖安装。
