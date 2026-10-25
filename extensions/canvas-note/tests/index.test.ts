@@ -18,7 +18,7 @@ import { WebSocket } from "ws";
 import { InsertBlocksToolParams } from "../core/model.ts";
 import canvasNote from "../index.ts";
 
-test("extension registers only four tools; real handlers lazily serve and route browser feedback", async (t) => {
+test("extension registers four tools and the server command; real handlers lazily serve and route browser feedback", async (t) => {
   const agentDir = await mkdtemp(join(tmpdir(), "canvas-note-extension-"));
   const original = process.env.PI_CODING_AGENT_DIR;
   process.env.PI_CODING_AGENT_DIR = agentDir;
@@ -53,20 +53,21 @@ test("extension registers only four tools; real handlers lazily serve and route 
       structuredContent: unknown;
     }>;
   };
+  const commands: string[] = [];
   const tools = new Map<string, Tool>();
   const events = new Map<string, () => Promise<void>>();
   const messages: string[] = [];
   const statuses = new Map<string, string>();
   const pi = {
     registerTool: (tool: Tool) => tools.set(tool.name, tool),
-    registerCommand: () =>
-      assert.fail("Canvas Note must not register commands"),
+    registerCommand: (name: string) => commands.push(name),
     appendEntry: () => {},
     on: (event: string, fn: () => Promise<void>) => events.set(event, fn),
     sendUserMessage: (text: string) => messages.push(text),
   } as unknown as ExtensionAPI;
   canvasNote(pi);
   t.after(() => events.get("session_shutdown")?.());
+  assert.deepEqual(commands, ["canvas-note-server"]);
   assert.deepEqual([...tools.keys()].sort(), [
     "insert_blocks",
     "insert_page",
@@ -394,6 +395,11 @@ test("real Pi SDK loads Canvas Note and dispatches its lifecycle and tools", asy
   const saved = JSON.parse(await readFile(originalPath, "utf8"));
   assert.equal(saved.pages.length, 2);
   assert.equal(saved.pages[0].blocks[0].spec.md, "**Real Pi SDK**");
+  assert.ok(session.extensionRunner.getCommand("canvas-note-server"));
+  const beforeCommand = await readFile(originalPath, "utf8");
+  await session.prompt("/canvas-note-server");
+  assert.equal((await fetch(`http://127.0.0.1:${address.port}`)).status, 200);
+  assert.equal(await readFile(originalPath, "utf8"), beforeCommand);
 });
 
 test("SSH address checks warn once for missing environment override and stay quiet otherwise", async (t) => {
@@ -422,6 +428,7 @@ test("SSH address checks warn once for missing environment override and stay qui
   const warnings: { text: string; type: string }[] = [];
   const pi = {
     registerTool: () => {},
+    registerCommand: () => {},
     on: (
       name: string,
       handler: (event: unknown, ctx: ExtensionContext) => unknown,

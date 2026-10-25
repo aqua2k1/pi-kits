@@ -1,4 +1,3 @@
-import { randomInt } from "node:crypto";
 import { watch } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { createServer } from "node:http";
@@ -137,20 +136,6 @@ function validatePortRange(
   )
     throw new Error("Invalid Canvas Note port range");
   return range;
-}
-
-function portCandidates(
-  minimum: number,
-  maximum: number,
-  start: number,
-  fixed: boolean,
-): number[] {
-  if (fixed) return [start];
-  return Array.from(
-    { length: maximum - minimum + 1 },
-    (_, index) =>
-      minimum + ((start - minimum + index) % (maximum - minimum + 1)),
-  );
 }
 
 function publicUrl(host: string, port: number): string {
@@ -446,13 +431,13 @@ export async function startCanvasNoteServer(options: ServerOptions) {
     return closing;
   }
   try {
-    const start = options.port ?? randomInt(minimum, maximum + 1);
-    const ports = portCandidates(
-      minimum,
-      maximum,
-      start,
-      options.port !== undefined,
-    );
+    const ports =
+      options.port === undefined
+        ? Array.from(
+            { length: maximum - minimum + 1 },
+            (_, index) => minimum + index,
+          )
+        : [options.port];
     for (const [attempt, port] of ports.entries()) {
       try {
         await new Promise<void>((resolve, reject) => {

@@ -506,6 +506,24 @@ test("port ranges stay within bounds and report exhaustion without leaking resou
   const port = Number(new URL(defaults.url).port);
   assert.ok(port >= 10000 && port <= 20000);
   assert.equal((await fetch(defaults.url)).status, 200);
+  const next = await startCanvasNoteServer({
+    ...options,
+    portRange: [port, 20000],
+  });
+  t.after(() => next.close());
+  const nextPort = Number(new URL(next.url).port);
+  assert.ok(nextPort > port, "occupied lower bound is skipped");
+  await defaults.close();
+  const reused = await startCanvasNoteServer({
+    ...options,
+    portRange: [port, nextPort],
+  });
+  t.after(() => reused.close());
+  assert.equal(
+    Number(new URL(reused.url).port),
+    port,
+    "free lower bound is always tried first",
+  );
 });
 
 test("last page disconnect stops service, while other pages and refresh keep it alive", async (t) => {

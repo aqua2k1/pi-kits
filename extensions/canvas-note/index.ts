@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
-import { join } from "node:path";
+import { mkdir } from "node:fs/promises";
+import { dirname, join } from "node:path";
 import type {
   ExtensionAPI,
   ExtensionContext,
@@ -79,6 +80,7 @@ export default function canvasNoteExtension(pi: ExtensionAPI) {
   }
   async function ensureServer(docStore: DocumentStore) {
     if (!server) {
+      await mkdir(dirname(docStore.path), { recursive: true });
       server = await startCanvasNoteServer({
         ...config,
         store: docStore,
@@ -103,6 +105,22 @@ export default function canvasNoteExtension(pi: ExtensionAPI) {
     await server.flush();
     return server;
   }
+  pi.registerCommand("canvas-note-server", {
+    description: "Start or reuse the current session's Canvas Note server",
+    async handler(args, ctx) {
+      if (args.trim()) {
+        ctx.ui.notify("Usage: /canvas-note-server", "error");
+        return;
+      }
+      try {
+        await serial(async () => {
+          await ensureServer(getStore(ctx));
+        });
+      } catch (error) {
+        ctx.ui.notify(`Canvas Note: ${String(error)}`, "error");
+      }
+    },
+  });
   const common = {
     namespace: {
       name: "canvas-note",

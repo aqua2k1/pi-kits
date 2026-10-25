@@ -6,7 +6,7 @@
 |---|---|---|---|
 | `enabled` | boolean | `true` | 注册三个内容工具 |
 | `host` | string | 自动选择 | 省略时，检测到 `SSH_CONNECTION`、`SSH_CLIENT` 或 `SSH_TTY` 则监听 `0.0.0.0`，本地监听 `localhost`；显式值覆盖自动选择 |
-| `portRange` | [integer, integer] | `[10000, 20000]` | 包含上下界的端口区间，端点范围 1–65535；从随机起点寻找空闲端口，全部占用时报错 |
+| `portRange` | [integer, integer] | `[10000, 20000]` | 包含上下界的端口区间，端点范围 1–65535；从下界开始按升序尝试端口，全部占用时报错 |
 
 ## 示例
 
