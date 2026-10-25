@@ -1,0 +1,13 @@
+{
+  "background": "#ebe7e4",
+  "surface": "#f3f2f0",
+  "text": "#252f3d",
+  "muted": "#5c5752",
+  "accent": "#4b607c",
+  "accentHover": "#354961",
+  "onAccent": "#ffffff",
+  "border": "#8b847d59",
+  "success": "#47745b",
+  "warning": "#98642f",
+  "error": "#a04736"
+}

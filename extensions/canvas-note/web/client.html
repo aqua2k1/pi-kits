@@ -7,6 +7,7 @@
     <title>Canvas Note</title>
     <link rel="stylesheet" href="/vendor/katex.css" />
     <link rel="stylesheet" href="/client.css" />
+    <link rel="stylesheet" href="/theme.css" />
     <script defer src="/vendor/marked.js"></script>
     <script defer src="/vendor/purify.js"></script>
     <script defer src="/vendor/echarts.js"></script>
@@ -15,7 +16,8 @@
   </head>
   <body>
     <header class="toolbar">
-      <a class="brand" href="#pages">Canvas Note <span>workspace</span></a>
+      <a class="brand" href="#pages">Canvas Note</a>
+      <div id="document-id" class="document-id" aria-label="Document directory" hidden></div>
       <div class="selection-tools" role="group" aria-label="Block selection">
         <span id="selection-count" role="status">0 selected</span>
         <button id="reply" type="button" class="primary" disabled>Reply</button>
@@ -25,7 +27,6 @@
         <span id="connection" role="status" data-state="connecting">Connecting…</span>
         <button id="shutdown" type="button" disabled>Close server</button>
       </div>
-      <div id="document-id" class="document-id" aria-label="Document directory" hidden></div>
     </header>
     <main id="pages" aria-label="Canvas Note pages" tabindex="-1"></main>
     <p id="empty" class="empty">Your canvas is ready. Waiting for a document…</p>

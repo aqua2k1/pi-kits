@@ -28,9 +28,10 @@ flowchart LR
 | `core/types.ts` | 核心层与服务层共用的反馈类型 |
 | `core/presentation.ts` | 文档身份、提示文本、工具结果与错误消息的纯构造 |
 | `server/index.ts` | 静态资源、操作增量、快照恢复、目录监听和反馈确认 |
+| `server/theme.ts` | 从扩展根目录 theme.json 读取配色，校验后生成主题 CSS |
 | `server/protocol.ts` | 消息解析、校验、指纹、反馈快照与错误投影 |
 | `web/client.html` | 页面与回复窗口骨架 |
-| `web/client.css` | 纸张、选择框、工具栏与弹窗样式 |
+| `web/client.css` | 文档站式布局、默认色彩变量、选择框、工具栏与弹窗样式 |
 | `web/client.js` | 消费操作、按 ID 渲染、连接恢复、选择与提交 |
 
 ## 数据流
@@ -80,6 +81,7 @@ Block 类型在 `core/contracts.js` 的 `BlockKind` 与 `blockDefinitions` 中�
 - `index.ts` 是唯一扩展入口，`core/` 不依赖 `server/` 或 `web/`，跨层反馈类型放在 `core/types.ts`，避免循环依赖。
 - `core/contracts.js` 是前后端共享的类型来源，不访问 DOM 或注册生命周期；Block 的内容校验与摘要只定义一次，浏览器只补充渲染行为，防止新增类型后前后端接受范围不一致。
 - Block 与操作注册表都检查枚举覆盖范围，业务只查表分派；新增类型缺少处理器时启动或测试直接失败，避免遗漏业务分支。
+- `theme.json` 是随扩展分发的网页配色资源，不是 Pi 设置；`/theme.css` 每次请求重新读取，只将白名单键的十六进制色值转换为 CSS 变量，缺失或无效项沿用基础样式，避免任意 CSS 注入和主题错误阻断文档。
 - 服务从 `web/` 读取静态资源，HTTP 路径保持 `/client.js` 与 `/client.css`，目录调整不得改变浏览器资源协议。
 
 - JSON 固定保存在项目 `docs/canvas-notes/<UTC时间>-<UUID>/doc.json`，时间格式为 `YYYY-MM-DDTHH-mm-ssZ`，完整目录名写入会话条目，确保重载沿用同一文件且不同会话不互相覆盖。

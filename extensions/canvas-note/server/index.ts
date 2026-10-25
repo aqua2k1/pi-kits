@@ -23,6 +23,8 @@ import {
   replyFingerprint,
 } from "./protocol.ts";
 
+import { readThemeStyles } from "./theme.ts";
+
 const require = createRequire(import.meta.url);
 const assetRoot = fileURLToPath(new URL("../web/", import.meta.url));
 const assets = new Map<string, [string, string]>([
@@ -170,6 +172,17 @@ export async function startCanvasNoteServer(options: ServerOptions) {
     try {
       if (req.method !== "GET" && req.method !== "HEAD") {
         res.writeHead(405).end();
+        return;
+      }
+      if (
+        new URL(req.url ?? "/", "http://canvas.local").pathname === "/theme.css"
+      ) {
+        const content = await readThemeStyles();
+        res.writeHead(200, {
+          "content-type": "text/css; charset=utf-8",
+          "cache-control": "no-store",
+        });
+        res.end(req.method === "HEAD" ? undefined : content);
         return;
       }
       const asset = resolveAsset(req.url ?? "/");

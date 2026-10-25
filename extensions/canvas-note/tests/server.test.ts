@@ -333,6 +333,7 @@ test("real HTTP, WebSocket snapshots, atomic rename watch, reply acknowledgment 
   for (const path of [
     "/client.js",
     "/client.css",
+    "/theme.css",
     "/vendor/marked.js",
     "/vendor/purify.js",
     "/vendor/echarts.js",
@@ -341,6 +342,13 @@ test("real HTTP, WebSocket snapshots, atomic rename watch, reply acknowledgment 
     "/vendor/fonts/KaTeX_Main-Regular.woff2",
   ])
     assert.equal((await fetch(server.url + path)).status, 200, path);
+  const theme = await fetch(`${server.url}/theme.css?v=1`);
+  assert.match(theme.headers.get("content-type") ?? "", /text\/css/);
+  assert.equal(theme.headers.get("cache-control"), "no-store");
+  assert.match(await theme.text(), /--accent: #[\da-f]+;/i);
+  const themeHead = await fetch(`${server.url}/theme.css`, { method: "HEAD" });
+  assert.equal(themeHead.status, 200);
+  assert.equal(await themeHead.text(), "");
   assert.equal((await fetch(`${server.url}/missing`)).status, 404);
   const ws = new WebSocket(`${server.url.replace("http:", "ws:")}/ws`);
   const next = inbox(ws);
