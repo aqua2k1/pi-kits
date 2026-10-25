@@ -8,10 +8,10 @@ import { readPiKitsConfig } from "@pi-kits/config";
 import { Type } from "typebox";
 import { createFeedbackInbox } from "./core/feedback.ts";
 import {
-  DocumentStore,
-  InsertParams,
-  NewPageParams,
-  UpdateParams,
+  InsertBlocksParams,
+  InsertPageParams,
+  UpdateBlocksParams,
+  UpdatePageParams,
 } from "./core/model.ts";
 import {
   formatDocumentId,
@@ -22,6 +22,7 @@ import {
   statusText,
   toolResult,
 } from "./core/presentation.ts";
+import { DocumentStore } from "./core/store.ts";
 import {
   type CanvasNoteServer,
   resolveCanvasHost,
@@ -106,7 +107,7 @@ export default function canvasNoteExtension(pi: ExtensionAPI) {
       description:
         "Canvas Note: Present charts, plans, designs, math, and code as interactive documents with block-level user feedback.",
       instructions:
-        "Organize content into semantic pages and independently editable blocks. Keep related content together, but separate sections that users may want to review or revise individually.\n\nUse new_page for a distinct topic or section; otherwise insert into an existing page. Pass pageId explicitly when working across pages or resuming an existing document.\n\nUse returned blockIds to revise existing content rather than inserting duplicates. Read documentPath with the read tool when you need current content or IDs.\n\nTreat selected block snapshots as context for the user's feedback. Answer questions directly; use update_blocks when the user requests changes.",
+        "Organize content into semantic pages and independently editable blocks. Keep related content together, but separate sections that users may want to review or revise individually.\n\nUse insert_page for a distinct topic or section; otherwise insert into an existing page. Pass pageId explicitly when working across pages or resuming an existing document.\n\nUse update_page to rename a page or delete it and all its blocks. Use returned blockIds to revise existing content rather than inserting duplicates. Read documentPath with the read tool when you need current content or IDs.\n\nTreat selected block snapshots as context for the user's feedback. Answer questions directly; use update_blocks when the user requests changes.",
     },
     executionMode: "sequential" as const,
   };
@@ -114,22 +115,47 @@ export default function canvasNoteExtension(pi: ExtensionAPI) {
   const strings = Type.Array(Type.String());
   pi.registerTool({
     ...common,
-    name: "new_page",
-    label: "Canvas Note · New page",
-    description: "Create a named semantic page and make it current.",
-    parameters: NewPageParams,
+    name: "insert_page",
+    label: "Canvas Note · Insert page",
+    description: "Insert a named semantic page and make it current.",
+    parameters: InsertPageParams,
     outputSchema: Type.Object({ pageId: Type.String(), ...location }),
     async execute(_id, params, signal, _update, ctx) {
       return serial(async () => {
         signal?.throwIfAborted();
         const docStore = getStore(ctx);
         const result = {
-          ...(await docStore.newPage(params)),
+          ...(await docStore.insertPage(params)),
           documentPath: docStore.path,
           version: (await docStore.read()).version,
         };
         await server?.flush();
-        return toolResult("Page created.", result);
+        return toolResult("Page inserted.", result);
+      });
+    },
+  });
+  pi.registerTool({
+    ...common,
+    name: "update_page",
+    label: "Canvas Note · Update page",
+    description: "Rename a page or delete it and all its blocks.",
+    parameters: UpdatePageParams,
+    outputSchema: Type.Object({
+      pageId: Type.String(),
+      deleted: Type.Boolean(),
+      ...location,
+    }),
+    async execute(_id, params, signal, _update, ctx) {
+      return serial(async () => {
+        signal?.throwIfAborted();
+        const docStore = getStore(ctx);
+        const result = {
+          ...(await docStore.updatePage(params)),
+          documentPath: docStore.path,
+          version: (await docStore.read()).version,
+        };
+        await server?.flush();
+        return toolResult("Page updated.", result);
       });
     },
   });
@@ -139,7 +165,7 @@ export default function canvasNoteExtension(pi: ExtensionAPI) {
     label: "Canvas Note · Insert blocks",
     description:
       "Insert blocks into a page in a single atomic batch. Returns stable block IDs and a browser URL.",
-    parameters: InsertParams,
+    parameters: InsertBlocksParams,
     outputSchema: Type.Object({
       pageId: Type.String(),
       blockIds: strings,
@@ -150,7 +176,7 @@ export default function canvasNoteExtension(pi: ExtensionAPI) {
       return serial(async () => {
         signal?.throwIfAborted();
         const docStore = getStore(ctx);
-        const inserted = await docStore.insert(params);
+        const inserted = await docStore.insertBlocks(params);
         let view: CanvasNoteServer;
         try {
           view = await ensureServer(docStore);
@@ -175,7 +201,7 @@ export default function canvasNoteExtension(pi: ExtensionAPI) {
     label: "Canvas Note · Update blocks",
     description:
       "Update or delete blocks by ID in a single atomic batch. Omitted fields remain unchanged; spec is replaced entirely.",
-    parameters: UpdateParams,
+    parameters: UpdateBlocksParams,
     outputSchema: Type.Object({
       updated: strings,
       removed: strings,
@@ -186,7 +212,7 @@ export default function canvasNoteExtension(pi: ExtensionAPI) {
       return serial(async () => {
         signal?.throwIfAborted();
         const docStore = getStore(ctx);
-        const changed = await docStore.update(params);
+        const changed = await docStore.updateBlocks(params);
         const view = await ensureServer(docStore);
         const result = {
           ...changed,

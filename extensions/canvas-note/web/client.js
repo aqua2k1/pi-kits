@@ -5,8 +5,10 @@ import {
   defineHandlers,
   isAlignment,
   isBlockKind,
+  isPageChange,
   MessageKind,
   OperationKind,
+  PageChangeKind,
 } from "../core/contracts.js";
 import { createChartTheme } from "./chart-theme.js";
 
@@ -289,7 +291,7 @@ import { createChartTheme } from "./chart-theme.js";
   const operationHandlers = defineHandlers(OperationKind, {
     [OperationKind.CreatePage]: {
       validate(operation, context) {
-        const { pageFor, blockPage, validIndex, pages, addedPages } = context;
+        const { pageFor, blockPage, validIndex, addedPages } = context;
         const page = operation.page;
         if (
           !page ||
@@ -300,10 +302,11 @@ import { createChartTheme } from "./chart-theme.js";
           page.blocks.length ||
           pageFor(page.id) ||
           blockPage(page.id) ||
-          !validIndex(operation.index, pages.size + addedPages.size)
+          !validIndex(operation.index, context.pageCount)
         )
           return false;
         addedPages.set(page.id, page);
+        context.pageCount++;
         return true;
       },
       apply(operation, context) {
@@ -313,6 +316,52 @@ import { createChartTheme } from "./chart-theme.js";
         const entry = pageEntry(page);
         place(pagesRoot, entry.element, operation.index);
         syncOutlinePage(page.id, operation.index);
+      },
+    },
+    [OperationKind.UpdatePage]: {
+      validate(operation, context) {
+        const {
+          pageFor,
+          blockPage,
+          addedPages,
+          addedBlocks,
+          removedPages,
+          removed,
+          lengths,
+        } = context;
+        const page = pageFor(operation.pageId);
+        if (!page || !isPageChange(operation.change)) return false;
+        if (operation.change.kind === PageChangeKind.Rename) return true;
+        for (const block of page.blocks) {
+          if (blockPage(block.id) === page.id) removed.add(block.id);
+        }
+        for (const [id, pageId] of addedBlocks) {
+          if (pageId === page.id) removed.add(id);
+        }
+        addedPages.delete(page.id);
+        removedPages.add(page.id);
+        lengths.delete(page.id);
+        context.pageCount--;
+        return true;
+      },
+      apply(operation, context) {
+        const { doc, pages, blocks, pageEntry, removeBlock, syncOutlinePage } =
+          context;
+        const entry = pages.get(operation.pageId);
+        if (operation.change.kind === PageChangeKind.Rename) {
+          const page = entry.page;
+          page.title = operation.change.title;
+          pageEntry(page);
+          for (const block of page.blocks)
+            blocks.get(block.id).pageTitle = page.title;
+          syncOutlinePage(page.id);
+          return;
+        }
+        for (const block of entry.page.blocks) removeBlock(block.id);
+        doc.pages.splice(doc.pages.indexOf(entry.page), 1);
+        entry.element.remove();
+        pages.delete(operation.pageId);
+        syncOutlinePage(operation.pageId);
       },
     },
     [OperationKind.InsertBlocks]: {
@@ -414,9 +463,12 @@ import { createChartTheme } from "./chart-theme.js";
     if (!Array.isArray(operations) || !operations.length) return false;
     const addedPages = new Map();
     const addedBlocks = new Map();
+    const removedPages = new Set();
     const removed = new Set();
     const lengths = new Map();
-    const pageFor = (id) => addedPages.get(id) || pages.get(id)?.page;
+    const pageFor = (id) =>
+      addedPages.get(id) ||
+      (removedPages.has(id) ? undefined : pages.get(id)?.page);
     const blockPage = (id) =>
       removed.has(id)
         ? undefined
@@ -425,9 +477,10 @@ import { createChartTheme } from "./chart-theme.js";
     const validIndex = (index, size) =>
       Number.isInteger(index) && index >= 0 && index <= size;
     const context = {
-      pages,
+      pageCount: pages.size,
       addedPages,
       addedBlocks,
+      removedPages,
       removed,
       lengths,
       pageFor,
@@ -753,10 +806,11 @@ import { createChartTheme } from "./chart-theme.js";
       if (blockEntry.label !== label) {
         blockEntry.label = label;
         blockEntry.link.textContent = label;
-        blockEntry.link.setAttribute(
-          "aria-label",
-          `Go to ${entry.label}, ${label}`,
-        );
+      }
+      const ariaLabel = `Go to ${entry.label}, ${label}`;
+      if (blockEntry.ariaLabel !== ariaLabel) {
+        blockEntry.ariaLabel = ariaLabel;
+        blockEntry.link.setAttribute("aria-label", ariaLabel);
       }
       const index = blockIndex ?? pageEntry.page.blocks.indexOf(block);
       if (index >= 0) place(entry.children, blockEntry.element, index);

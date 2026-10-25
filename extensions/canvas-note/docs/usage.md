@@ -13,7 +13,7 @@
 ## 创建报告
 
 ```js
-const { pageId } = await tools.new_page({ title: "销售分析" });
+const { pageId } = await tools.insert_page({ title: "销售分析" });
 const result = await tools.insert_blocks({
   pageId,
   blocks: [
@@ -28,7 +28,7 @@ const result = await tools.insert_blocks({
 });
 ```
 
-`new_page` 返回页 ID 并设为当前页，创建空页不启动服务。`insert_blocks` 返回页 ID、Block ID 数组、浏览器地址、文档路径和版本。
+`insert_page` 返回页 ID 并设为当前页，创建空页不启动服务。`insert_blocks` 返回页 ID、Block ID 数组、浏览器地址、文档路径和版本。
 
 | 参数 | 说明 |
 |---|---|
@@ -71,6 +71,19 @@ await tools.update_blocks({ blocks: [
 ```
 
 省略字段保持不变，`title` 更新目录标题，传入 `title: null` 清除标题；`spec` 整体替换。改变 `type` 时同时提供新 `spec`；`type: null` 删除 Block。每批操作全成功或全失败。读取工具返回的文档路径可检查最新内容和 ID。
+
+## 重命名与删除页
+
+```js
+await tools.update_page({ pageId: "<Page ID>", change: { kind: "rename", title: "新的标题" } });
+await tools.update_page({ pageId: "<另一个 Page ID>", change: { kind: "delete" } });
+```
+
+`pageId` 必须存在；`change` 按 `kind` 严格区分两个分支：`rename` 必须携带非空白且不同于原标题的 `title`；`delete` 删除整页及其全部 Block，只接受 `kind` 字段。额外字段、未知分支或缺少有效修改时报错，不写文件或增加版本。
+
+返回 `pageId`、`deleted`、`documentPath` 和 `version`。重命名同步正文、目录和反馈中的页标题；删除清理对应选择和图表，不影响其他页。最后一页也可删除，文档保留为空。删除当前页后，下次省略 `pageId` 插入会创建“输出”页。
+
+页修改只同步正在运行的服务，不启动或重启服务。
 
 ## 保存 PDF
 

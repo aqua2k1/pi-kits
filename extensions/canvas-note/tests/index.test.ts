@@ -17,7 +17,7 @@ import {
 import { WebSocket } from "ws";
 import canvasNote from "../index.ts";
 
-test("extension registers only three tools; real handlers lazily serve and route browser feedback", async (t) => {
+test("extension registers only four tools; real handlers lazily serve and route browser feedback", async (t) => {
   const agentDir = await mkdtemp(join(tmpdir(), "canvas-note-extension-"));
   const original = process.env.PI_CODING_AGENT_DIR;
   process.env.PI_CODING_AGENT_DIR = agentDir;
@@ -66,10 +66,12 @@ test("extension registers only three tools; real handlers lazily serve and route
   } as unknown as ExtensionAPI;
   canvasNote(pi);
   t.after(() => events.get("session_shutdown")?.());
-  assert.deepEqual(
-    [...tools.keys()],
-    ["new_page", "insert_blocks", "update_blocks"],
-  );
+  assert.deepEqual([...tools.keys()].sort(), [
+    "insert_blocks",
+    "insert_page",
+    "update_blocks",
+    "update_page",
+  ]);
   const ctx = {
     cwd: agentDir,
     sessionManager: { getSessionId: () => "integration", getBranch: () => [] },
@@ -82,7 +84,8 @@ test("extension registers only three tools; real handlers lazily serve and route
     },
   } as unknown as ExtensionContext;
   const messagesByTool: Record<string, string> = {
-    new_page: "Page created.",
+    insert_page: "Page inserted.",
+    update_page: "Page updated.",
     insert_blocks: "Blocks inserted.",
     update_blocks: "Blocks updated.",
   };
@@ -97,7 +100,7 @@ test("extension registers only three tools; real handlers lazily serve and route
     assert.deepEqual(result.details, result.structuredContent);
     return result.structuredContent as Record<string, unknown>;
   };
-  const page = await call("new_page", { title: "真实工具测试" });
+  const page = await call("insert_page", { title: "真实工具测试" });
   assert.equal(
     statuses.has("canvas-note"),
     false,
@@ -164,7 +167,7 @@ test("extension registers only three tools; real handlers lazily serve and route
       { blockId: (inserted.blockIds as string[])[0], spec: { md: "Updated" } },
     ],
   });
-  await call("new_page", { title: "Live page" });
+  await call("insert_page", { title: "Live page" });
   await call("insert_blocks", {
     blocks: [{ type: "text", spec: { md: "Live insert" } }],
   });
@@ -180,6 +183,36 @@ test("extension registers only three tools; real handlers lazily serve and route
       [3, 4],
       [4, 5],
     ],
+  );
+  const renamedMessage = once(ws, "message");
+  const renamed = await call("update_page", {
+    pageId: page.pageId,
+    change: { kind: "rename", title: "重命名" },
+  });
+  assert.equal(renamed.deleted, false);
+  assert.equal(renamed.version, 6);
+  assert.deepEqual(
+    JSON.parse((await renamedMessage)[0].toString()).operations,
+    [
+      {
+        type: "page:update",
+        pageId: page.pageId,
+        change: { kind: "rename", title: "重命名" },
+      },
+    ],
+  );
+  const deletedMessage = once(ws, "message");
+  const extra = JSON.parse(await readFile(String(page.documentPath), "utf8"))
+    .pages[1];
+  const deleted = await call("update_page", {
+    pageId: extra.id,
+    change: { kind: "delete" },
+  });
+  assert.equal(deleted.deleted, true);
+  assert.equal(deleted.version, 7);
+  assert.deepEqual(
+    JSON.parse((await deletedMessage)[0].toString()).operations,
+    [{ type: "page:update", pageId: extra.id, change: { kind: "delete" } }],
   );
   const disconnected = once(ws, "close");
   ws.close();
@@ -201,6 +234,12 @@ test("extension registers only three tools; real handlers lazily serve and route
     feedback,
     "document updates and server shutdown must retain the original feedback snapshot",
   );
+  const offline = await call("update_page", {
+    pageId: page.pageId,
+    change: { kind: "rename", title: "离线重命名" },
+  });
+  assert.equal(offline.deleted, false);
+  await assert.rejects(fetch(String(inserted.url)));
   const reopened = await call("update_blocks", {
     blocks: [
       {
@@ -273,13 +312,14 @@ test("real Pi SDK loads Canvas Note and dispatches its lifecycle and tools", asy
       throw new Error("Nested tools are not used in this test");
     },
   };
-  const page = session.getToolDefinition("new_page");
+  const page = session.getToolDefinition("insert_page");
   const insert = session.getToolDefinition("insert_blocks");
   assert.ok(page && insert);
   assert.deepEqual(session.getActiveToolNames().sort(), [
     "insert_blocks",
-    "new_page",
+    "insert_page",
     "update_blocks",
+    "update_page",
   ]);
   await page.execute(
     "sdk-page",
@@ -306,7 +346,7 @@ test("real Pi SDK loads Canvas Note and dispatches its lifecycle and tools", asy
   );
   await session.reload();
   await assert.rejects(fetch(url));
-  const reloadedPage = session.getToolDefinition("new_page");
+  const reloadedPage = session.getToolDefinition("insert_page");
   assert.ok(reloadedPage);
   const reopened = await reloadedPage.execute(
     "sdk-reload",

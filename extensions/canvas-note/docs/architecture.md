@@ -6,12 +6,13 @@
 
 ```mermaid
 flowchart LR
-  index["index.ts<br/>工具与生命周期"] --> model["core/model.ts<br/>JSON 与原子写入"]
+  index["index.ts<br/>工具与生命周期"] --> store["core/store.ts<br/>队列与原子写入"]
+  store --> model["core/model.ts<br/>契约与纯文档变更"]
   index --> server["server/index.ts<br/>HTTP 和 WebSocket"]
   index --> feedback["core/feedback.ts<br/>回复持久化与恢复"]
   index --> presentation["core/presentation.ts<br/>身份与消息构造"]
   server --> protocol["server/protocol.ts<br/>解析与数据投影"]
-  server --> model
+  server --> store
   server --> client["web/client.js<br/>渲染与多选回复"]
   model --> contracts["core/contracts.js<br/>共享类型与内容定义"]
   client --> contracts
@@ -22,8 +23,9 @@ flowchart LR
 
 | 文件 | 职责 |
 |---|---|
-| `index.ts` | 三工具、配置、用户反馈与服务生命周期 |
-| `core/model.ts` | TypeBox 契约、完整批次校验、文件读改写与提交订阅 |
+| `index.ts` | 四工具、配置、用户反馈与服务生命周期 |
+| `core/model.ts` | TypeBox 契约、完整批次校验与纯文档变更 |
+| `core/store.ts` | ID 生成、当前页指针、队列读改写、原子落盘与提交订阅 |
 | `core/contracts.js` | Block、对齐、操作和消息枚举，内容校验、摘要与注册完整性检查 |
 | `core/feedback.ts` | 反馈文件持久化与会话轻量引用，交付确认、重载恢复与去重 |
 | `core/types.ts` | 核心层与服务层共用的反馈类型 |
@@ -50,7 +52,7 @@ sequenceDiagram
   participant Session as Pi 会话
   Pi->>JSON: 串行读改写与原子替换
   JSON-->>Server: 提交操作、基准版本和新版本
-  Server->>Browser: operations（创建页、插入块、更新或删除块）
+  Server->>Browser: operations（创建、重命名或删除页，插入、更新或删除块）
   Browser->>Server: 版本、所选 ID、用户回复
   Server->>JSON: 校验当前版本与内容
   Server->>Feedback: 原子保存完整反馈
@@ -66,6 +68,8 @@ sequenceDiagram
 ```text
 { type: "operations", documentId, baseVersion, version, operations: [
   { type: "page:create", page: { id, title, blocks: [] }, index },
+  { type: "page:update", pageId, change: { kind: "rename", title } },
+  { type: "page:update", pageId, change: { kind: "delete" } },
   { type: "blocks:insert", pageId, index, blocks: [完整 Block] },
   { type: "blocks:update", blocks: [完整 Block], removed: [blockId] }
 ] }
@@ -88,6 +92,8 @@ sequenceDiagram
 ## 新增类型
 
 Block 类型在 `core/contracts.js` 的 `BlockKind` 与 `blockDefinitions` 中声明内容校验、摘要；Block 的可选 `title` 是公共元数据，目录优先显示它，没有时回退到 `type`；浏览器在 `web/client.js` 的 `blockHandlers` 中补充渲染。TypeBox 枚举、客户端白名单和业务分派从这些定义派生，不再逐处维护类型列表。
+
+页修改统一使用 `page:update`，`PageChangeKind` 标记 `rename` 与 `delete` 分支；`isPageChange` 在前后端共享严格校验，拒绝多余字段，工具的 TypeBox 联合 schema 同步约束。这样不会把删除携带的标题误当作重命名。
 
 操作类型在 `OperationKind` 声明名称，在 `core/model.ts` 的 `Operation` 联合类型中定义载荷，在 `operationHandlers` 中集中实现预检与消费。通信消息和对齐分别使用 `MessageKind`、`Alignment`，不与 Block 枚举混用。
 
@@ -112,6 +118,7 @@ Block 类型在 `core/contracts.js` 的 `BlockKind` 与 `blockDefinitions` 中�
 - `CANVAS_NOTE_PUBLIC_HOST` 只控制 URL 展示，每次服务启动读取且在绑定端口前校验，避免临时网络地址写入共享配置或无效地址导致监听资源泄漏。
 - 未配置 host 时按 SSH 环境选择 `0.0.0.0` 或本地 `localhost`，显式配置始终优先，确保用户能覆盖自动监听策略。
 - 端口只在配置区间内分配，遇到占用重试，区间耗尽时报错，避免绑定范围外端口。
+- `core/model.ts` 的 `insertPage`、`insertBlocks`、`updatePage`、`updateBlocks` 显式接收文档和 ID，返回新文档、操作与结果，不修改输入、不生成随机值或访问文件；`core/store.ts` 在队列内读取最新文档后计算并落盘，防止组合变更时重复提交和并发覆盖。
 - 所有读改写共用 Pi 文件队列，临时文件与目标文件同目录原子替换，避免并发覆盖和半份 JSON。
 - 监听目录而不是文件 inode，确保原子替换后持续收到外部变化；同一路径的 Store 共享提交订阅，提交操作只在原子替换成功后发布，避免消费未保存内容。
 - 提交通知与快照读取在同一文件队列内排入发送队列，并按连接维护文档指纹；文件监听不重复发送已发布提交，外部同版本编辑仍触发完整快照，避免乱序和漏更新。
@@ -120,6 +127,8 @@ Block 类型在 `core/contracts.js` 的 `BlockKind` 与 `blockDefinitions` 中�
 - 浏览器正常路径直接消费 Block 和 Page 操作，不做全量差异比较；完整快照恢复才遍历协调。稳定 ID 保留原 DOM、选择、图表实例和目录条目，删除、更换类型、渲染失败或页面退出时释放图表资源。
 - 目录固定在左侧并独立滚动；目录只通过稳定 page/block ID 定位正文，折叠目录不得改变正文状态，避免导航操作干扰文档渲染。
 - 渲染错误每版本每 Block 只成功回报一次；重复快照不重复发送，发送失败可在后续快照重试，避免目录监听与显式同步重复触发修复。
+- 页修改必须有有效变更，重名、空标题、删除与重命名混用或未知 ID 均不写入、不发布提交，避免无效版本；删除当前页仅在落盘成功后清空指针，下次隐式插入创建新页。
+- 页修改仅 flush 已运行服务，不启动或重启监听，避免仅管理页面时占用端口。
 - `spec` 整体替换，换类型时需要新 spec，避免旧格式进入新渲染器。
 - 复制内容从当前 Block 数据按类型投影，不读取渲染 DOM，避免混入按钮、高亮标签或旧内容；复制按钮不得改变多选状态，剪贴板回退使用的临时元素在成功或失败后均清理。
 - Code 只在显式 `language` 被本地 Highlight.js common build 支持时高亮；省略、空或未知语言保留纯文本，避免猜测语言改变展示。代码只读且不执行，HTML 内容必须作为文字处理，避免代码块触发脚本。
@@ -136,5 +145,7 @@ Block 类型在 `core/contracts.js` 的 `BlockKind` 与 `blockDefinitions` 中�
 - 客户端渲染错误每版本每 Block 去重，Pi 自动修复最多三次，避免修复循环。
 
 ## 测试
+
+`tests/changes.test.ts` 用冻结输入验证纯变更可组合、显式 ID、版本不变和失败时输入不变；`tests/model.test.ts`、`tests/server.test.ts` 继续覆盖 Store 的落盘与同步行为。
 
 `npm test --workspace canvas-note` 运行 `tests/*.test.ts`，覆盖原子批次、并发写入、提交订阅、真实 HTTP/WebSocket、操作增量、快照恢复、回复去重、过期反馈、服务重启与工具 handler。`tests/contracts.test.ts` 校验共享枚举、内容定义与注册完整性，包含 Code 合法/非法内容、原样摘要与输入不变性；`tests/model.test.ts` 校验 TypeBox 联合 schema 覆盖、Code 插入与读取、整体替换、换类型、删除和原子失败；`tests/presentation.test.ts`、`tests/protocol.test.ts`、`tests/web.test.ts` 校验纯构造结果与输入不变性；反馈与模型测试同时校验投影阶段不提交状态。`tests/reconcile.test.ts` 通过 `tests/fixtures/browser.ts` 的最小浏览器环境执行完整客户端脚本，验证局部 DOM 写入、图表生命周期、选择保留和版本恢复。`tests/chart-theme.test.ts` 校验主题纯构造与真实 ECharts 显式样式优先；`tests/print.test.ts` 验证样式分层、字体图片就绪、打印重试与状态保留。复杂公式样例集中在 `tests/fixtures/math.ts`。根测试覆盖实际 Pi 独立加载和生产依赖安装。

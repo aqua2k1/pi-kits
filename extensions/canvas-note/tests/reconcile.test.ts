@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { setImmediate as settle } from "node:timers/promises";
+import { PageChangeKind } from "../core/contracts.js";
 import type { Block, Document, Operation, Page } from "../core/model.ts";
 import { browser, subtree, writeCount } from "./fixtures/browser.ts";
 
@@ -537,7 +538,86 @@ const invalidMessages: { name: string; fields: Record<string, unknown> }[] = [
   },
   {
     name: "unknown operation",
-    fields: { operations: [{ type: "page:delete", pageId: "p1" }] },
+    fields: { operations: [{ type: "page:unknown", pageId: "p1" }] },
+  },
+  {
+    name: "unknown renamed page",
+    fields: {
+      operations: [
+        {
+          type: "page:update",
+          pageId: "missing",
+          change: { kind: PageChangeKind.Rename, title: "New" },
+        },
+      ],
+    },
+  },
+  {
+    name: "invalid page title",
+    fields: {
+      operations: [
+        {
+          type: "page:update",
+          pageId: "p1",
+          change: { kind: PageChangeKind.Rename, title: "   " },
+        },
+      ],
+    },
+  },
+  {
+    name: "unknown deleted page",
+    fields: {
+      operations: [
+        {
+          type: "page:update",
+          pageId: "missing",
+          change: { kind: PageChangeKind.Delete },
+        },
+      ],
+    },
+  },
+  {
+    name: "rename after deletion",
+    fields: {
+      operations: [
+        {
+          type: "page:update",
+          pageId: "p1",
+          change: { kind: PageChangeKind.Delete },
+        },
+        {
+          type: "page:update",
+          pageId: "p1",
+          change: { kind: PageChangeKind.Rename, title: "New" },
+        },
+      ],
+    },
+  },
+  {
+    name: "block update after page deletion",
+    fields: {
+      operations: [
+        {
+          type: "page:update",
+          pageId: "p1",
+          change: { kind: PageChangeKind.Delete },
+        },
+        update([text("a")]),
+      ],
+    },
+  },
+  {
+    name: "insertion index after page deletion",
+    fields: {
+      operations: [
+        {
+          type: "page:update",
+          pageId: "p1",
+          change: { kind: PageChangeKind.Delete },
+        },
+        { type: "page:create", page: page("new", []), index: 2 },
+      ],
+    },
   },
   {
     name: "invalid block",
@@ -562,6 +642,49 @@ const invalidMessages: { name: string; fields: Record<string, unknown> }[] = [
         { type: "blocks:insert", pageId: "p1", index: 0, blocks: [text("a")] },
       ],
     },
+  },
+  ...[
+    ["missing page change", undefined],
+    ["null page change", null],
+    ["non-object page change", 42],
+    ["array page change", []],
+    ["empty page change", {}],
+    ["missing page change kind", { title: "New" }],
+    ["unknown page change kind", { kind: "unknown" }],
+    ["missing rename title", { kind: PageChangeKind.Rename }],
+    ...[null, 42, "", " \n "].map((title) => [
+      `invalid rename title ${JSON.stringify(title)}`,
+      { kind: PageChangeKind.Rename, title },
+    ]),
+    [
+      "mixed rename fields",
+      { kind: PageChangeKind.Rename, title: "New", delete: true },
+    ],
+    [
+      "extra rename field",
+      { kind: PageChangeKind.Rename, title: "New", extra: true },
+    ],
+    ["mixed delete fields", { kind: PageChangeKind.Delete, title: "New" }],
+    ["extra delete flag", { kind: PageChangeKind.Delete, delete: true }],
+    ["extra delete field", { kind: PageChangeKind.Delete, extra: true }],
+  ].map(([name, change]) => ({
+    name: String(name),
+    fields: {
+      operations: [
+        update([text("a", "must not partially apply")]),
+        { type: "page:update", pageId: "p1", change },
+      ],
+    },
+  })),
+  {
+    name: "legacy page rename payload",
+    fields: {
+      operations: [{ type: "page:update", pageId: "p1", title: "New" }],
+    },
+  },
+  {
+    name: "legacy page delete operation",
+    fields: { operations: [{ type: "page:delete", pageId: "p1" }] },
   },
   { name: "empty batch", fields: { operations: [] } },
   { name: "non-array batch", fields: { operations: {} } },
@@ -644,6 +767,16 @@ for (const first of [
     blocks: [chart("new-chart")],
   },
   update([text("a", "must not render")], ["c"]),
+  {
+    type: "page:update",
+    pageId: "p1",
+    change: { kind: PageChangeKind.Rename, title: "Renamed" },
+  },
+  {
+    type: "page:update",
+    pageId: "p1",
+    change: { kind: PageChangeKind.Delete },
+  },
 ] satisfies Operation[]) {
   test(`invalid batch second operation cannot partially apply ${first.type}`, () => {
     const b = browser();
@@ -671,10 +804,190 @@ for (const first of [
     if (first.type === "page:create")
       assert.equal(b.page("new").children[0].textContent, "new");
     else if (first.type === "blocks:insert") assert.equal(b.charts.length, 2);
+    else if (
+      first.type === "page:update" &&
+      first.change.kind === PageChangeKind.Rename
+    )
+      assert.equal(b.page("p1").children[0].textContent, "Renamed");
+    else if (
+      first.type === "page:update" &&
+      first.change.kind === PageChangeKind.Delete
+    )
+      assert.deepEqual(
+        b.get("pages").children.map((p) => p.dataset.pageId),
+        ["p2"],
+      );
     else
       assert.equal(content(b.block("a")).innerHTML, "<p>must not render</p>");
   });
 }
+
+test("page rename updates headings, outline accessibility and feedback without rendering blocks", () => {
+  const b = browser();
+  b.snapshot(initial());
+  select(b, "c");
+  const p1 = b.page("p1");
+  const outline = outlinePage(b, "p1");
+  const toggle = outline.children[0].children[0];
+  toggle.emit("click");
+  const untouched = [
+    ...p1.children[1].children.flatMap(subtree),
+    ...subtree(b.page("p2")),
+    ...subtree(outlinePage(b, "p2")),
+  ];
+  b.resetWrites();
+  b.operations(1, [
+    {
+      type: "page:update",
+      pageId: "p1",
+      change: { kind: PageChangeKind.Rename, title: "New title" },
+    },
+  ]);
+  assert.equal(b.page("p1"), p1);
+  assert.equal(p1.children[0].textContent, "New title");
+  assert.equal(outlinePage(b, "p1"), outline);
+  assert.equal(outline.children[0].children[1].textContent, "New title");
+  assert.equal(toggle.attributes["aria-label"], "Expand New title");
+  assert.equal(outline.children[1].hidden, true);
+  for (const item of outline.children[1].children)
+    assert.match(
+      item.children[0].attributes["aria-label"],
+      /^Go to New title, /,
+    );
+  assert.equal(writeCount(untouched), 0);
+  assert.deepEqual(b.markdown, ["a", "b", "d"]);
+  assert.equal(b.charts[0].options.length, 1);
+  assert.equal(b.charts[0].disposed, 0);
+  assert.equal(b.get("selection-count").textContent, "1 selected");
+  b.get("reply").emit("click");
+  assert.match(
+    b.get("selected-summaries").children[0].textContent,
+    /^New title · chart/,
+  );
+  b.get("reply-text").value = "draft";
+  b.operations(2, [
+    {
+      type: "page:update",
+      pageId: "p1",
+      change: { kind: PageChangeKind.Rename, title: "Latest title" },
+    },
+  ]);
+  assert.equal(b.get("submit").disabled, true);
+  assert.equal(b.get("reply-text").value, "draft");
+  b.get("cancel").emit("click");
+  b.get("reply").emit("click");
+  assert.match(
+    b.get("selected-summaries").children[0].textContent,
+    /^Latest title · chart/,
+  );
+});
+
+test("page deletion cleans selections, charts, errors and outline, including the last page", () => {
+  const b = browser();
+  b.snapshot(
+    document([
+      page("p1", [text("bad", "BROKEN"), chart("c")]),
+      page("p2", [text("d")]),
+    ]),
+  );
+  select(b, "c");
+  select(b, "d");
+  const deleted = b.page("p1");
+  const deletedOutline = outlinePage(b, "p1");
+  const chartNode = b.block("c");
+  const unaffected = [
+    ...subtree(b.page("p2")),
+    ...subtree(outlinePage(b, "p2")),
+  ];
+  b.resetWrites();
+  b.operations(1, [
+    {
+      type: "page:update",
+      pageId: "p1",
+      change: { kind: PageChangeKind.Delete },
+    },
+  ]);
+  assert.equal(deleted.parentNode, null);
+  assert.equal(deletedOutline.parentNode, null);
+  assert.equal(chartNode.parentNode, null);
+  assert.equal(writeCount(unaffected), 0);
+  assert.equal(b.charts[0].disposed, 1);
+  assert.equal(b.observers[0].disconnected, 1);
+  assert.equal(
+    b.socket().sent.filter((m) => m.type === "render:error").length,
+    1,
+  );
+  assert.equal(b.get("selection-count").textContent, "1 selected");
+  b.get("reply").emit("click");
+  b.get("reply-text").value = "Only surviving block";
+  b.get("reply-form").emit("submit");
+  assert.deepEqual(b.socket().sent.find((m) => m.type === "reply")?.blockIds, [
+    "d",
+  ]);
+  b.operations(2, [
+    {
+      type: "page:update",
+      pageId: "p2",
+      change: { kind: PageChangeKind.Delete },
+    },
+  ]);
+  assert.equal(b.get("pages").children.length, 0);
+  assert.equal(b.get("outline-list").children.length, 0);
+  assert.equal(b.get("empty").hidden, false);
+  assert.equal(b.get("selection-count").textContent, "0 selected");
+  assert.equal(b.get("reply").disabled, true);
+  assert.equal(b.get("clear").disabled, true);
+  b.operations(3, [
+    { type: "page:create", page: page("p1", []), index: 0 },
+    { type: "blocks:insert", pageId: "p1", index: 0, blocks: [chart("c")] },
+    {
+      type: "page:update",
+      pageId: "p1",
+      change: { kind: PageChangeKind.Rename, title: "Restored" },
+    },
+  ]);
+  assert.equal(b.get("empty").hidden, true);
+  assert.equal(b.page("p1").children[0].textContent, "Restored");
+  assert.notEqual(b.block("c"), chartNode);
+  assert.equal(b.charts.length, 2);
+  b.window.emit("pagehide");
+  assert.equal(b.charts[0].disposed, 1);
+  assert.equal(b.charts[1].disposed, 1);
+});
+
+test("sequential page operations support delete/recreate and release IDs within one batch", () => {
+  const b = browser();
+  b.snapshot(initial());
+  b.operations(1, [
+    {
+      type: "page:update",
+      pageId: "p1",
+      change: { kind: PageChangeKind.Delete },
+    },
+    { type: "page:create", page: page("p1", []), index: 1 },
+    { type: "blocks:insert", pageId: "p1", index: 0, blocks: [chart("c")] },
+    {
+      type: "page:update",
+      pageId: "p1",
+      change: { kind: PageChangeKind.Rename, title: "Temporary" },
+    },
+    {
+      type: "page:update",
+      pageId: "p1",
+      change: { kind: PageChangeKind.Delete },
+    },
+    { type: "blocks:insert", pageId: "p2", index: 1, blocks: [text("c")] },
+  ]);
+  assert.deepEqual(
+    b.get("pages").children.map((p) => p.dataset.pageId),
+    ["p2"],
+  );
+  assert.deepEqual(blockOrder(b.page("p2")), ["d", "c"]);
+  assert.deepEqual(outlineBlockOrder(b, "p2"), ["d", "c"]);
+  assert.equal(b.charts.length, 2);
+  for (const instance of b.charts) assert.equal(instance.disposed, 1);
+  assert.deepEqual(b.socket().sent, []);
+});
 
 test("a failed resync send closes the transport and reconnects before accepting more operations", () => {
   const b = browser();

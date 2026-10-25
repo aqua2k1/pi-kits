@@ -8,11 +8,8 @@ import { fileURLToPath } from "node:url";
 import { withFileMutationQueue } from "@earendil-works/pi-coding-agent";
 import { WebSocket, WebSocketServer } from "ws";
 import { MessageKind } from "../core/contracts.js";
-import {
-  type Document,
-  type DocumentStore,
-  documentFingerprint,
-} from "../core/model.ts";
+import { type Document, documentFingerprint } from "../core/model.ts";
+import type { DocumentStore } from "../core/store.ts";
 import type { Feedback, RenderErrorReport } from "../core/types.ts";
 import {
   errorMessage,

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 import { test } from "node:test";
-import { DocumentStore } from "../core/model.ts";
+import { DocumentStore } from "../core/store.ts";
 import { complexFormulas } from "./fixtures/math.ts";
 
 const require = createRequire(import.meta.url);
@@ -44,7 +44,7 @@ test("formula JSON preserves LaTeX escapes and supports correcting malformed con
   const dir = await mkdtemp(join(tmpdir(), "canvas-note-math-"));
   t.after(() => rm(dir, { recursive: true, force: true }));
   const store = new DocumentStore(join(dir, "doc.json"));
-  const { blockIds } = await store.insert({
+  const { blockIds } = await store.insertBlocks({
     blocks: complexFormulas.map((formula) => ({
       type: "math",
       spec: { latex: formula.latex },
@@ -55,10 +55,10 @@ test("formula JSON preserves LaTeX escapes and supports correcting malformed con
     doc.pages[0].blocks.map((block) => block.spec.latex),
     complexFormulas.map((formula) => formula.latex),
   );
-  await store.update({
+  await store.updateBlocks({
     blocks: [{ blockId: blockIds[0], spec: { latex: String.raw`\frac{1}{` } }],
   });
-  await store.update({
+  await store.updateBlocks({
     blocks: [
       { blockId: blockIds[0], spec: { latex: complexFormulas[0].latex } },
     ],

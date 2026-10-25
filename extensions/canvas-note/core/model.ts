@@ -1,14 +1,12 @@
-import { randomUUID } from "node:crypto";
-import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
-import { dirname, resolve } from "node:path";
-import { withFileMutationQueue } from "@earendil-works/pi-coding-agent";
 import { type Static, Type } from "typebox";
 import { Value } from "typebox/value";
 
 import {
   Alignment,
   BlockKind,
+  isPageChange,
   OperationKind,
+  PageChangeKind,
   validateBlockContent,
 } from "./contracts.js";
 
@@ -78,10 +76,34 @@ export const InsertBlock = Type.Union([
     spec: Spec,
   }),
 ]);
-export const NewPageParams = Type.Object({
+export const InsertPageParams = Type.Object({
   title: Type.String({ minLength: 1, pattern: "\\S" }),
 });
-export const InsertParams = Type.Object({
+export const PageChangeSchema = Type.Union([
+  Type.Object(
+    {
+      kind: Type.Literal(PageChangeKind.Rename),
+      title: Type.String({
+        minLength: 1,
+        pattern: "\\S",
+        description: "New page title; must differ from the current title.",
+      }),
+    },
+    { additionalProperties: false },
+  ),
+  Type.Object(
+    { kind: Type.Literal(PageChangeKind.Delete) },
+    { additionalProperties: false },
+  ),
+]);
+export const UpdatePageParams = Type.Object(
+  {
+    pageId: Type.String({ description: "Existing page ID." }),
+    change: PageChangeSchema,
+  },
+  { additionalProperties: false },
+);
+export const InsertBlocksParams = Type.Object({
   pageId: Type.Optional(
     Type.String({
       description:
@@ -97,7 +119,7 @@ export const InsertParams = Type.Object({
   ),
   blocks: Type.Array(InsertBlock, { minItems: 1 }),
 });
-export const UpdateParams = Type.Object({
+export const UpdateBlocksParams = Type.Object({
   blocks: Type.Array(
     Type.Object({
       blockId: Type.String({
@@ -149,6 +171,11 @@ export type Page = Document["pages"][number];
 export type Operation =
   | { type: typeof OperationKind.CreatePage; page: Page; index: number }
   | {
+      type: typeof OperationKind.UpdatePage;
+      pageId: string;
+      change: Static<typeof PageChangeSchema>;
+    }
+  | {
       type: typeof OperationKind.InsertBlocks;
       pageId: string;
       index: number;
@@ -171,14 +198,11 @@ export function documentFingerprint(doc: Document): string {
   return JSON.stringify(doc);
 }
 
-// Same-path stores share notifications as well as the file mutation queue.
-const subscribers = new Map<string, Set<(commit: DocumentCommit) => void>>();
-
 export function validateBlock(block: Pick<Block, "type" | "spec">) {
   validateBlockContent(block.type, block.spec);
 }
 
-function decodeDocument(source: string): Document {
+export function decodeDocument(source: string): Document {
   const doc: unknown = JSON.parse(source);
   if (!Value.Check(DocumentSchema, doc))
     throw new Error("Invalid Canvas Note document");
@@ -195,7 +219,7 @@ function decodeDocument(source: string): Document {
   return doc;
 }
 
-function encodeDocument(doc: Document): string {
+export function encodeDocument(doc: Document): string {
   return `${JSON.stringify(doc, null, 2)}\n`;
 }
 
@@ -216,7 +240,7 @@ function blockValues(
 
 function planInsertion(
   doc: Document,
-  params: Static<typeof InsertParams>,
+  params: Static<typeof InsertBlocksParams>,
   currentPage: string | undefined,
 ) {
   const page = doc.pages.find(
@@ -232,7 +256,7 @@ function insertionResult(pageId: string, blocks: Block[]) {
   return { pageId, blockIds: blocks.map((block) => block.id) };
 }
 
-function planUpdates(doc: Document, params: Static<typeof UpdateParams>) {
+function planUpdates(doc: Document, params: Static<typeof UpdateBlocksParams>) {
   const seen = new Set<string>();
   const changes: { page: Page; old: Block; next: Block | null }[] = [];
   const updated: string[] = [],
@@ -275,128 +299,128 @@ function planUpdates(doc: Document, params: Static<typeof UpdateParams>) {
   return { changes, updated, removed };
 }
 
-export class DocumentStore {
-  private currentPage?: string;
-  constructor(readonly path: string) {}
-  subscribe(listener: (commit: DocumentCommit) => void): () => void {
-    const key = resolve(this.path);
-    let listeners = subscribers.get(key);
-    if (!listeners) {
-      listeners = new Set();
-      subscribers.set(key, listeners);
-    }
-    listeners.add(listener);
-    return () => {
-      listeners.delete(listener);
-      if (!listeners.size && subscribers.get(key) === listeners)
-        subscribers.delete(key);
-    };
+export type DocumentChange<T> = {
+  doc: Document;
+  operations: Operation[];
+  result: T;
+};
+
+// Changes are pure: no I/O, random IDs, version increments or input mutation.
+export function insertPage(
+  doc: Document,
+  params: Static<typeof InsertPageParams>,
+  pageId: string,
+): DocumentChange<{ pageId: string }> {
+  if (!Value.Check(InsertPageParams, params))
+    throw new Error("Invalid page title");
+  const next = structuredClone(doc);
+  const page = pageValue(pageId, params.title);
+  const operation: Operation = {
+    type: OperationKind.CreatePage,
+    page: { ...page, blocks: [] },
+    index: next.pages.length,
+  };
+  next.pages.push(page);
+  return { doc: next, operations: [operation], result: { pageId } };
+}
+
+export function updatePage(
+  doc: Document,
+  params: Static<typeof UpdatePageParams>,
+): DocumentChange<{ pageId: string; deleted: boolean }> {
+  if (!Value.Check(UpdatePageParams, params) || !isPageChange(params.change))
+    throw new Error("Invalid update_page parameters");
+  const index = doc.pages.findIndex((page) => page.id === params.pageId);
+  if (index < 0) throw new Error(`Unknown pageId: ${params.pageId}`);
+  const change = params.change;
+  if (
+    change.kind === PageChangeKind.Rename &&
+    change.title === doc.pages[index].title
+  )
+    throw new Error("Page title is unchanged");
+  const next = structuredClone(doc);
+  switch (change.kind) {
+    case PageChangeKind.Delete:
+      next.pages.splice(index, 1);
+      break;
+    case PageChangeKind.Rename:
+      next.pages[index].title = change.title;
+      break;
   }
-  async read(): Promise<Document> {
-    try {
-      return decodeDocument(await readFile(this.path, "utf8"));
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === "ENOENT")
-        return { version: 0, pages: [] };
-      throw error;
-    }
-  }
-  private mutate<T>(
-    change: (doc: Document, operations: Operation[]) => T,
-  ): Promise<T> {
-    return withFileMutationQueue(this.path, async () => {
-      const doc = await this.read();
-      const before = documentFingerprint(doc);
-      const baseVersion = doc.version;
-      const operations: Operation[] = [];
-      const result = change(doc, operations);
-      doc.version++;
-      await mkdir(dirname(this.path), { recursive: true });
-      const temporary = `${this.path}.${randomUUID()}.tmp`;
-      try {
-        await writeFile(temporary, encodeDocument(doc), {
-          mode: 0o600,
-        });
-        await rename(temporary, this.path);
-      } finally {
-        await rm(temporary, { force: true });
-      }
-      const commit = { before, baseVersion, doc, operations };
-      // Publish synchronously inside the file queue, only after atomic replacement.
-      // Observers cannot turn an already persisted mutation into a failed tool call.
-      for (const listener of subscribers.get(resolve(this.path)) ?? []) {
-        try {
-          listener(structuredClone(commit));
-        } catch {
-          // Listener failures are isolated from persistence and other subscribers.
-        }
-      }
-      return result;
+  return {
+    doc: next,
+    operations: [
+      {
+        type: OperationKind.UpdatePage,
+        pageId: params.pageId,
+        change: { ...change },
+      },
+    ],
+    result: {
+      pageId: params.pageId,
+      deleted: change.kind === PageChangeKind.Delete,
+    },
+  };
+}
+
+export function insertBlocks(
+  doc: Document,
+  params: Static<typeof InsertBlocksParams>,
+  currentPage: string | undefined,
+  pageId: string,
+  blockIds: string[],
+): DocumentChange<{ pageId: string; blockIds: string[] }> {
+  if (!Value.Check(InsertBlocksParams, params))
+    throw new Error("Invalid insert_blocks parameters");
+  params.blocks.forEach(validateBlock);
+  const next = structuredClone(doc);
+  const operations: Operation[] = [];
+  const plan = planInsertion(next, params, currentPage);
+  const page = plan.page ?? pageValue(pageId, "输出");
+  if (!plan.page) {
+    operations.push({
+      type: OperationKind.CreatePage,
+      page: { ...page, blocks: [] },
+      index: next.pages.length,
     });
+    next.pages.push(page);
   }
-  async newPage(params: Static<typeof NewPageParams>) {
-    if (!Value.Check(NewPageParams, params))
-      throw new Error("Invalid page title");
-    const pageId = await this.mutate((doc, operations) => {
-      const page = pageValue(randomUUID(), params.title);
-      operations.push({
-        type: OperationKind.CreatePage,
-        page,
-        index: doc.pages.length,
-      });
-      doc.pages.push(page);
-      return page.id;
-    });
-    this.currentPage = pageId;
-    return { pageId };
+  const blocks = blockValues(structuredClone(params.blocks), blockIds);
+  page.blocks.splice(plan.index, 0, ...blocks);
+  operations.push({
+    type: OperationKind.InsertBlocks,
+    pageId: page.id,
+    index: plan.index,
+    blocks,
+  });
+  return { doc: next, operations, result: insertionResult(page.id, blocks) };
+}
+
+export function updateBlocks(
+  doc: Document,
+  params: Static<typeof UpdateBlocksParams>,
+): DocumentChange<{ updated: string[]; removed: string[] }> {
+  if (!Value.Check(UpdateBlocksParams, params))
+    throw new Error("Invalid update_blocks parameters");
+  const next = structuredClone(doc);
+  const { changes, updated, removed } = planUpdates(
+    next,
+    structuredClone(params),
+  );
+  for (const { page, old, next: block } of changes) {
+    const index = page.blocks.indexOf(old);
+    if (block === null) page.blocks.splice(index, 1);
+    else page.blocks[index] = block;
   }
-  async insert(params: Static<typeof InsertParams>) {
-    if (!Value.Check(InsertParams, params))
-      throw new Error("Invalid insert_blocks parameters");
-    params.blocks.forEach(validateBlock);
-    const result = await this.mutate((doc, operations) => {
-      const plan = planInsertion(doc, params, this.currentPage);
-      const page = plan.page ?? pageValue(randomUUID(), "输出");
-      if (!plan.page) {
-        operations.push({
-          type: OperationKind.CreatePage,
-          page: { ...page, blocks: [] },
-          index: doc.pages.length,
-        });
-        doc.pages.push(page);
-      }
-      const blocks = blockValues(
-        params.blocks,
-        params.blocks.map(() => randomUUID()),
-      );
-      page.blocks.splice(plan.index, 0, ...blocks);
-      operations.push({
-        type: OperationKind.InsertBlocks,
-        pageId: page.id,
-        index: plan.index,
-        blocks,
-      });
-      return insertionResult(page.id, blocks);
-    });
-    if (!params.pageId) this.currentPage = result.pageId;
-    return result;
-  }
-  async update(params: Static<typeof UpdateParams>) {
-    if (!Value.Check(UpdateParams, params))
-      throw new Error("Invalid update_blocks parameters");
-    return this.mutate((doc, operations) => {
-      const { changes, updated, removed } = planUpdates(doc, params);
-      for (const { page, old, next } of changes) {
-        const index = page.blocks.indexOf(old);
-        if (next === null) page.blocks.splice(index, 1);
-        else page.blocks[index] = next;
-      }
-      operations.push({
+  return {
+    doc: next,
+    operations: [
+      {
         type: OperationKind.UpdateBlocks,
         blocks: changes.flatMap(({ next }) => (next ? [next] : [])),
         removed,
-      });
-      return { updated, removed };
-    });
-  }
+      },
+    ],
+    result: { updated, removed },
+  };
 }

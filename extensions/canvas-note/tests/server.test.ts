@@ -8,7 +8,7 @@ import { test } from "node:test";
 import { setTimeout as delay } from "node:timers/promises";
 import { withFileMutationQueue } from "@earendil-works/pi-coding-agent";
 import { WebSocket } from "ws";
-import { DocumentStore } from "../core/model.ts";
+import { DocumentStore } from "../core/store.ts";
 import type { Feedback } from "../core/types.ts";
 import {
   resolveCanvasHost,
@@ -50,7 +50,7 @@ test("normal commits only send ordered operations; external edits and resync use
   const dir = await mkdtemp(join(tmpdir(), "canvas-note-operations-"));
   t.after(() => rm(dir, { recursive: true, force: true }));
   const store = new DocumentStore(join(dir, "doc.json"));
-  await store.newPage({ title: "Initial" });
+  await store.insertPage({ title: "Initial" });
   const errors: unknown[] = [];
   const server = await startCanvasNoteServer({
     host: "127.0.0.1",
@@ -69,12 +69,12 @@ test("normal commits only send ordered operations; external edits and resync use
   const other = new DocumentStore(store.path);
   await Promise.all(
     Array.from({ length: 12 }, (_, i) =>
-      (i % 2 ? store : other).insert({
+      (i % 2 ? store : other).insertBlocks({
         blocks: [{ type: "text", spec: { md: String(i) } }],
       }),
     ),
   );
-  await store.newPage({ title: "Next" });
+  await store.insertPage({ title: "Next" });
   await server.flush();
   await next((msg) => msg.type === "operations" && msg.version === 14);
   // Let all rename notifications settle: none may duplicate tool commits as snapshots.
@@ -102,7 +102,7 @@ test("normal commits only send ordered operations; external edits and resync use
   external.version += 7;
   external.pages[0].title = "Gap";
   await writeFile(store.path, JSON.stringify(external));
-  await store.newPage({ title: "After gap" });
+  await store.insertPage({ title: "After gap" });
   await server.flush();
   await next(
     (msg) =>
@@ -116,7 +116,7 @@ test("normal commits only send ordered operations; external edits and resync use
   raced.pages[0].title = "External baseline before commit";
   let committing!: Promise<{ pageId: string }>;
   await withFileMutationQueue(store.path, async () => {
-    committing = store.newPage({ title: "Raced commit" });
+    committing = store.insertPage({ title: "Raced commit" });
     await writeFile(store.path, JSON.stringify(raced));
   });
   await committing;
@@ -152,7 +152,7 @@ test("connection snapshots and resync cannot be followed by older operations", a
   const dir = await mkdtemp(join(tmpdir(), "canvas-note-order-"));
   t.after(() => rm(dir, { recursive: true, force: true }));
   const store = new DocumentStore(join(dir, "doc.json"));
-  await store.newPage({ title: "Initial" });
+  await store.insertPage({ title: "Initial" });
   const server = await startCanvasNoteServer({
     host: "127.0.0.1",
     port: 0,
@@ -170,7 +170,9 @@ test("connection snapshots and resync cannot be followed by older operations", a
   });
   const next = inbox(ws);
   const writing = Promise.all(
-    Array.from({ length: 20 }, (_, i) => store.newPage({ title: String(i) })),
+    Array.from({ length: 20 }, (_, i) =>
+      store.insertPage({ title: String(i) }),
+    ),
   );
   await next((msg) => msg.type === "snapshot");
   ws.send(JSON.stringify({ type: "resync" }));
@@ -194,7 +196,7 @@ test("close cancels queued captures and commit publications and unsubscribes", a
   const dir = await mkdtemp(join(tmpdir(), "canvas-note-cancel-"));
   t.after(() => rm(dir, { recursive: true, force: true }));
   const store = new DocumentStore(join(dir, "doc.json"));
-  await store.newPage({ title: "Initial" });
+  await store.insertPage({ title: "Initial" });
   const errors: unknown[] = [];
   const server = await startCanvasNoteServer({
     host: "127.0.0.1",
@@ -222,7 +224,7 @@ test("close cancels queued captures and commit publications and unsubscribes", a
     });
   });
   await ready;
-  const committing = store.newPage({ title: "Queued commit" });
+  const committing = store.insertPage({ title: "Queued commit" });
   ws.send(JSON.stringify({ type: "resync" }));
   ws.send(JSON.stringify({ type: "invalid", requestId: "probe" }));
   await next((msg) => msg.type === "error" && msg.requestId === "probe");
@@ -230,7 +232,7 @@ test("close cancels queued captures and commit publications and unsubscribes", a
   const stopping = server.close();
   release();
   await Promise.all([lock, committing, stopping]);
-  await store.newPage({ title: "After close" });
+  await store.insertPage({ title: "After close" });
   assert.deepEqual(publications, ["server:closing"]);
   assert.deepEqual(errors, []);
 });
@@ -311,7 +313,7 @@ test("real HTTP, WebSocket snapshots, atomic rename watch, reply acknowledgment 
   const dir = await mkdtemp(join(tmpdir(), "canvas-note-server-"));
   t.after(() => rm(dir, { recursive: true, force: true }));
   const store = new DocumentStore(join(dir, "doc.json"));
-  const inserted = await store.insert({
+  const inserted = await store.insertBlocks({
     blocks: [{ type: "text", spec: { md: "**Hello**" } }],
   });
   const feedback: Feedback[] = [];
@@ -361,7 +363,7 @@ test("real HTTP, WebSocket snapshots, atomic rename watch, reply acknowledgment 
   t.after(() => ws.terminate());
   const initialSnapshot = await next((msg) => msg.type === "snapshot");
   assert.equal(initialSnapshot.documentId, basename(dir));
-  await store.update({
+  await store.updateBlocks({
     blocks: [{ blockId: inserted.blockIds[0], spec: { md: "fixed" } }],
   });
   const operations = await next((msg) => msg.type === "operations");
@@ -420,7 +422,7 @@ test("shutdown drains queued replies without invoking a stale runtime callback",
   const dir = await mkdtemp(join(tmpdir(), "canvas-note-close-"));
   t.after(() => rm(dir, { recursive: true, force: true }));
   const store = new DocumentStore(join(dir, "doc.json"));
-  const { blockIds } = await store.insert({
+  const { blockIds } = await store.insertBlocks({
     blocks: [{ type: "text", spec: { md: "test" } }],
   });
   let delivered = 0;
@@ -471,7 +473,7 @@ test("port ranges stay within bounds and report exhaustion without leaking resou
   const dir = await mkdtemp(join(tmpdir(), "canvas-note-ports-"));
   t.after(() => rm(dir, { recursive: true, force: true }));
   const store = new DocumentStore(join(dir, "doc.json"));
-  await store.newPage({ title: "Ports" });
+  await store.insertPage({ title: "Ports" });
   const blocker = createPortBlocker();
   await new Promise<void>((resolve) => blocker.listen(0, "127.0.0.1", resolve));
   t.after(() => blocker.close());
@@ -504,7 +506,7 @@ test("last page disconnect stops service, while other pages and refresh keep it 
   const dir = await mkdtemp(join(tmpdir(), "canvas-note-tabs-"));
   t.after(() => rm(dir, { recursive: true, force: true }));
   const store = new DocumentStore(join(dir, "doc.json"));
-  await store.newPage({ title: "Tabs" });
+  await store.insertPage({ title: "Tabs" });
   const server = await startCanvasNoteServer({
     host: "127.0.0.1",
     port: 0,
@@ -550,7 +552,7 @@ test("web shutdown message stops all browser connections", async (t) => {
   const dir = await mkdtemp(join(tmpdir(), "canvas-note-button-"));
   t.after(() => rm(dir, { recursive: true, force: true }));
   const store = new DocumentStore(join(dir, "doc.json"));
-  await store.newPage({ title: "Button" });
+  await store.insertPage({ title: "Button" });
   const server = await startCanvasNoteServer({
     host: "127.0.0.1",
     port: 0,
@@ -583,7 +585,7 @@ test("real listeners use automatic local/SSH hosts and configured override", asy
   );
   for (const name of names) delete process.env[name];
   const store = new DocumentStore(join(dir, "doc.json"));
-  await store.newPage({ title: "Host selection" });
+  await store.insertPage({ title: "Host selection" });
   const options = { port: 0, store, onReply: () => {} };
   const local = await startCanvasNoteServer(options);
   t.after(() => local.close());
@@ -616,7 +618,7 @@ test("public-host environment changes advertised URLs without changing the real 
     else process.env.CANVAS_NOTE_PUBLIC_HOST = original;
   });
   const store = new DocumentStore(join(dir, "doc.json"));
-  await store.newPage({ title: "Public host" });
+  await store.insertPage({ title: "Public host" });
   process.env.CANVAS_NOTE_PUBLIC_HOST = "192.0.2.10";
   const server = await startCanvasNoteServer({
     host: "127.0.0.1",

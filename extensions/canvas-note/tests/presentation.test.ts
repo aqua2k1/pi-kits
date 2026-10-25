@@ -32,8 +32,10 @@ test("document identity projection is deterministic and rejects old or invalid i
 
 test("message builders preserve structured payloads and produce text without effects", () => {
   const result = { pageId: "p", documentPath: "doc.json", version: 1 };
-  const response = toolResult("Page created.", result);
-  assert.deepEqual(response.content, [{ type: "text", text: "Page created." }]);
+  const response = toolResult("Page inserted.", result);
+  assert.deepEqual(response.content, [
+    { type: "text", text: "Page inserted." },
+  ]);
   assert.equal(response.details, result);
   assert.equal(response.structuredContent, result);
   const error = { version: 1, blockId: "b", message: "Invalid formula" };

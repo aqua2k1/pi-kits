@@ -15,9 +15,41 @@ export const Alignment = Object.freeze({
 });
 export const OperationKind = Object.freeze({
   CreatePage: "page:create",
+  UpdatePage: "page:update",
   InsertBlocks: "blocks:insert",
   UpdateBlocks: "blocks:update",
 });
+export const PageChangeKind = Object.freeze({
+  Rename: "rename",
+  Delete: "delete",
+});
+
+/**
+ * @typedef {{kind: "rename", title: string} | {kind: "delete"}} PageChange
+ * @param {unknown} change
+ * @returns {change is PageChange}
+ */
+export function isPageChange(change) {
+  if (!change || typeof change !== "object" || Array.isArray(change))
+    return false;
+  const keys = Reflect.ownKeys(change);
+  if (!Object.hasOwn(change, "kind")) return false;
+  const value = /** @type {{kind: unknown, title?: unknown}} */ (change);
+  switch (value.kind) {
+    case PageChangeKind.Rename:
+      return (
+        keys.length === 2 &&
+        Object.hasOwn(change, "title") &&
+        typeof value.title === "string" &&
+        /\S/.test(value.title)
+      );
+    case PageChangeKind.Delete:
+      return keys.length === 1;
+    default:
+      return false;
+  }
+}
+
 export const MessageKind = Object.freeze({
   Reply: "reply",
   Ack: "ack",

@@ -7,8 +7,10 @@ import {
   defineHandlers,
   isAlignment,
   isBlockKind,
+  isPageChange,
   MessageKind,
   OperationKind,
+  PageChangeKind,
   validateBlockContent,
 } from "../core/contracts.js";
 
@@ -17,6 +19,7 @@ test("shared enums and definitions are frozen and guards derive from them", () =
     BlockKind,
     Alignment,
     OperationKind,
+    PageChangeKind,
     MessageKind,
     blockDefinitions,
   ])
@@ -37,6 +40,40 @@ test("shared enums and definitions are frozen and guards derive from them", () =
     assert.equal(isBlockKind(unknown), false);
   for (const unknown of [null, undefined, 1, {}, "unknown", "toString"])
     assert.equal(isAlignment(unknown), false);
+});
+
+test("page changes are strict tagged variants and validation is pure", () => {
+  for (const change of [
+    { kind: PageChangeKind.Rename, title: "New title" },
+    { kind: PageChangeKind.Delete },
+  ]) {
+    const before = structuredClone(change);
+    Object.freeze(change);
+    assert.equal(isPageChange(change), true);
+    assert.deepEqual(change, before);
+  }
+  for (const change of [
+    null,
+    undefined,
+    [],
+    "delete",
+    {},
+    { kind: "unknown" },
+    { kind: "rename" },
+    { kind: "rename", title: "" },
+    { kind: "rename", title: "   " },
+    { kind: "rename", title: 1 },
+    { kind: "rename", title: "New", extra: true },
+    { kind: "delete", title: "Ignored?" },
+    { kind: "delete", extra: true },
+    { kind: "delete", [Symbol("extra")]: true },
+    Object.create({ kind: "delete" }),
+    Object.assign(Object.create({ title: "Inherited" }), {
+      kind: "rename",
+      extra: true,
+    }),
+  ])
+    assert.equal(isPageChange(change), false);
 });
 
 test("code content accepts empty and unknown languages and summarizes verbatim", () => {

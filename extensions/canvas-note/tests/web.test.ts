@@ -6,6 +6,7 @@ import {
   BlockKind,
   blockDefinitions,
   OperationKind,
+  PageChangeKind,
 } from "../core/contracts.js";
 import { clientGlobals, clientScript } from "./fixtures/client-script.ts";
 
@@ -222,6 +223,104 @@ test("operation preflight validates only referenced IDs without mutating live re
   assert.equal(pages.size, 1);
   assert.equal(blocks.size, 1);
   assert.equal(blocks.get("a")?.block, block);
+});
+
+test("page preflight follows sequential page/block lifetimes without changing inputs", () => {
+  const block = { id: "a", type: "text", align: "left", spec: { md: "A" } };
+  const page = { id: "p", title: "Page", blocks: [block] };
+  const pages = new Map([["p", { page }]]);
+  const blocks = new Map([["a", { block, pageId: "p" }]]);
+  const rename = {
+    type: "page:update",
+    pageId: "p",
+    change: { kind: PageChangeKind.Rename, title: "Renamed" },
+  };
+  const remove = {
+    type: "page:update",
+    pageId: "p",
+    change: { kind: PageChangeKind.Delete },
+  };
+  const create = {
+    type: "page:create",
+    page: { id: "p", title: "New", blocks: [] },
+    index: 0,
+  };
+  const insert = {
+    type: "blocks:insert",
+    pageId: "p",
+    index: 0,
+    blocks: [block],
+  };
+  const update = { type: "blocks:update", blocks: [block], removed: [] };
+  const before = JSON.stringify({ page, block });
+  for (const operations of [
+    [rename],
+    [remove],
+    [rename, remove],
+    [remove, create, rename, insert, update, remove],
+    [
+      { type: "blocks:update", blocks: [], removed: ["a"] },
+      remove,
+      create,
+      insert,
+    ],
+    [remove, { ...create, page: { ...create.page, id: "a" } }],
+  ]) {
+    const input = JSON.stringify(operations);
+    assert.equal(
+      helpers.validOperations(operations, pages, blocks),
+      true,
+      input,
+    );
+    assert.equal(JSON.stringify(operations), input);
+  }
+  for (const operations of [
+    [{ ...rename, pageId: "missing" }],
+    [{ ...remove, pageId: "missing" }],
+    ...[
+      undefined,
+      null,
+      42,
+      [],
+      {},
+      { title: "Renamed" },
+      { kind: "unknown" },
+      { kind: PageChangeKind.Rename },
+      ...[undefined, null, 42, "", " \n "].map((title) => ({
+        kind: PageChangeKind.Rename,
+        title,
+      })),
+      { kind: PageChangeKind.Rename, title: "Renamed", delete: true },
+      { kind: PageChangeKind.Rename, title: "Renamed", extra: true },
+      { kind: PageChangeKind.Delete, title: "Renamed" },
+      { kind: PageChangeKind.Delete, delete: true },
+      { kind: PageChangeKind.Delete, extra: true },
+    ].map((change) => [{ ...rename, change }]),
+    [{ type: "page:update", pageId: "p", title: "Renamed" }],
+    [{ type: "page:delete", pageId: "p" }],
+    [remove, rename],
+    [remove, remove],
+    [remove, insert],
+    [remove, update],
+    [remove, { type: "blocks:update", blocks: [], removed: ["a"] }],
+    [remove, { ...create, index: 1 }],
+    [remove, create, update],
+    [remove, create, { ...insert, index: 1 }],
+    [remove, create, insert, remove, update],
+  ]) {
+    const input = JSON.stringify(operations);
+    assert.equal(
+      helpers.validOperations(operations, pages, blocks),
+      false,
+      input,
+    );
+    assert.equal(JSON.stringify(operations), input);
+  }
+  assert.equal(JSON.stringify({ page, block }), before);
+  assert.equal(pages.get("p")?.page, page);
+  assert.equal(blocks.get("a")?.block, block);
+  assert.equal(pages.size, 1);
+  assert.equal(blocks.size, 1);
 });
 
 test("browser controls, rendering metadata and transport formatting are deterministic", () => {
