@@ -30,6 +30,13 @@ import { createChartTheme } from "./chart-theme.js";
   const currentChartTheme = () =>
     chartThemeMode === "print" ? printChartTheme : screenChartTheme;
 
+  const openMarkdownLinksInNewTabs = (root) => {
+    for (const link of root.querySelectorAll("a")) {
+      link.setAttribute("target", "_blank");
+      link.setAttribute("rel", "noopener noreferrer");
+    }
+  };
+
   const blockHandlers = defineHandlers(BlockKind, {
     [BlockKind.Text]: {
       ...blockDefinitions[BlockKind.Text],
@@ -39,6 +46,7 @@ import { createChartTheme } from "./chart-theme.js";
           window.marked.parse(block.spec.md),
           { SANITIZE_NAMED_PROPS: true },
         );
+        openMarkdownLinksInNewTabs(record.content);
       },
     },
     [BlockKind.Code]: {

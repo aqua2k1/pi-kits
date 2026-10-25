@@ -23,7 +23,7 @@ const sandbox: typeof clientGlobals & {
   registries?: Record<string, Record<string, Record<string, unknown>>>;
 } = { ...clientGlobals };
 runInNewContext(
-  `${script.slice(0, boundary)}\n globalThis.helpers = {blockSummary, documentPresentation, tableCellText, blockCopyText, selectedReply, replySignature, replyMessage, websocketUrl, parseMessage, controlState, blockPresentation, validOperations, errorPresentation, replyFailureText, reconnectDelay};\n globalThis.registries = { blocks: blockHandlers, operations: operationHandlers };\n}`,
+  `${script.slice(0, boundary)}\n globalThis.helpers = {blockSummary, documentPresentation, tableCellText, blockCopyText, selectedReply, replySignature, replyMessage, websocketUrl, parseMessage, controlState, blockPresentation, validOperations, errorPresentation, replyFailureText, reconnectDelay, openMarkdownLinksInNewTabs};\n globalThis.registries = { blocks: blockHandlers, operations: operationHandlers };\n}`,
   sandbox,
 );
 const helpers = sandbox.helpers;
@@ -138,6 +138,25 @@ test("document identity is displayed verbatim without changing the directory nam
   assert.ok(
     source.includes('$("document-id").textContent = presentation.identity'),
   );
+});
+
+test("markdown links open in new tabs with a safe opener relationship", () => {
+  const attributes: Record<string, string>[] = [{}, {}];
+  const root = {
+    querySelectorAll(selector: string) {
+      assert.equal(selector, "a");
+      return attributes.map((values) => ({
+        setAttribute(name: string, value: string) {
+          values[name] = value;
+        },
+      }));
+    },
+  };
+  helpers.openMarkdownLinksInNewTabs(root);
+  assert.deepEqual(attributes, [
+    { target: "_blank", rel: "noopener noreferrer" },
+    { target: "_blank", rel: "noopener noreferrer" },
+  ]);
 });
 
 test("browser selection and wire-message helpers preserve input state", () => {
