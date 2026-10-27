@@ -6,6 +6,7 @@ export interface ReplyMessage {
   requestId: string;
   version: number;
   blockIds: string[];
+  pageIds?: string[];
   reply: string;
 }
 
@@ -17,7 +18,7 @@ export function parseClientMessage(raw: string): Record<string, unknown> {
 }
 
 export function parseReply(message: Record<string, unknown>): ReplyMessage {
-  const { requestId, version, blockIds, reply } = message;
+  const { requestId, version, blockIds, pageIds = [], reply } = message;
   if (
     message.type !== MessageKind.Reply ||
     typeof requestId !== "string" ||
@@ -25,7 +26,11 @@ export function parseReply(message: Record<string, unknown>): ReplyMessage {
     requestId.length > 128 ||
     !Number.isInteger(version) ||
     !Array.isArray(blockIds) ||
-    blockIds.length === 0 ||
+    !Array.isArray(pageIds) ||
+    (blockIds.length === 0 && pageIds.length === 0) ||
+    pageIds.length > 100 ||
+    !pageIds.every((id: unknown) => typeof id === "string" && !!id.trim()) ||
+    new Set(pageIds).size !== pageIds.length ||
     blockIds.length > 100 ||
     !blockIds.every((id: unknown) => typeof id === "string") ||
     new Set(blockIds).size !== blockIds.length ||
@@ -34,11 +39,14 @@ export function parseReply(message: Record<string, unknown>): ReplyMessage {
     reply.length > 20000
   )
     throw new Error("Invalid reply");
-  return { requestId, version: version as number, blockIds, reply };
+  return { requestId, version: version as number, blockIds, pageIds, reply };
 }
 
 export function replyFingerprint(message: ReplyMessage): string {
-  return JSON.stringify([message.version, message.blockIds, message.reply]);
+  const fields: unknown[] = [message.version, message.blockIds, message.reply];
+  // Keep omitted and empty page scopes equivalent for legacy retries.
+  if (message.pageIds?.length) fields.push(message.pageIds);
+  return JSON.stringify(fields);
 }
 
 export function feedbackForDocument(
@@ -59,11 +67,19 @@ export function feedbackForDocument(
     if (!found) throw new Error(`Unknown blockId: ${id}`);
     return found;
   });
+  const pageIds = message.pageIds ?? [];
+  const pages = pageIds.map((id) => {
+    const found = doc.pages.find((page) => page.id === id);
+    if (!found) throw new Error(`Unknown pageId: ${id}`);
+    return found;
+  });
   return {
     requestId: message.requestId,
     version: doc.version,
     reply: message.reply,
     blocks,
+    pageIds,
+    pages,
   };
 }
 

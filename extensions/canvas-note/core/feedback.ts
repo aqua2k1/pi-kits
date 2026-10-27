@@ -19,6 +19,7 @@ interface FeedbackReference {
   version: number;
   reply: string;
   blockIds: string[];
+  pageIds?: string[];
   snapshotPath: string;
   documentPath: string;
 }
@@ -35,12 +36,25 @@ function feedbackText(feedback: FeedbackReference): string {
   return `Canvas Note user feedback [${feedback.requestId}]. Read snapshotPath with the read tool when selected content is needed. Answer questions directly; when changes are requested, check documentPath for current content and use update_blocks with blockId.\n${JSON.stringify(feedback)}`;
 }
 
+function matchesFeedbackText(
+  feedback: FeedbackReference,
+  text: string | undefined,
+) {
+  if (feedbackText(feedback) === text) return true;
+  // A queued follow-up from before page selection may omit the empty scope.
+  if (!feedback.pageIds?.length) {
+    const { pageIds: _pageIds, ...legacy } = feedback;
+    return feedbackText(legacy) === text;
+  }
+  return false;
+}
+
 function pendingMessage(
   pending: ReadonlyMap<string, FeedbackReference>,
   prompt: string | undefined,
 ) {
   const awaiting = [...pending.values()].filter(
-    (feedback) => feedbackText(feedback) !== prompt,
+    (feedback) => !matchesFeedbackText(feedback, prompt),
   );
   if (!awaiting.length) return;
   return {
@@ -91,6 +105,7 @@ async function saveFeedback(
       if (typeof id !== "string") throw new Error("Invalid feedback block ID");
       return id;
     }),
+    pageIds: feedback.pageIds ?? feedback.pages?.map((page) => page.id) ?? [],
     snapshotPath,
     documentPath,
   };
@@ -120,7 +135,7 @@ function deliveredIds(
   if (message.role === "user") {
     const value = messageText(message);
     return [...pending]
-      .filter(([, feedback]) => feedbackText(feedback) === value)
+      .filter(([, feedback]) => matchesFeedbackText(feedback, value))
       .map(([id]) => id);
   }
   if (
@@ -171,7 +186,7 @@ export function createFeedbackInbox(pi: ExtensionAPI) {
       const pending = new Map<string, FeedbackReference>();
       for (const [id, feedback] of restored.pending) {
         if ("snapshotPath" in feedback) {
-          pending.set(id, feedback);
+          pending.set(id, { ...feedback, pageIds: feedback.pageIds ?? [] });
           continue;
         }
         const documentId = savedDocumentId(entries);

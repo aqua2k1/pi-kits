@@ -40,7 +40,7 @@ export async function buildHtml({ title, pages, outline, charts, theme }) {
     output.body.append(sidebar);
   }
   for (const node of root.querySelectorAll(
-    ".block-select, .block-copy, script, picture source",
+    ".block-select, .page-selection, .block-copy, script, picture source",
   ))
     node.remove();
   for (const node of root.querySelectorAll(".selected"))

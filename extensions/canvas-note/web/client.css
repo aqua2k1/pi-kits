@@ -296,12 +296,32 @@
     margin-left: var(--outline-collapsed-width);
   }
   .page {
+    position: relative;
     scroll-margin-top: 6rem;
     width: min(100%, 860px);
     margin: 0 auto 3rem;
     padding: clamp(1.25rem, 5vw, 4.5rem);
     background: var(--surface);
     border: 1px solid var(--border);
+  }
+  .page.selected {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 1px var(--accent);
+  }
+  .page-selection {
+    position: absolute;
+    top: 0.6rem;
+    right: 0.8rem;
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    color: var(--muted);
+    font-size: var(--font-size-xs);
+    cursor: pointer;
+  }
+  .page-select {
+    accent-color: var(--accent);
+    cursor: pointer;
   }
   .block {
     scroll-margin-top: 6rem;

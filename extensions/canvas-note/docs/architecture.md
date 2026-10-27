@@ -59,7 +59,7 @@ sequenceDiagram
   Server->>JSON: 校验当前版本与内容
   Server->>Feedback: 原子保存完整反馈
   Server->>Session: 保存轻量引用与待交付记录
-  Server->>Pi: followUp（用户回复、blockIds、version、snapshotPath、documentPath）
+  Server->>Pi: followUp（用户回复、pageIds、blockIds、version、snapshotPath、documentPath）
   Server-->>Browser: ack
 ```
 
@@ -139,10 +139,10 @@ Block 类型在 `core/contracts.js` 的 `BlockKind` 与 `blockDefinitions` 中�
 - HTML 导出克隆正文和目录，不修改在线 DOM 或图表实例；资源全部内嵌，目录按钮转为稳定锚点链接，离线脚本只恢复目录折叠和 ECharts，不加载在线客户端，避免导出文件连接服务。图表配置序列化转义 `<`，避免内容提前结束脚本标签。
 - 复制内容从当前 Block 数据按类型投影，不读取渲染 DOM，避免混入按钮、高亮标签或旧内容；复制按钮不得改变多选状态，剪贴板回退使用的临时元素在成功或失败后均清理。
 - Code 只在显式 `language` 被本地 Highlight.js common build 支持时高亮；省略、空或未知语言保留纯文本，避免猜测语言改变展示。代码只读且不执行，HTML 内容必须作为文字处理，避免代码块触发脚本。
-- 回复校验版本并保留所选块的完整快照后才确认成功，避免引用更新后内容或丢失失败输入。
-- 完整反馈包含 `requestId`、`version`、`reply` 和含完整快照的 `blocks`，保存为与 `doc.json` 并列的 `feedback-<requestId>.json`；不适合作文件名的 `requestId` 使用其哈希，避免非法路径。文件作为笔记长期保留，交付、重载和关闭服务不得删除，避免丢失用户引用的原内容。
+- 页和 Block 独立选择，混选时保留两种范围；回复校验版本并分别保留所选页和块的完整快照后才确认成功，避免丢失页级意图或引用更新后内容。
+- 完整反馈包含 `requestId`、`version`、`reply` 和含完整快照的 `pages`、`blocks`，保存为与 `doc.json` 并列的 `feedback-<requestId>.json`；不适合作文件名的 `requestId` 使用其哈希，避免非法路径。文件作为笔记长期保留，交付、重载和关闭服务不得删除，避免丢失用户引用的原内容。
 - 交付顺序固定为原子保存反馈文件、在 Pi 会话保存轻量引用、发送 `followUp`；ACK 前完成文件与引用持久化，避免确认成功却丢失回复。
-- 正常反馈与待交付恢复上下文均仅包含用户回复、`blockIds`、`version`、`snapshotPath` 和 `documentPath`，不包含块正文；模型按需用 `read` 读取 `snapshotPath`，修改前检查当前 `documentPath`，避免按旧快照覆盖后续更改。
+- 正常反馈与待交付恢复上下文均仅包含用户回复、`pageIds`、`blockIds`、`version`、`snapshotPath` 和 `documentPath`，不包含块正文；模型按需用 `read` 读取 `snapshotPath`，修改前检查当前 `documentPath`，避免按旧快照覆盖后续更改。
 - 会话负责去重、待交付与交付确认；只有消息正式进入上下文才标记交付，被拒绝的 prompt 在下次运行补交。恢复旧会话尚未交付的完整反馈时先迁移为反馈文件与轻量引用，再按轻量上下文补交，避免重新注入块正文。
 - 同一 requestId 的成功回复去重，防止重试重复注入会话。
 - 关闭服务等待已接收的回复任务结束，关闭后的任务不得调用旧 Pi runtime。

@@ -221,6 +221,112 @@ test("unsafe request IDs stay beside the document and do not overwrite conflicti
   );
 });
 
+for (const mixed of [false, true]) {
+  test(`selected pages persist and recover with compact independent scopes (mixed=${mixed})`, async (t) => {
+    const documentPath = await fixture(t);
+    const { entries, handlers, sent, pi, ctx } = harness();
+    const feedback: Feedback = {
+      ...reply,
+      blocks: mixed ? reply.blocks : [],
+      pageIds: ["p"],
+      pages: [
+        {
+          id: "p",
+          title: "Selected page",
+          blocks: [
+            {
+              id: "b",
+              type: "text",
+              align: "left",
+              spec: { md: "Full page content" },
+            },
+            {
+              id: "unselected-block",
+              type: "text",
+              align: "left",
+              spec: { md: "Also captured" },
+            },
+          ],
+        },
+      ],
+    };
+    const inbox = createFeedbackInbox(pi);
+    await Promise.all([
+      inbox.accept(feedback, documentPath),
+      inbox.accept(feedback, documentPath),
+    ]);
+    assert.equal(sent.length, 1);
+    const reference = entries[0].data as {
+      snapshotPath: string;
+      pageIds: string[];
+      blockIds: string[];
+    };
+    assert.deepEqual(reference.pageIds, ["p"]);
+    assert.deepEqual(reference.blockIds, mixed ? ["b"] : []);
+    const saved = JSON.parse(await readFile(reference.snapshotPath, "utf8"));
+    assert.deepEqual(saved, feedback);
+    assert.ok(saved.pages);
+    assert.equal(saved.pages[0].blocks.length, 2);
+    assert.match(sent[0], /"pageIds":\["p"\]/);
+    assert.equal(sent[0].includes("Full page content"), false);
+    assert.equal(sent[0].includes("Also captured"), false);
+    inbox.clear();
+    await inbox.restore(ctx());
+    const pending = handlers.get("before_agent_start")?.({
+      prompt: "continue",
+    }) as { message: { content: string } };
+    assert.ok(pending.message.content.includes('"pageIds":["p"]'));
+    assert.equal(pending.message.content.includes("Full page content"), false);
+    await inbox.accept(feedback, documentPath);
+    assert.equal(sent.length, 1, "restored page feedback is deduplicated");
+    handlers.get("message_end")?.({
+      message: { role: "user", content: sent[0] },
+    });
+    assert.equal(
+      handlers.get("before_agent_start")?.({ prompt: "continue" }),
+      undefined,
+    );
+    assert.deepEqual(
+      JSON.parse(await readFile(reference.snapshotPath, "utf8")),
+      saved,
+    );
+    await assert.rejects(
+      createFeedbackInbox(harness().pi).accept(
+        { ...feedback, pageIds: [], pages: [] },
+        documentPath,
+      ),
+      /Conflicting feedback/,
+    );
+  });
+}
+
+test("legacy compact references default pageIds and recognize already queued legacy prompts", async (t) => {
+  const documentPath = await fixture(t);
+  const { entries, sent, handlers, pi, ctx } = harness();
+  const inbox = createFeedbackInbox(pi);
+  await inbox.accept(reply, documentPath);
+  const reference = entries[0].data as { pageIds?: string[] };
+  delete reference.pageIds;
+  const legacyPrompt = sent[0].replace(',"pageIds":[]', "");
+  inbox.clear();
+  await inbox.restore(ctx());
+  assert.equal(
+    handlers.get("before_agent_start")?.({ prompt: legacyPrompt }),
+    undefined,
+  );
+  const pending = handlers.get("before_agent_start")?.({
+    prompt: "continue",
+  }) as { message: { content: string } };
+  assert.ok(pending.message.content.includes('"pageIds":[]'));
+  handlers.get("message_end")?.({
+    message: { role: "user", content: legacyPrompt },
+  });
+  assert.equal(
+    handlers.get("before_agent_start")?.({ prompt: "continue" }),
+    undefined,
+  );
+});
+
 test("legacy pending snapshots migrate to files and compact session references", async (t) => {
   const cwd = dirname(await fixture(t));
   const id = "2026-01-01T00-00-00Z-00000000-0000-0000-0000-000000000000";

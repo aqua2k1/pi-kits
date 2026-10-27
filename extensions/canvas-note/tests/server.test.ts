@@ -424,6 +424,70 @@ test("real HTTP, WebSocket snapshots, atomic rename watch, reply acknowledgment 
   assert.deepEqual(errors, []);
 });
 
+test("WebSocket accepts page-only and mixed feedback and rejects invalid or reused page scopes", async (t) => {
+  const dir = await mkdtemp(join(tmpdir(), "canvas-note-pages-"));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  const store = new DocumentStore(join(dir, "doc.json"));
+  const inserted = await store.insertBlocks({
+    blocks: [{ type: "text", spec: { md: "Whole page" } }],
+  });
+  const doc = await store.read();
+  const feedback: Feedback[] = [];
+  const server = await startCanvasNoteServer({
+    host: "127.0.0.1",
+    port: 0,
+    store,
+    onReply: (value) => {
+      feedback.push(value);
+    },
+  });
+  t.after(() => server.close());
+  const ws = new WebSocket(`${server.url.replace("http:", "ws:")}/ws`);
+  t.after(() => ws.terminate());
+  const next = inbox(ws);
+  await next((msg) => msg.type === "snapshot");
+  const request = {
+    type: "reply",
+    requestId: "pages",
+    version: doc.version,
+    blockIds: [],
+    pageIds: [doc.pages[0].id],
+    reply: "Explain page",
+  };
+  for (const payload of [request, request]) {
+    ws.send(JSON.stringify(payload));
+    await next((msg) => msg.type === "ack");
+  }
+  assert.equal(feedback.length, 1);
+  assert.deepEqual(feedback[0].blocks, []);
+  assert.deepEqual(feedback[0].pages, doc.pages);
+  ws.send(
+    JSON.stringify({
+      ...request,
+      requestId: "mixed",
+      blockIds: inserted.blockIds,
+    }),
+  );
+  await next((msg) => msg.type === "ack");
+  assert.equal(feedback[1].blocks.length, 1);
+  assert.deepEqual(feedback[1].pages, doc.pages);
+  for (const [patch, error] of [
+    [{ requestId: "unknown", pageIds: ["missing"] }, /Unknown pageId/],
+    [{ requestId: "empty", pageIds: [] }, /Invalid reply/],
+    [
+      { requestId: "duplicate", pageIds: [doc.pages[0].id, doc.pages[0].id] },
+      /Invalid reply/,
+    ],
+    [{ blockIds: inserted.blockIds, pageIds: [] }, /requestId already used/],
+    [{ requestId: "stale", version: doc.version - 1 }, /内容已更新/],
+  ] as const) {
+    ws.send(JSON.stringify({ ...request, ...patch }));
+    const response = await next((msg) => msg.type === "error");
+    assert.match(String(response.message), error);
+  }
+  assert.equal(feedback.length, 2);
+});
+
 test("shutdown drains queued replies without invoking a stale runtime callback", async (t) => {
   const dir = await mkdtemp(join(tmpdir(), "canvas-note-close-"));
   t.after(() => rm(dir, { recursive: true, force: true }));

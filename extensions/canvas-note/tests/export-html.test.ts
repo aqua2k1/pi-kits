@@ -128,7 +128,7 @@ test("standalone HTML embeds resources and restores interactive charts in a real
       <div class="outline-header"><span class="outline-title">Contents</span><button id="outline-toggle" aria-controls="outline-tree" aria-expanded="false">›</button></div>
       <nav id="outline-tree" hidden><ul class="outline-list"><li class="outline-page" data-page-id="p"><div class="outline-page-row"><button class="outline-page-toggle" aria-expanded="true">▾</button><button class="outline-link outline-page-link">Export</button></div><ul class="outline-children"><li class="outline-block" data-block-id="chart"><button class="outline-link outline-block-link">Chart</button></li></ul></li></ul></nav>
     </aside>
-    <main id="pages" class="outline-collapsed"><section class="page" data-page-id="p"><h1>Export</h1>
+    <main id="pages" class="outline-collapsed"><section class="page selected" data-page-id="p"><h1>Export</h1><label class="page-selection"><input type="checkbox" class="page-select" checked>Select page</label>
     <div class="block selected" data-block-id="chart"><input class="block-select"><div class="block-content content-chart"><canvas></canvas></div><button class="block-copy">Copy</button></div>
     <p><code>&lt;script&gt;not executable&lt;/script&gt;</code><img src="/image.svg" srcset="/image.svg 2x"></p></section></main>
     <script type="module">
@@ -197,7 +197,7 @@ test("standalone HTML embeds resources and restores interactive charts in a real
     child.kill();
     assert.doesNotMatch(
       html,
-      /<link|<script[^>]+src=|<img[^>]+srcset=|class="block-select"|class="block-copy"|class="block selected"|new WebSocket/,
+      /<link|<script[^>]+src=|<img[^>]+srcset=|class="block-select"|class="block-copy"|class="block selected"|class="page selected"|class="page-selection"|class="page-select"|new WebSocket/,
     );
     assert.match(html, /data:font\/woff2;base64,/);
     assert.match(html, /data:image\/svg\+xml;base64,/);

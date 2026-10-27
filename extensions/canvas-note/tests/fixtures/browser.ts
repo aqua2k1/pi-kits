@@ -277,6 +277,8 @@ export function browser() {
       version?: number;
       blockId?: string;
       blockIds?: string[];
+      pageIds?: string[];
+      requestId?: string;
       message?: string;
       reply?: string;
     }[] = [];

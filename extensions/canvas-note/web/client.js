@@ -241,16 +241,29 @@ import { exportHtml } from "./export-html.js";
     }
   }
 
-  const selectedReply = (version, selection, records) => {
-    const context = { version, blockIds: [...selection] };
+  const selectedReply = (
+    version,
+    selection,
+    records,
+    pageSelection = new Set(),
+    pages = new Map(),
+  ) => {
+    const context = {
+      version,
+      blockIds: [...selection],
+      pageIds: [...pageSelection],
+    };
+    const pageSummaries = context.pageIds.map(
+      (id) => `Page: ${pages.get(id).page.title || "Untitled page"}`,
+    );
     const summaries = context.blockIds.map((id) => {
       const record = records.get(id);
       return blockSummary(record.block, record.pageTitle);
     });
     return {
       context,
-      summaries,
-      label: `${context.blockIds.length} selected blocks · document version ${context.version}`,
+      summaries: [...pageSummaries, ...summaries],
+      label: `${context.pageIds.length} selected pages · ${context.blockIds.length} selected blocks · document version ${context.version}`,
     };
   };
 
@@ -558,6 +571,7 @@ import { exportHtml } from "./export-html.js";
     const outlineToggle = $("outline-toggle");
     const dialog = $("reply-dialog");
     const selection = new Set();
+    const pageSelection = new Set();
     const pages = new Map();
     const blocks = new Map();
     const outlinePages = new Map();
@@ -603,7 +617,7 @@ import { exportHtml } from "./export-html.js";
 
     function updateControls() {
       const next = controlState({
-        count: selection.size,
+        count: selection.size + pageSelection.size,
         connected,
         closing,
         pending,
@@ -830,6 +844,7 @@ import { exportHtml } from "./export-html.js";
     function syncOutlinePageEntry(pageId, pageIndex) {
       const pageEntry = pages.get(pageId);
       if (!pageEntry) {
+        pageSelection.delete(pageId);
         const stale = outlinePages.get(pageId);
         stale?.element.remove();
         outlinePages.delete(pageId);
@@ -936,11 +951,30 @@ import { exportHtml } from "./export-html.js";
         element.dataset.pageId = page.id;
         const title = document.createElement("h1");
         const body = document.createElement("div");
-        element.append(title, body);
-        entry = { element, title, body };
+        const label = document.createElement("label");
+        label.className = "page-selection";
+        const checkbox = document.createElement("input");
+        checkbox.type = "checkbox";
+        checkbox.className = "page-select";
+        const caption = document.createElement("span");
+        caption.textContent = "Select page";
+        label.append(checkbox, caption);
+        checkbox.addEventListener("change", () => {
+          if (checkbox.checked) pageSelection.add(page.id);
+          else pageSelection.delete(page.id);
+          element.classList.toggle("selected", checkbox.checked);
+          updateControls();
+        });
+        element.append(title, body, label);
+        entry = { element, title, body, checkbox };
         pages.set(page.id, entry);
       }
       entry.page = page;
+      const label = `Select page ${page.title || "Untitled page"}`;
+      if (entry.label !== label) {
+        entry.checkbox.setAttribute("aria-label", label);
+        entry.label = label;
+      }
       if (entry.title.textContent !== page.title)
         entry.title.textContent = page.title;
       if (entry.title.hidden !== !page.title) entry.title.hidden = !page.title;
@@ -1011,6 +1045,7 @@ import { exportHtml } from "./export-html.js";
         if (livePages.has(id)) continue;
         entry.element.remove();
         pages.delete(id);
+        pageSelection.delete(id);
       }
       syncOutline();
       awaitingSnapshot = false;
@@ -1125,7 +1160,13 @@ import { exportHtml } from "./export-html.js";
     });
 
     $("reply").addEventListener("click", () => {
-      const selected = selectedReply(doc.version, selection, blocks);
+      const selected = selectedReply(
+        doc.version,
+        selection,
+        blocks,
+        pageSelection,
+        pages,
+      );
       replyContext = selected.context;
       $("selected-summaries").replaceChildren();
       for (const summary of selected.summaries) {
@@ -1142,6 +1183,11 @@ import { exportHtml } from "./export-html.js";
 
     $("clear").addEventListener("click", () => {
       selection.clear();
+      pageSelection.clear();
+      for (const entry of pages.values()) {
+        entry.checkbox.checked = false;
+        entry.element.classList.remove("selected");
+      }
       for (const record of blocks.values()) {
         record.checkbox.checked = false;
         record.element.classList.remove("selected");
@@ -1248,6 +1294,14 @@ import { exportHtml } from "./export-html.js";
               if (record) {
                 record.checkbox.checked = false;
                 record.element.classList.remove("selected");
+              }
+            }
+            for (const id of replyContext.pageIds) {
+              pageSelection.delete(id);
+              const entry = pages.get(id);
+              if (entry) {
+                entry.checkbox.checked = false;
+                entry.element.classList.remove("selected");
               }
             }
             $("reply-text").value = "";

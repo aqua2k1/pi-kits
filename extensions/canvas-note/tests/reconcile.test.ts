@@ -54,6 +54,85 @@ const select = (b: ReturnType<typeof browser>, id: string) => {
   checkbox.emit("change");
 };
 
+const selectPage = (b: ReturnType<typeof browser>, id: string) => {
+  const checkbox = b.page(id).children[2].children[0];
+  checkbox.checked = true;
+  checkbox.emit("change");
+};
+
+test("pages are selected independently and support page-only and mixed replies", () => {
+  const b = browser();
+  b.snapshot(initial());
+  selectPage(b, "p1");
+  selectPage(b, "p2");
+  assert.equal(b.block("a").children[0].checked, false);
+  assert.equal(b.get("selection-count").textContent, "2 selected");
+  assert.equal(b.get("reply").disabled, false);
+  b.get("reply").emit("click");
+  assert.deepEqual(
+    b.get("selected-summaries").children.map((node) => node.textContent),
+    ["Page: p1", "Page: p2"],
+  );
+  b.get("reply-text").value = "Restructure these pages";
+  b.get("reply-form").emit("submit");
+  const reply = b.socket().sent.find((message) => message.type === "reply");
+  assert.deepEqual(reply?.pageIds, ["p1", "p2"]);
+  assert.deepEqual(reply?.blockIds, []);
+  b.message({ type: "ack", requestId: reply?.requestId });
+  assert.equal(b.get("selection-count").textContent, "0 selected");
+  assert.equal(b.page("p1").children[2].children[0].checked, false);
+  assert.equal(b.page("p2").classList.contains("selected"), false);
+  selectPage(b, "p1");
+  select(b, "a");
+  b.get("reply").emit("click");
+  b.get("reply-text").value = "Revise the page, focusing on this block";
+  b.get("reply-form").emit("submit");
+  const mixed = b
+    .socket()
+    .sent.filter((message) => message.type === "reply")
+    .at(-1);
+  assert.deepEqual(mixed?.pageIds, ["p1"]);
+  assert.deepEqual(mixed?.blockIds, ["a"]);
+});
+
+test("page selection survives snapshots and rename, and is cleared by deletion and Clear", () => {
+  const b = browser();
+  b.snapshot(initial());
+  selectPage(b, "p1");
+  const checkbox = b.page("p1").children[2].children[0];
+  b.snapshot(initial());
+  assert.equal(checkbox.checked, true);
+  b.operations(1, [
+    {
+      type: "page:update",
+      pageId: "p1",
+      change: { kind: PageChangeKind.Rename, title: "Renamed" },
+    },
+  ]);
+  assert.equal(checkbox.checked, true);
+  assert.equal(checkbox.attributes["aria-label"], "Select page Renamed");
+  b.get("reply").emit("click");
+  assert.equal(
+    b.get("selected-summaries").children[0].textContent,
+    "Page: Renamed",
+  );
+  b.get("cancel").emit("click");
+  b.operations(2, [
+    {
+      type: "page:update",
+      pageId: "p1",
+      change: { kind: PageChangeKind.Delete },
+    },
+  ]);
+  assert.equal(b.get("selection-count").textContent, "0 selected");
+  selectPage(b, "p2");
+  b.get("clear").emit("click");
+  assert.equal(b.page("p2").children[2].children[0].checked, false);
+  selectPage(b, "p2");
+  b.snapshot(document([], 4));
+  assert.equal(b.get("selection-count").textContent, "0 selected");
+});
+
 test("every block has a copy button that copies current content without changing selection", async () => {
   const b = browser();
   const blocks: Block[] = [
@@ -329,7 +408,7 @@ test("operations create a page and insert complete blocks in one batch, then ins
   b.get("reply").emit("click");
   assert.equal(
     b.get("reply-context").textContent,
-    "1 selected blocks · document version 3",
+    "0 selected pages · 1 selected blocks · document version 3",
   );
   assert.equal(
     b.get("selected-summaries").children[0].textContent,
@@ -726,7 +805,7 @@ for (const { name, fields } of invalidMessages) {
     b.get("reply").emit("click");
     assert.equal(
       b.get("reply-context").textContent,
-      "1 selected blocks · document version 11",
+      "0 selected pages · 1 selected blocks · document version 11",
     );
   });
 }
@@ -797,7 +876,7 @@ for (const first of [
     b.get("reply").emit("click");
     assert.equal(
       b.get("reply-context").textContent,
-      "1 selected blocks · document version 1",
+      "0 selected pages · 1 selected blocks · document version 1",
     );
     b.operations(1, [first]);
     assert.deepEqual(b.socket().sent, [{ type: "resync" }]);

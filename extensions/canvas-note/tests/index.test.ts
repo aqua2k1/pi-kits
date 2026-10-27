@@ -143,6 +143,7 @@ test("extension registers four tools and the server command; real handlers lazil
       requestId: "integration",
       version: doc.version,
       blockIds: inserted.blockIds,
+      pageIds: [doc.pages[0].id],
       reply: "修改这两个",
     }),
   );
@@ -158,6 +159,9 @@ test("extension registers four tools and the server command; real handlers lazil
     ),
   );
   assert.equal(feedback.reply, "修改这两个");
+  assert.deepEqual(feedback.pageIds, [doc.pages[0].id]);
+  assert.deepEqual(feedback.pages, [doc.pages[0]]);
+  assert.ok(messages[0].includes(`"pageIds":["${doc.pages[0].id}"]`));
   assert.equal(feedback.blocks[0].block.spec.md, "Hello");
   assert.equal(feedback.blocks[1].block.spec.latex, "x^2");
   assert.ok(messages[0].includes("integration.json"));

@@ -73,6 +73,81 @@ test("protocol validators reject malformed, stale and unknown block references",
   );
 });
 
+test("page-only and mixed feedback keep independent full page and block scopes", () => {
+  const document: Document = {
+    ...doc,
+    pages: [...doc.pages, { id: "empty", title: "Empty", blocks: [] }],
+  };
+  const before = JSON.stringify(document);
+  const pageOnly = parseReply({
+    ...input,
+    blockIds: [],
+    pageIds: ["empty", "p"],
+  });
+  const snapshot = feedbackForDocument(pageOnly, document);
+  assert.deepEqual(snapshot.pageIds, ["empty", "p"]);
+  assert.deepEqual(snapshot.pages, [document.pages[1], document.pages[0]]);
+  assert.deepEqual(snapshot.blocks, []);
+  const mixed = feedbackForDocument(
+    parseReply({ ...input, pageIds: ["p"] }),
+    document,
+  );
+  assert.deepEqual(mixed.pages, [document.pages[0]]);
+  assert.equal(
+    mixed.blocks.length,
+    1,
+    "overlap must not collapse either scope",
+  );
+  assert.equal(mixed.blocks[0].block, document.pages[0].blocks[0]);
+  assert.equal(JSON.stringify(document), before);
+  assert.deepEqual(parseReply(input).pageIds, []);
+  assert.deepEqual(feedbackForDocument(parseReply(input), doc).pages, []);
+});
+
+test("page selection rejects malformed and unknown IDs and participates in dedup", () => {
+  for (const pageIds of [
+    null,
+    "p",
+    [1],
+    [""],
+    [" "],
+    ["p", "p"],
+    Array(101).fill("p"),
+  ]) {
+    assert.throws(() => parseReply({ ...input, pageIds }), /Invalid reply/);
+  }
+  assert.throws(
+    () => parseReply({ ...input, blockIds: [], pageIds: [] }),
+    /Invalid reply/,
+  );
+  assert.throws(
+    () =>
+      feedbackForDocument(parseReply({ ...input, pageIds: ["missing"] }), doc),
+    /Unknown pageId: missing/,
+  );
+  assert.throws(
+    () =>
+      feedbackForDocument(
+        parseReply({ ...input, version: 3, blockIds: [], pageIds: ["p"] }),
+        doc,
+      ),
+    /内容已更新/,
+  );
+  const legacy = parseReply(input);
+  assert.equal(
+    replyFingerprint(legacy),
+    replyFingerprint({ ...legacy, pageIds: [] }),
+  );
+  assert.notEqual(
+    replyFingerprint(legacy),
+    replyFingerprint({ ...legacy, pageIds: ["p"] }),
+  );
+  assert.notEqual(
+    replyFingerprint({ ...legacy, pageIds: ["p"] }),
+    replyFingerprint({ ...legacy, pageIds: ["other"] }),
+  );
+});
+
 test("render error projection validates ownership and bounds the message without mutation", () => {
   const error = { version: 4, blockId: "b", message: "x".repeat(2500) };
   const result = renderErrorForDocument(error, doc);

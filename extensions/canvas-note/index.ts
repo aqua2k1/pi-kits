@@ -125,9 +125,9 @@ export default function canvasNoteExtension(pi: ExtensionAPI) {
     namespace: {
       name: "canvas-note",
       description:
-        "Canvas Note: Present charts, plans, designs, math, and code as interactive documents with block-level user feedback.",
+        "Canvas Note: Present charts, plans, designs, math, and code as interactive documents with page- and block-level user feedback.",
       instructions:
-        "Organize content into semantic pages and independently editable blocks. Keep related content together, but separate sections that users may want to review or revise individually.\n\nUse insert_page for a distinct topic or section; otherwise insert into an existing page. Pass pageId explicitly when working across pages or resuming an existing document.\n\nUse update_page to rename a page or delete it and all its blocks. Use returned blockIds to revise existing content rather than inserting duplicates. Read documentPath with the read tool when you need current content or IDs.\n\nTreat selected block snapshots as context for the user's feedback. Answer questions directly; use update_blocks when the user requests changes.",
+        "Organize content into semantic pages and independently editable blocks. Keep related content together, but separate sections that users may want to review or revise individually.\n\nUse insert_page for a distinct topic or section; otherwise insert into an existing page. Pass pageId explicitly when working across pages or resuming an existing document.\n\nUse update_page to rename a page or delete it and all its blocks. Use returned blockIds to revise existing content rather than inserting duplicates. Read documentPath with the read tool when you need current content or IDs.\n\nTreat independently selected page and block snapshots as context for the user's feedback. Answer questions directly; use update_blocks when the user requests changes.",
     },
     executionMode: "sequential" as const,
   };

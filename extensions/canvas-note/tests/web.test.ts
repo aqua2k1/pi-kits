@@ -205,7 +205,11 @@ test("browser selection and wire-message helpers preserve input state", () => {
     context: { version: number; blockIds: string[] };
     summaries: string[];
   };
-  assert.deepEqual(plain(selected.context), { version: 4, blockIds: ["b"] });
+  assert.deepEqual(plain(selected.context), {
+    version: 4,
+    blockIds: ["b"],
+    pageIds: [],
+  });
   assert.match(selected.summaries[0], /Report · text/);
   const message = helpers.replyMessage("r", selected.context, "Fix");
   assert.deepEqual(plain(message), {
@@ -213,6 +217,7 @@ test("browser selection and wire-message helpers preserve input state", () => {
     requestId: "r",
     version: 4,
     blockIds: ["b"],
+    pageIds: [],
     reply: "Fix",
   });
   assert.equal(
