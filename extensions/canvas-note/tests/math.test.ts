@@ -25,10 +25,98 @@ const source = clientScript(
 );
 const boundary = source.indexOf("\n  // Shared local rendering");
 assert.ok(boundary > 0);
-const renderMarkdown = runInNewContext(
-  `${source.slice(0, boundary)}\n globalThis.renderMarkdown = renderMarkdown;\n}`,
-  { ...clientGlobals, window: { marked: { Marked }, markedKatex, katex } },
-) as (md: string) => string;
+const {
+  renderMarkdown,
+  renderTableMarkdown,
+  tableToMarkdown,
+  tableCellToMarkdown,
+} = runInNewContext(
+  `${source.slice(0, boundary)}\n ({ renderMarkdown, renderTableMarkdown, tableToMarkdown, tableCellToMarkdown });\n}`,
+  {
+    ...clientGlobals,
+    window: {
+      marked: { Marked },
+      markedKatex,
+      katex,
+    },
+  },
+) as {
+  renderMarkdown: (md: string) => string;
+  renderTableMarkdown: (spec: {
+    columns: string[];
+    rows: unknown[][];
+  }) => string;
+  tableToMarkdown: (spec: { columns: string[]; rows: unknown[][] }) => string;
+  tableCellToMarkdown: (text: string) => string;
+};
+
+test("table cells render inline Markdown and formulas with isolated cell scope", () => {
+  for (const [input, pattern] of [
+    ["$A_t$", /class="katex"/],
+    ["**符号**", /<strong>符号<\/strong>/],
+    ["[链接](https://example.com)", /<a href="https:\/\/example.com">/],
+    ["`$A_t$`", /<code>\$A_t\$<\/code>/],
+    ["# 标题", /># 标题<\/td>/],
+    ["$A", />\$A<\/td>/],
+    ["t$", />t\$<\/td>/],
+  ] as const) {
+    const html = renderTableMarkdown({
+      columns: ["**符号**"],
+      rows: [[input]],
+    });
+    assert.match(html, pattern);
+    assert.match(html, /<th scope="col"><strong>符号<\/strong><\/th>/);
+    assert.doesNotMatch(html, /<p>|<h[1-6]/);
+  }
+});
+
+test("table text escaping handles pipes and all newline styles without changing Markdown", () => {
+  assert.equal(
+    tableCellToMarkdown("A | B\r\n**bold**\r$A_t$\nend"),
+    "A \\| B<br>**bold**<br>$A_t$<br>end",
+  );
+  assert.equal(tableCellToMarkdown("A | B"), "A \\| B");
+  const html = renderTableMarkdown({
+    columns: ["A | B"],
+    rows: [["x | y\nz"]],
+  });
+  assert.match(html, /<th scope="col">A \| B<\/th>/);
+  assert.match(html, /<td>x \| y<br>z<\/td>/);
+  assert.equal((html.match(/<td>/g) ?? []).length, 1);
+});
+
+test("table serialization converts values without mutating input", () => {
+  const spec = {
+    columns: ["Value"],
+    rows: [[42], [false], [null], [{ a: 1 }], [[1, 2]]],
+  };
+  const before = JSON.stringify(spec);
+  assert.equal(
+    tableToMarkdown(spec),
+    '| Value |\n| --- |\n| 42 |\n| false |\n|  |\n| {"a":1} |\n| [1,2] |',
+  );
+  assert.equal(JSON.stringify(spec), before);
+  const html = renderTableMarkdown(spec);
+  assert.match(html, /<td>42<\/td>/);
+  assert.match(html, /<td>false<\/td>/);
+  assert.match(html, /<td><\/td>/);
+});
+
+test("table rendering preserves empty and uneven row shapes", () => {
+  for (const spec of [
+    { columns: [], rows: [] },
+    { columns: [], rows: [["a", "b"]] },
+    { columns: ["A", "B"], rows: [["a"], [], ["a", "b", "c"]] },
+  ]) {
+    const html = renderTableMarkdown(spec);
+    assert.equal((html.match(/<th scope=/g) ?? []).length, spec.columns.length);
+    const bodies = [...html.matchAll(/<tr>\n([\s\S]*?)<\/tr>/g)].slice(1);
+    assert.deepEqual(
+      bodies.map((row) => (row[1].match(/<td>/g) ?? []).length),
+      spec.rows.map((row) => row.length),
+    );
+  }
+});
 
 for (const [name, md, display] of [
   ["dollar inline", "能量$E=mc^2$满足关系。", false],

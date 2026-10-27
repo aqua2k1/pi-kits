@@ -147,7 +147,7 @@ test("static outline restores view and keeps local navigation, switching and fol
   b.get("outline-toggle-all").emit("click");
   assert.equal(b.get("outline-toggle-all").dataset.state, "0");
   assert.equal(page.children[1].hidden, true);
-  assert.equal(b.markdown.length, 1);
+  assert.equal(b.markdown.length, 2);
   assert.equal(b.charts[0].options.length, 1);
   assert.equal(b.sockets.length, 0);
 });

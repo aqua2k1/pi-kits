@@ -102,7 +102,28 @@ export class Element extends Events {
     this.count("innerHTML");
     this.detachChildren();
     this.values.innerHTML = value;
-    // Materialize generated Markdown heading anchors without simulating an HTML DOM.
+    // Materialize tables and heading anchors without simulating a full HTML DOM.
+    for (const match of value.matchAll(/<table>\s*([\s\S]*?)<\/table>/g)) {
+      const table = new Element("table");
+      for (const section of match[1].matchAll(
+        /<(thead|tbody)>\s*([\s\S]*?)<\/\1>/g,
+      )) {
+        const group = new Element(section[1]);
+        for (const row of section[2].matchAll(/<tr>\s*([\s\S]*?)<\/tr>/g)) {
+          const tr = new Element("tr");
+          for (const cell of row[1].matchAll(
+            /<(th|td)\b[^>]*>([\s\S]*?)<\/\1>/g,
+          )) {
+            const td = new Element(cell[1]);
+            td.innerHTML = cell[2];
+            tr.append(td);
+          }
+          group.append(tr);
+        }
+        table.append(group);
+      }
+      this.append(table);
+    }
     for (const match of value.matchAll(
       /<h([1-6])\b([^>]*)>([\s\S]*?)<\/h\1>/g,
     )) {
@@ -406,7 +427,8 @@ export function browser(documentData?: object | string) {
         parser(tokens: TokensList) {
           const html = this.actual.parser(tokens);
           // Preserve legacy fixture rendering for tests unrelated to headings.
-          return html.includes("data-outline-heading")
+          return html.includes("data-outline-heading") ||
+            tokens.some((token) => token.type === "table")
             ? html
             : `<p>${this.sources.get(tokens) ?? ""}</p>`;
         }

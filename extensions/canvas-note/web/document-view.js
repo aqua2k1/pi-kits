@@ -20,6 +20,14 @@ import {
 import { createOutlineView } from "./outline-view.js";
 import { createSelectionManager } from "./selection-manager.js";
 
+const TABLE_CELL_SPECIAL = /\||\r\n|\r|\n/g;
+
+function tableCellToMarkdown(text) {
+  return text.replace(TABLE_CELL_SPECIAL, (match) =>
+    match === "|" ? "\\|" : "<br>",
+  );
+}
+
 export function createDocumentView({
   staticMode = false,
   initialView = {},
@@ -67,8 +75,8 @@ export function createDocumentView({
     };
   }
 
-  function renderMarkdown(md, headings = []) {
-    const parser = new window.marked.Marked(
+  function createMarkdownParser() {
+    return new window.marked.Marked(
       window.markedKatex({
         nonStandard: true,
         throwOnError: true,
@@ -76,6 +84,10 @@ export function createDocumentView({
         strict: "error",
       }),
     );
+  }
+
+  function renderMarkdown(md, headings = []) {
+    const parser = createMarkdownParser();
     const tokens = parser.lexer(md);
     const markers = new Map();
     const nonce = Math.random().toString(36).slice(2);
@@ -95,6 +107,47 @@ export function createDocumentView({
       renderer: {
         heading(token) {
           return `<h${token.depth} data-outline-heading="${markers.get(token)}">${this.parser.parseInline(token.tokens)}</h${token.depth}>\n`;
+        },
+      },
+    });
+    return parser.parser(tokens);
+  }
+
+  function tableToMarkdown(spec) {
+    // Pad for Markdown's fixed column count; restore the original shape below.
+    const width = Math.max(
+      1,
+      spec.columns.length,
+      ...spec.rows.map((row) => row.length),
+    );
+    const renderRow = (row) => {
+      const cells = Array.from({ length: width }, (_, index) => {
+        const text = tableCellText(row[index]);
+        return tableCellToMarkdown(text);
+      });
+      return `| ${cells.join(" | ")} |`;
+    };
+    return [
+      renderRow(spec.columns),
+      renderRow(Array(width).fill("---")),
+      ...spec.rows.map(renderRow),
+    ].join("\n");
+  }
+
+  function renderTableMarkdown(spec) {
+    const parser = createMarkdownParser();
+    const tokens = parser.lexer(tableToMarkdown(spec));
+    const table = tokens.find((token) => token.type === "table");
+    table.header.length = spec.columns.length;
+    table.rows.forEach((row, index) => {
+      row.length = spec.rows[index].length;
+    });
+    parser.use({
+      renderer: {
+        tablecell(token) {
+          const tag = token.header ? 'th scope="col"' : "td";
+          const close = token.header ? "th" : "td";
+          return `<${tag}>${this.parser.parseInline(token.tokens)}</${close}>\n`;
         },
       },
     });
@@ -210,22 +263,12 @@ export function createDocumentView({
           .map((row) => row.map(tableClipboardCell).join("\t"))
           .join("\n"),
       render(record, block) {
-        const table = document.createElement("table");
-        const head = table.createTHead().insertRow();
-        for (const column of block.spec.columns) {
-          const cell = document.createElement("th");
-          cell.scope = "col";
-          cell.textContent = column;
-          head.append(cell);
-        }
-        const body = table.createTBody();
-        for (const row of block.spec.rows) {
-          const tr = body.insertRow();
-          for (const value of row) {
-            tr.insertCell().textContent = tableCellText(value);
-          }
-        }
-        record.content.append(table);
+        const html = renderTableMarkdown(block.spec);
+        record.content.innerHTML = window.DOMPurify.sanitize(html, {
+          SANITIZE_NAMED_PROPS: true,
+          FORBID_TAGS: ["img", "picture", "source", "video", "audio", "iframe"],
+        });
+        openMarkdownLinksInNewTabs(record.content);
       },
     },
     [BlockKind.Divider]: {

@@ -105,6 +105,8 @@ sequenceDiagram
 
 文本渲染通过独立的 Marked 实例接入 `marked-katex-extension`，启用 `nonStandard` 解析紧邻中文的美元符号公式。插件在 KaTeX 之后从本地 UMD 资源加载；公式沿用 `throwOnError: true`、`trust: false`、`strict: "error"`，结果统一经 DOMPurify 清理。Markdown 公式随现有正文 DOM 打印和导出，不增加导出脚本。
 
+表格先通过 `tableCellText` 将值转换为文本，再由纯函数 `tableCellToMarkdown(text)` 转义竖线并将换行转换为 `<br>`；正则在模块作用域复用。整表拼接为 Markdown，使用正文的 Marked 与 KaTeX 配置一次解析；分词时补齐列宽，渲染前恢复原始表头与各行长度。结果经 DOMPurify 清理并移除图片与媒体标签，链接沿用安全的新标签页行为。复制仍从原始数据生成 TSV，在线、打印与静态 HTML 共用渲染路径。
+
 ## 目录数据与视图
 
 浏览器从内存文档按页生成统一节点 `{ id, kind, label, target, children }`；结构目录投影 Page / Block 元数据，语义大纲使用文本渲染时的 Marked tokens 提取标题，以级别栈跨 Block 建树。目标使用 page、block 或 heading 描述符，模型不访问 DOM，也不保存目录 DOM 或折叠状态。正文渲染复用同一份 tokens，为 Markdown 标题绑定 Block ID 与序号组成的锚点；重复标题独立定位。

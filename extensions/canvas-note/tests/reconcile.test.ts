@@ -1311,12 +1311,12 @@ test("chart type changes dispose resources; math/table/divider duplicate snapsho
   assert.equal(b.block("to-math"), mathBlock);
   assert.equal(content(textBlock).innerHTML, "<p>replacement</p>");
   assert.equal(content(mathBlock).textContent, "x^2");
-  assert.deepEqual(b.markdown, ["replacement"]);
+  assert.deepEqual(b.markdown, ["replacement", "| Name |\n| --- |\n| Alice |"]);
   assert.deepEqual(b.math, ["x^2"]);
   const table = content(b.block("table")).children[0];
   assert.equal(table.tagName, "table");
-  assert.equal(table.children[0].children[0].children[0].textContent, "Name");
-  assert.equal(table.children[1].children[0].children[0].textContent, "Alice");
+  assert.equal(table.children[0].children[0].children[0].innerHTML, "Name");
+  assert.equal(table.children[1].children[0].children[0].innerHTML, "Alice");
   assert.equal(content(b.block("divider")).children[0].tagName, "hr");
   for (const instance of b.charts) assert.equal(instance.disposed, 1);
   for (const observer of b.observers) assert.equal(observer.disconnected, 1);
@@ -1326,7 +1326,7 @@ test("chart type changes dispose resources; math/table/divider duplicate snapsho
   b.snapshot({ ...doc, version: 3 });
   assert.equal(writeCount(tree), 0);
   assert.deepEqual(subtree(b.get("pages")), tree);
-  assert.deepEqual(b.markdown, ["replacement"]);
+  assert.deepEqual(b.markdown, ["replacement", "| Name |\n| --- |\n| Alice |"]);
   assert.deepEqual(b.math, ["x^2"]);
   assert.equal(b.charts.length, 2);
   for (const instance of b.charts) assert.equal(instance.disposed, 1);
