@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import * as contracts from "../../core/contracts.js";
 import * as chartTheme from "../../web/chart-theme.js";
 import * as htmlExport from "../../web/export-html.js";
@@ -17,52 +18,54 @@ export const clientGlobals = {
   CanvasNoteOutlineView: outlineView,
 };
 
-// vm.Script cannot link ESM. Bind static imports to the actual modules,
-// leaving the client helpers and startup/runtime code unchanged.
+const modules: Record<string, keyof typeof clientGlobals> = {
+  "../core/contracts.js": "CanvasNoteContracts",
+  "./chart-theme.js": "CanvasNoteChartTheme",
+  "./export-html.js": "CanvasNoteHtmlExport",
+  "./export-scope.js": "CanvasNoteExportScope",
+  "./selection-manager.js": "CanvasNoteSelectionManager",
+  "./outline-model.js": "CanvasNoteOutlineModel",
+  "./outline-view.js": "CanvasNoteOutlineView",
+};
+
+function bindImports(source: string): string {
+  return source.replace(
+    /^import\s*\{([^}]+)\}\s*from\s*"([^"]+)";\r?\n/gm,
+    (_, names: string, path: string) => {
+      const global = modules[path];
+      assert.ok(global, `Unknown client import: ${path}`);
+      for (const name of names
+        .split(",")
+        .map((name) => name.trim())
+        .filter(Boolean))
+        assert.ok(
+          Object.hasOwn(clientGlobals[global], name),
+          `Unknown import: ${name}`,
+        );
+      return `const {${names}} = ${global};\n`;
+    },
+  );
+}
+
+// vm.Script cannot link ESM. Evaluate each actual module in its own scope,
+// binding leaf imports to the real modules; keep startup and runtime unchanged.
 export function clientScript(source: string): string {
-  const imported =
-    /^import\s*\{([^}]+)\}\s*from\s*"\.\.\/core\/contracts\.js";\r?\n/;
-  const match = imported.exec(source);
-  assert.ok(match, "Client must load the shared contract module");
-  for (const name of match[1]
-    .split(",")
-    .map((name) => name.trim())
-    .filter(Boolean)) {
-    assert.ok(Object.hasOwn(contracts, name), `Unknown shared import: ${name}`);
+  if (source.includes('from "./document-view.js"')) {
+    const bundled = [
+      ["document-view.js", "createDocumentView"],
+      ["online-controller.js", "startOnlineController"],
+    ].map(([file, entry]) => {
+      const module = readFileSync(
+        new URL(`../../web/${file}`, import.meta.url),
+        "utf8",
+      );
+      return `const ${entry} = (() => {\n${bindImports(module).replace(/^export /gm, "")}\nreturn ${entry};\n})();\n`;
+    });
+    return bundled.join("") + source.replace(/^import[^\n]+\n/gm, "");
   }
-  const themeImport =
-    /^import\s*\{([^}]+)\}\s*from\s*"\.\/chart-theme\.js";\r?\n/m;
-  const themeMatch = themeImport.exec(source);
-  assert.ok(themeMatch, "Client must load the chart theme module");
-  for (const name of themeMatch[1]
-    .split(",")
-    .map((name) => name.trim())
-    .filter(Boolean))
-    assert.ok(
-      Object.hasOwn(chartTheme, name),
-      `Unknown chart theme import: ${name}`,
-    );
-  return source
-    .replace(
-      /^import\s*\{([^}]+)\}\s*from\s*"\.\/selection-manager\.js";\r?\n/m,
-      "const {$1} = CanvasNoteSelectionManager;\n",
-    )
-    .replace(
-      /^import\s*\{([^}]+)\}\s*from\s*"\.\/export-scope\.js";\r?\n/m,
-      "const {$1} = CanvasNoteExportScope;\n",
-    )
-    .replace(imported, "const {$1} = CanvasNoteContracts;\n")
-    .replace(themeImport, "const {$1} = CanvasNoteChartTheme;\n")
-    .replace(
-      /^import\s*\{([^}]+)\}\s*from\s*"\.\/export-html\.js";\r?\n/m,
-      "const {$1} = CanvasNoteHtmlExport;\n",
-    )
-    .replace(
-      /^import\s*\{([^}]+)\}\s*from\s*"\.\/outline-model\.js";\r?\n/m,
-      "const {$1} = CanvasNoteOutlineModel;\n",
-    )
-    .replace(
-      /^import\s*\{([^}]+)\}\s*from\s*"\.\/outline-view\.js";\r?\n/m,
-      "const {$1} = CanvasNoteOutlineView;\n",
-    );
+  // Helper-only tests evaluate definitions without creating a view or browser.
+  return bindImports(source).replace(
+    /export function createDocumentView\([\s\S]*?\) \{/,
+    "{",
+  );
 }

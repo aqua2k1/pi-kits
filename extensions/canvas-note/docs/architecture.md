@@ -32,8 +32,12 @@ flowchart LR
 | `core/presentation.ts` | 文档身份、提示文本、工具结果与错误消息的纯构造 |
 | `server/index.ts` | 静态资源、操作增量、快照恢复、目录监听和反馈确认 |
 | `server/theme.ts` | 从扩展根目录 theme.json 读取配色，校验后生成主题 CSS |
+| `server/page.ts` | 固定 HTML 片段槽位的纯组装与共享模板读取 |
 | `server/protocol.ts` | 消息解析、校验、指纹、反馈快照与错误投影 |
-| `web/client.html` | 页面、固定目录与回复窗口骨架 |
+| `web/client.html` | 文档骨架、共享资源、静态数据入口与片段槽位 |
+| `web/fragments/toolbar.html` | 顶部工具栏与导出菜单 |
+| `web/fragments/outline.html` | 目录模式、整体收展与层级操作 |
+| `web/fragments/dialogs.html` | 回复和关闭服务弹窗 |
 | `web/favicon.svg` | 浏览器标签图标 |
 | `web/content.css` | 屏幕与打印共享的配色变量、字体和正文排版 |
 | `web/client.css` | 屏幕专属纸面布局、目录、选择框、工具栏与弹窗样式 |
@@ -43,8 +47,10 @@ flowchart LR
 | `web/export-scope.js` | 选择快照到文档子集与导出 ID 范围的纯投影 |
 | `web/outline-model.js` | 纯目录节点、标题文字与锚点构造，结构目录与语义大纲投影 |
 | `web/outline-view.js` | 共享目录 DOM 渲染、稳定条目复用、折叠状态与目标导航 |
-| `web/client.js` | 消费操作、按 ID 渲染、标题解析与目录编排、连接恢复、选择与提交 |
-| `web/export-html.js` | 克隆正文、内嵌资源与 ECharts、生成和下载离线单文件 HTML |
+| `web/client.js` | 读取静态数据节点并选择在线或静态启动 |
+| `web/document-view.js` | 共享正文渲染、增量操作、目录、复制、选择 DOM 与打印适配 |
+| `web/online-controller.js` | WebSocket、重连、反馈、导出与关闭服务等在线事件 |
+| `web/export-html.js` | 静态数据序列化、共享模板与资源内嵌、ESM import map 和文件下载 |
 
 ## 数据流
 
@@ -105,15 +111,23 @@ sequenceDiagram
 
 共享视图按节点 ID 复用目录 DOM，持有折叠状态并在点击时解析目标 DOM。客户端缓存每块标题与正文目标引用，增量批次只重建涉及页的目录，快照恢复和视图切换才遍历所有页；两种目录均只驻留浏览器内存。
 
+## 页面组装
+
+`client.html` 使用固定的 `include:toolbar`、`include:outline`、`include:dialogs` 注释槽位引用片段。服务端读取本地白名单文件并一次组装完整 HTML；每个槽位恰好出现一次，缺失、重复、未知或嵌套引用直接报错，避免静默产生不完整页面或重复 ID。浏览器测试夹具使用同一纯组装函数，浏览器不请求片段文件。
+
+在线首页和导出都读取 `/` 的完整组装结果，片段不作为 HTTP 资源单独暴露；结构、ID 与事件注册方式保持一致。
+
 ## 选择与导出
 
 选择管理器独占 `blockSelection`、`pageSelection`，通过变化 ID 订阅同步勾选 DOM；回复与导出只消费独立快照。回复保留两种选择范围，ACK 只移除本次快照；导出将整页与 Block 取并集，按原文档顺序投影，空选择表示全部，过期 ID 不回退到全量。
 
-HTML 从投影范围裁剪克隆正文，并按子集重建当前目录，保留对应折叠状态；只嵌入保留的图表和图片。打印通过临时类和 print-only CSS 标记相同范围，打印结束或失败清理标记；正文、图表实例与选择始终保留。
+HTML 将投影文档及目录模式、折叠状态序列化到共用模板的 `#document-data` JSON 节点，转义 `<` 防止提前结束脚本；内嵌样式、字体、库与共享 ESM 模块，通过 import map 将模块依赖映射到 data URL。导出不读取或克隆正文 DOM，静态启动用同一渲染器重建正文与目录。打印通过临时类和 print-only CSS 标记相同范围，结束或失败清理标记；正文、图表实例与选择始终保留。
+
+共用模板的数据节点为空时启动在线控制器，非空时仅启动共享视图；静态模式通过共用 CSS 隐藏在线控件，不注册服务器连接、重连、反馈、导出、关闭服务和离页确认事件。目录切换、折叠、复制、图表和打印仍使用共享代码。
 
 ## 新增类型
 
-Block 类型在 `core/contracts.js` 的 `BlockKind` 与 `blockDefinitions` 中声明内容校验、摘要；Block 的可选 `title` 是公共元数据，目录优先显示它，没有时回退到 `type`；浏览器在 `web/client.js` 的 `blockHandlers` 中补充渲染。TypeBox 枚举、客户端白名单和业务分派从这些定义派生，不再逐处维护类型列表。
+Block 类型在 `core/contracts.js` 的 `BlockKind` 与 `blockDefinitions` 中声明内容校验、摘要；Block 的可选 `title` 是公共元数据，目录优先显示它，没有时回退到 `type`；浏览器在 `web/document-view.js` 的 `blockHandlers` 中补充渲染。TypeBox 枚举、客户端白名单和业务分派从这些定义派生，不再逐处维护类型列表。
 
 页修改统一使用 `page:update`，`PageChangeKind` 标记 `rename` 与 `delete` 分支；`isPageChange` 在前后端共享严格校验，拒绝多余字段，工具的 TypeBox 联合 schema 同步约束。这样不会把删除携带的标题误当作重命名。
 
@@ -154,7 +168,8 @@ Block 类型在 `core/contracts.js` 的 `BlockKind` 与 `blockDefinitions` 中�
 - 页修改必须有有效变更，重名、空标题、删除与重命名混用或未知 ID 均不写入、不发布提交，避免无效版本；删除当前页仅在落盘成功后清空指针，下次隐式插入创建新页。
 - 页修改仅 flush 已运行服务，不启动或重启监听，避免仅管理页面时占用端口。
 - `spec` 整体替换，换类型时需要新 spec，避免旧格式进入新渲染器。
-- HTML 导出克隆正文和目录，不修改在线 DOM 或图表实例；资源全部内嵌，目录按钮转为稳定锚点链接，离线脚本只恢复目录折叠和 ECharts，不加载在线客户端，避免导出文件连接服务。图表配置序列化转义 `<`，避免内容提前结束脚本标签。
+- HTML 导出只序列化投影文档和视图状态，在线与静态共用模板、数据结构和渲染器；静态模式跳过在线控制器，避免复制渲染逻辑、操作当前 DOM 或意外连接服务。
+- 静态 JSON 转义 `<`，共享 ESM 依赖以 import map 和 data URL 内嵌，CSS 资源与渲染库随文件保存，避免脚本边界注入或离线打开请求旧服务器。
 - 复制内容从当前 Block 数据按类型投影，不读取渲染 DOM，避免混入按钮、高亮标签或旧内容；复制按钮不得改变多选状态，剪贴板回退使用的临时元素在成功或失败后均清理。
 - Code 只在显式 `language` 被本地 Highlight.js common build 支持时高亮；省略、空或未知语言保留纯文本，避免猜测语言改变展示。代码只读且不执行，HTML 内容必须作为文字处理，避免代码块触发脚本。
 - 页和 Block 的选择状态只由独立管理器修改，回复保留两种范围而导出按文档顺序取并集；导出不清空选择，避免动作间状态耦合或重复输出。
@@ -174,6 +189,8 @@ Block 类型在 `core/contracts.js` 的 `BlockKind` 与 `blockDefinitions` 中�
 
 `tests/command.test.ts` 覆盖命令的空画布、并发复用、静默成功、原文档恢复和失败重试；`tests/index.test.ts` 验证真实 Pi 命令分派不触发模型或修改文档。
 
+`tests/page.test.ts` 覆盖纯页面组装、非法槽位与完整 ID；HTTP 和真实浏览器测试验证首页、导出均使用同一完整模板。
+
 `tests/changes.test.ts` 用冻结输入验证纯变更可组合、显式 ID、版本不变和失败时输入不变；`tests/model.test.ts`、`tests/server.test.ts` 继续覆盖 Store 的落盘与同步行为。
 
-`npm test --workspace canvas-note` 运行 `tests/*.test.ts`，覆盖原子批次、并发写入、提交订阅、真实 HTTP/WebSocket、操作增量、快照恢复、回复去重、过期反馈、服务重启与工具 handler。`tests/contracts.test.ts` 校验共享枚举、内容定义与注册完整性，包含 Code 合法/非法内容、原样摘要与输入不变性；`tests/model.test.ts` 校验 TypeBox 联合 schema 覆盖、Code 插入与读取、整体替换、换类型、删除和原子失败；`tests/presentation.test.ts`、`tests/protocol.test.ts`、`tests/web.test.ts` 校验纯构造结果与输入不变性；反馈与模型测试同时校验投影阶段不提交状态。`tests/reconcile.test.ts` 通过 `tests/fixtures/browser.ts` 的最小浏览器环境执行完整客户端脚本，验证局部 DOM 写入、图表生命周期、选择保留和版本恢复。`tests/browser-outline.test.ts` 在检测到 Chromium 时通过 CDP 驱动真实客户端，验证 WebSocket 更新、标题跳转避让工具栏、所选范围的 HTML/PDF 导出与禁网离线导航及图表。`tests/selection.test.ts`、`tests/export-scope.test.ts` 覆盖独立选择通知、快照、去重和纯范围投影；`tests/outline.test.ts` 覆盖纯目录模型与共享视图；`tests/semantic-outline.test.ts` 覆盖真实 Marked 标题提取、跨块层级、重复标题、视图切换、局部更新与目标引用清理。`tests/chart-theme.test.ts` 校验主题纯构造与真实 ECharts 显式样式优先；`tests/print.test.ts` 验证样式分层、字体图片就绪、打印重试与状态保留。`tests/math.test.ts` 使用真实 Marked 和 KaTeX 覆盖 Markdown 行内与展示公式、中文相邻、代码、转义及解析错误；复杂公式样例集中在 `tests/fixtures/math.ts`。`tests/export-html.test.ts` 覆盖导出失败后的控件恢复；检测到 Chromium 时验证资源内嵌、在线 DOM 不变、脚本安全序列化、离线目录跳转与折叠和图表恢复。根测试覆盖实际 Pi 独立加载和生产依赖安装。
+`npm test --workspace canvas-note` 运行 `tests/*.test.ts`，覆盖原子批次、并发写入、提交订阅、真实 HTTP/WebSocket、操作增量、快照恢复、回复去重、过期反馈、服务重启与工具 handler。`tests/contracts.test.ts` 校验共享枚举、内容定义与注册完整性，包含 Code 合法/非法内容、原样摘要与输入不变性；`tests/model.test.ts` 校验 TypeBox 联合 schema 覆盖、Code 插入与读取、整体替换、换类型、删除和原子失败；`tests/presentation.test.ts`、`tests/protocol.test.ts`、`tests/web.test.ts` 校验纯构造结果与输入不变性；反馈与模型测试同时校验投影阶段不提交状态。`tests/reconcile.test.ts` 通过 `tests/fixtures/browser.ts` 的最小浏览器环境执行完整客户端脚本，验证局部 DOM 写入、图表生命周期、选择保留和版本恢复。`tests/browser-outline.test.ts` 在检测到 Chromium 时通过 CDP 驱动真实客户端，验证 WebSocket 更新、标题跳转避让工具栏、所选范围的 HTML/PDF 导出与禁网离线导航及图表。`tests/selection.test.ts`、`tests/export-scope.test.ts` 覆盖独立选择通知、快照、去重和纯范围投影；`tests/outline.test.ts` 覆盖纯目录模型与共享视图；`tests/semantic-outline.test.ts` 覆盖真实 Marked 标题提取、跨块层级、重复标题、视图切换、局部更新与目标引用清理。`tests/chart-theme.test.ts` 校验主题纯构造与真实 ECharts 显式样式优先；`tests/print.test.ts` 验证样式分层、字体图片就绪、打印重试与状态保留。`tests/math.test.ts` 使用真实 Marked 和 KaTeX 覆盖 Markdown 行内与展示公式、中文相邻、代码、转义及解析错误；复杂公式样例集中在 `tests/fixtures/math.ts`。`tests/export-html.test.ts` 覆盖导出失败后的控件恢复、模块图内嵌与 Unicode；`tests/static-view.test.ts` 校验静态启动跳过在线事件。真实浏览器测试验证静态 JSON、资源内嵌、在线 DOM 不变、安全序列化、断网后的共享渲染与本地交互。根测试覆盖实际 Pi 独立加载和生产依赖安装。

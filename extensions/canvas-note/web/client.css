@@ -520,3 +520,16 @@
     transition: none;
   }
 }
+
+@media screen {
+  :root[data-mode="static"] {
+    --toolbar-height: 0rem;
+  }
+  :root[data-mode="static"] .toolbar,
+  :root[data-mode="static"] .page-selection,
+  :root[data-mode="static"] .block-select,
+  :root[data-mode="static"] #reply-dialog,
+  :root[data-mode="static"] #shutdown-dialog {
+    display: none;
+  }
+}

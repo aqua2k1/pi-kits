@@ -5,6 +5,7 @@ import { runInNewContext } from "node:vm";
 import { Marked, type MarkedExtension, type TokensList } from "marked";
 import markedKatex from "marked-katex-extension";
 import type { Document, Operation } from "../../core/model.ts";
+import { clientPage } from "./client-page.ts";
 import { clientGlobals, clientScript } from "./client-script.ts";
 
 const require = createRequire(import.meta.url);
@@ -21,6 +22,10 @@ class Events {
     const listeners = this.listeners.get(type) ?? [];
     listeners.push(listener);
     this.listeners.set(type, listeners);
+  }
+
+  listenerTypes() {
+    return [...this.listeners.keys()];
   }
 
   emit(type: string, event: Record<string, unknown> = {}) {
@@ -257,7 +262,7 @@ export function writeCount(nodes: Element[]) {
   );
 }
 
-export function browser() {
+export function browser(documentData?: object | string) {
   const nodes: Element[] = [];
   const createElement = (tag: string) => {
     const node = new Element(tag);
@@ -290,10 +295,7 @@ export function browser() {
   };
   const fonts = { ready: Promise.resolve() };
   const ids = new Map<string, Element>();
-  const html = readFileSync(
-    new URL("../../web/client.html", import.meta.url),
-    "utf8",
-  );
+  const html = clientPage();
   for (const match of html.matchAll(/<([\w-]+)[^>]*\bid="([^"]+)"/g)) {
     ids.set(match[2], createElement(match[1]));
   }
@@ -302,6 +304,12 @@ export function browser() {
     assert.ok(node, `Missing HTML element #${id}`);
     return node;
   };
+  if (documentData !== undefined)
+    get("document-data").textContent =
+      typeof documentData === "string"
+        ? documentData
+        : JSON.stringify(documentData);
+  const documentElement = createElement("html");
   const timers = new Map<number, () => void>();
   let timerId = 0;
   class Socket extends Events {
@@ -479,7 +487,7 @@ export function browser() {
         getElementById: get,
         createElement,
         title: "Canvas Note",
-        documentElement: createElement("html"),
+        documentElement,
         fonts,
         body,
         execCommand(command: string) {
@@ -557,6 +565,8 @@ export function browser() {
     clipboard,
     printing,
     themeColors,
+    documentElement,
+    timers,
     fonts,
     body,
     runTimers() {

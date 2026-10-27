@@ -10,6 +10,7 @@ import { MessageKind } from "../core/contracts.js";
 import { type Document, documentFingerprint } from "../core/model.ts";
 import type { DocumentStore } from "../core/store.ts";
 import type { Feedback, RenderErrorReport } from "../core/types.ts";
+import { readClientPage } from "./page.ts";
 import {
   errorMessage,
   feedbackForDocument,
@@ -18,7 +19,6 @@ import {
   renderErrorForDocument,
   replyFingerprint,
 } from "./protocol.ts";
-
 import { readThemeStyles } from "./theme.ts";
 
 const require = createRequire(import.meta.url);
@@ -31,11 +31,18 @@ const assets = new Map<string, [string, string]>([
       "text/javascript; charset=utf-8",
     ],
   ],
-  ["/", [join(assetRoot, "client.html"), "text/html; charset=utf-8"]],
   ["/favicon.svg", [join(assetRoot, "favicon.svg"), "image/svg+xml"]],
   [
     "/client.js",
     [join(assetRoot, "client.js"), "text/javascript; charset=utf-8"],
+  ],
+  [
+    "/document-view.js",
+    [join(assetRoot, "document-view.js"), "text/javascript; charset=utf-8"],
+  ],
+  [
+    "/online-controller.js",
+    [join(assetRoot, "online-controller.js"), "text/javascript; charset=utf-8"],
   ],
   [
     "/chart-theme.js",
@@ -213,9 +220,17 @@ export async function startCanvasNoteServer(options: ServerOptions) {
         res.writeHead(405).end();
         return;
       }
-      if (
-        new URL(req.url ?? "/", "http://canvas.local").pathname === "/theme.css"
-      ) {
+      const pathname = new URL(req.url ?? "/", "http://canvas.local").pathname;
+      if (pathname === "/") {
+        const content = await readClientPage();
+        res.writeHead(200, {
+          "content-type": "text/html; charset=utf-8",
+          "cache-control": "no-store",
+        });
+        res.end(req.method === "HEAD" ? undefined : content);
+        return;
+      }
+      if (pathname === "/theme.css") {
         const content = await readThemeStyles();
         res.writeHead(200, {
           "content-type": "text/css; charset=utf-8",

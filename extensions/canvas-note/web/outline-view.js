@@ -105,6 +105,9 @@ export function createOutlineView({
   return {
     updatePage,
     removePage,
+    snapshotFolds() {
+      return Array.from(folds.entries());
+    },
     setAllExpanded(open) {
       for (const page of pages.values()) {
         for (const entry of page.entries.values()) {

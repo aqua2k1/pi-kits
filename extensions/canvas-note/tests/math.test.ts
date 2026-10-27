@@ -21,9 +21,9 @@ const options = {
 };
 
 const source = clientScript(
-  readFileSync(new URL("../web/client.js", import.meta.url), "utf8"),
+  readFileSync(new URL("../web/document-view.js", import.meta.url), "utf8"),
 );
-const boundary = source.indexOf("\n  (() => {");
+const boundary = source.indexOf("\n  // Shared local rendering");
 assert.ok(boundary > 0);
 const renderMarkdown = runInNewContext(
   `${source.slice(0, boundary)}\n globalThis.renderMarkdown = renderMarkdown;\n}`,

@@ -15,6 +15,7 @@ import {
   resolveCanvasPublicHost,
   startCanvasNoteServer,
 } from "../server/index.ts";
+import { readClientPage } from "../server/page.ts";
 
 test("HTTP serves the same shared ESM contracts with JavaScript MIME type", async (t) => {
   const dir = await mkdtemp(join(tmpdir(), "canvas-note-contracts-"));
@@ -27,6 +28,15 @@ test("HTTP serves the same shared ESM contracts with JavaScript MIME type", asyn
     onReply: () => {},
   });
   t.after(() => server.close());
+  const page = await fetch(`${server.url}/`);
+  assert.equal(page.status, 200);
+  assert.equal(page.headers.get("content-type"), "text/html; charset=utf-8");
+  assert.equal(await page.text(), await readClientPage());
+  const pageHead = await fetch(`${server.url}/`, { method: "HEAD" });
+  assert.equal(pageHead.status, 200);
+  assert.equal(await pageHead.text(), "");
+  const fragment = await fetch(`${server.url}/fragments/toolbar.html`);
+  assert.equal(fragment.status, 404);
   const response = await fetch(`${server.url}/core/contracts.js`);
   assert.equal(response.status, 200);
   assert.equal(
@@ -335,6 +345,8 @@ test("real HTTP, WebSocket snapshots, atomic rename watch, reply acknowledgment 
   for (const path of [
     "/favicon.svg",
     "/client.js",
+    "/document-view.js",
+    "/online-controller.js",
     "/chart-theme.js",
     "/outline-model.js",
     "/outline-view.js",

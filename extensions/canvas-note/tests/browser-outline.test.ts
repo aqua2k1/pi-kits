@@ -34,6 +34,7 @@ async function connectBrowser(endpoint: string) {
   >();
   const exceptions: unknown[] = [];
   const failures: unknown[] = [];
+  const requests: { sessionId: string; url: string }[] = [];
   socket.on("message", (raw) => {
     const message = JSON.parse(raw.toString());
     if (message.id) {
@@ -42,6 +43,11 @@ async function connectBrowser(endpoint: string) {
       if (message.error)
         request?.reject(new Error(JSON.stringify(message.error)));
       else request?.resolve(message.result);
+    } else if (message.method === "Network.requestWillBeSent") {
+      requests.push({
+        sessionId: message.sessionId,
+        url: message.params.request.url,
+      });
     } else if (message.method === "Runtime.exceptionThrown") {
       exceptions.push(message.params.exceptionDetails);
     } else if (
@@ -67,7 +73,7 @@ async function connectBrowser(endpoint: string) {
       socket.send(JSON.stringify({ id, method, params, sessionId }));
     });
   };
-  return { send, exceptions, failures, close: () => socket.close() };
+  return { send, exceptions, failures, requests, close: () => socket.close() };
 }
 
 async function until<T>(
@@ -108,7 +114,7 @@ test("real Chromium renders semantic outlines, consumes updates and exports work
       {
         type: "text",
         spec: {
-          md: `### Repeated heading\n\nSECONDBLOCKSENTINEL\n\n${spacer}\n\nSecond\n======\n\n> #### Quoted heading`,
+          md: `### Repeated heading\n\nSECONDBLOCKSENTINEL\n\n![Embedded](/favicon.svg?x=1&amp;y=2)\n\n<picture><source srcset="/favicon.svg?variant=source"><img src="/favicon.svg?variant=fallback" srcset="/favicon.svg?variant=other 2x"></picture>\n\n${spacer}\n\nSecond\n======\n\n> #### Quoted heading`,
         },
       },
       {
@@ -127,11 +133,26 @@ test("real Chromium renders semantic outlines, consumes updates and exports work
   const { pageId: excludedPageId } = await store.insertPage({
     title: "Excluded page",
   });
+  const hostile = "</script><script>window.exportInjection = true</script>";
   const { blockIds: excludedBlockIds } = await store.insertBlocks({
     pageId: excludedPageId,
     blocks: [
       { type: "text", spec: { md: "EXCLUDEDPAGESENTINEL" } },
       { type: "text", spec: { md: "MIXEDBLOCKSENTINEL" } },
+      {
+        type: "code",
+        spec: {
+          language: "javascript",
+          code: `const hostile = ${JSON.stringify(hostile)};`,
+        },
+      },
+      { type: "math", spec: { latex: "x^2 + y^2 = z^2" } },
+      {
+        type: "text",
+        spec: {
+          md: "| Name | Value |\n| --- | --- |\n| Offline | 42 |\n\nInline math $a^2$.",
+        },
+      },
     ],
   });
   const [firstId, secondId, chartId] = inserted.blockIds;
@@ -401,48 +422,179 @@ test("real Chromium renders semantic outlines, consumes updates and exports work
     checked: Array.from(document.querySelectorAll('.page-select, .block-select'), node => node.checked),
     chartUnchanged: window.testChart === window.echarts.getInstanceByDom(document.querySelector('[data-block-id="${chartId}"] .block-content'))
   })`);
+  // Install guards before any application script, not after static bootstrap.
+  const guardStatic = async (command: typeof send) => {
+    await command("Runtime.enable");
+    await command("Page.enable");
+    await command("Network.enable");
+    await command("Network.emulateNetworkConditions", {
+      offline: true,
+      latency: 0,
+      downloadThroughput: 0,
+      uploadThroughput: 0,
+    });
+    await command("Page.addScriptToEvaluateOnNewDocument", {
+      source: `(() => {
+        const attempts = window.staticAttempts = { fetch: 0, xhr: 0, ws: 0, onlineListeners: [] };
+        window.fetch = new Proxy(window.fetch, { apply(target, self, args) { attempts.fetch++; return Reflect.apply(target, self, args); } });
+        window.WebSocket = new Proxy(window.WebSocket, { construct(target, args) { attempts.ws++; return Reflect.construct(target, args); } });
+        XMLHttpRequest.prototype.open = new Proxy(XMLHttpRequest.prototype.open, { apply(target, self, args) { attempts.xhr++; return Reflect.apply(target, self, args); } });
+        EventTarget.prototype.addEventListener = new Proxy(EventTarget.prototype.addEventListener, {
+          apply(target, self, args) {
+            if (args[0] === 'beforeunload' || self instanceof Element && self.matches('.toolbar *, .page-select, .block-select, #reply-dialog *, #shutdown-dialog *'))
+              attempts.onlineListeners.push([self.id || self.className || 'window', args[0]]);
+            return Reflect.apply(target, self, args);
+          }
+        });
+      })()`,
+    });
+  };
+  const staticState = `(() => ({
+    pageIds: Array.from(document.querySelectorAll('#pages .page'), node => node.dataset.pageId),
+    blockIds: Array.from(document.querySelectorAll('#pages .block'), node => node.dataset.blockId),
+    outlinePageIds: Array.from(document.querySelectorAll('#outline-list > .outline-page'), node => node.dataset.pageId),
+    charts: Array.from(document.querySelectorAll('#pages .block')).filter(node => window.echarts.getInstanceByDom(node.querySelector('.block-content'))).map(node => node.dataset.blockId),
+    promoted: !!document.querySelector('.outline-page > .outline-children > .outline-heading > .outline-page-row > button.outline-link[data-target-id="canvas-heading-${secondId}-0"]'),
+    stableIds: Array.from(document.querySelectorAll('#pages .page')).every(node => node.id === 'page-' + node.dataset.pageId) && Array.from(document.querySelectorAll('#pages .block')).every(node => node.id === 'block-' + node.dataset.blockId),
+    text: document.getElementById('pages').textContent,
+    mode: document.documentElement.dataset.mode,
+    hidden: Array.from(document.querySelectorAll('.toolbar, .page-selection, .block-select')).every(node => getComputedStyle(node).display === 'none' || !node.getClientRects().length),
+    attempts: window.staticAttempts,
+    imagesReady: Array.from(document.querySelectorAll('#pages img')).every(image => image.currentSrc.startsWith('data:image/') && image.complete && image.naturalWidth > 0),
+    pictureSources: document.querySelectorAll('#pages picture source').length,
+    injected: window.exportInjection === true
+  }))()`;
+  const inspectStatic = async (filename: string, blockIds: string[]) => {
+    const { targetId: offlineTarget } = await cdp.send("Target.createTarget", {
+      url: "about:blank",
+    });
+    const { sessionId: offlineSession } = await cdp.send(
+      "Target.attachToTarget",
+      { targetId: offlineTarget, flatten: true },
+    );
+    const command: typeof send = (method, params = {}) =>
+      cdp.send(method, params, offlineSession);
+    const inspect = async <T = unknown>(expression: string): Promise<T> => {
+      const result = await command("Runtime.evaluate", {
+        expression,
+        awaitPromise: true,
+        returnByValue: true,
+      });
+      assert.equal(
+        result.exceptionDetails,
+        undefined,
+        JSON.stringify(result.exceptionDetails),
+      );
+      return result.result?.value as T;
+    };
+    try {
+      await guardStatic(command);
+      await command("Page.navigate", { url: pathToFileURL(filename).href });
+      await until(
+        () =>
+          inspect(
+            `document.documentElement?.dataset.mode === 'static' && document.querySelectorAll('#pages .block').length === ${blockIds.length} && document.querySelectorAll('#outline-list > .outline-page').length > 0 ${blockIds.includes(chartId) ? `&& !!document.querySelector('[data-block-id="${chartId}"] canvas')` : ""}`,
+          ),
+        "selected file shared renderer",
+      );
+      // Wait beyond the initial online reconnect delay, catching accidental retries.
+      await delay(600);
+      const state = await inspect<{
+        pageIds: string[];
+        blockIds: string[];
+        outlinePageIds: string[];
+        charts: string[];
+        promoted: boolean;
+        text: string;
+        mode: string;
+        hidden: boolean;
+        stableIds: boolean;
+        attempts: unknown;
+        injected: boolean;
+        imagesReady: boolean;
+        pictureSources: number;
+      }>(staticState);
+      assert.equal(state.mode, "static");
+      assert.equal(state.hidden, true);
+      assert.equal(state.stableIds, true);
+      assert.equal(state.injected, false);
+      assert.equal(state.imagesReady, true);
+      assert.equal(state.pictureSources, 0);
+      assert.deepEqual(state.attempts, {
+        fetch: 0,
+        xhr: 0,
+        ws: 0,
+        onlineListeners: [],
+      });
+      assert.deepEqual(
+        cdp.requests.filter(
+          (request) =>
+            request.sessionId === offlineSession &&
+            /^(https?|wss?):/.test(request.url),
+        ),
+        [],
+      );
+      return state;
+    } finally {
+      await cdp.send("Target.closeTarget", { targetId: offlineTarget });
+    }
+  };
+  const exportPayload = (html: string) => {
+    assert.doesNotMatch(
+      html,
+      /<!--\s*include:/,
+      "export uses the assembled common page",
+    );
+    const json =
+      /<script\b(?=[^>]*\bid="document-data")(?=[^>]*\btype="application\/json")[^>]*>([\s\S]*?)<\/script>/i.exec(
+        html,
+      )?.[1];
+    assert.ok(json, "export contains the data bootstrap");
+    assert.doesNotMatch(json, /</, "payload escapes script-breaking text");
+    return JSON.parse(json) as {
+      doc: { pages: { id: string; blocks: { id: string }[] }[] };
+      documentId: string;
+      title: string;
+      view: unknown;
+    };
+  };
   const checkExport = async (pageIds: string[], blockIds: string[]) => {
     const before = await liveState();
-    const { html } = await downloadHtml();
+    const { html, filename } = await downloadHtml();
     assert.deepEqual(
       await liveState(),
       before,
       "HTML export preserves online DOM and selections",
     );
-    const parsed = await evaluate<{
-      pageIds: string[];
-      blockIds: string[];
-      outlinePageIds: string[];
-      invalidLinks: string[];
-      inertLinks: number;
-      charts: string[];
-      promoted: boolean;
-      text: string;
-    }>(`(() => {
-      const doc = new DOMParser().parseFromString(${JSON.stringify(html)}, 'text/html');
-      return {
-        pageIds: Array.from(doc.querySelectorAll('#pages .page'), node => node.dataset.pageId),
-        blockIds: Array.from(doc.querySelectorAll('#pages .block'), node => node.dataset.blockId),
-        outlinePageIds: Array.from(doc.querySelectorAll('#outline-list > .outline-page'), node => node.dataset.pageId),
-        invalidLinks: Array.from(doc.querySelectorAll('a.outline-link')).filter(link => !doc.getElementById(decodeURIComponent(link.hash.slice(1)))).map(link => link.getAttribute('href')),
-        inertLinks: doc.querySelectorAll('button.outline-link').length,
-        charts: Array.from(doc.querySelectorAll('[data-export-chart]'), node => node.dataset.exportChart),
-        promoted: !!doc.querySelector('.outline-page > .outline-children > .outline-heading > .outline-page-row > a[href="#canvas-heading-${secondId}-0"]'),
-        text: doc.getElementById('pages').textContent
-      };
-    })()`);
+    const payload = exportPayload(html);
+    assert.deepEqual(
+      payload.doc.pages.map((page) => page.id),
+      pageIds,
+    );
+    assert.deepEqual(
+      payload.doc.pages.flatMap((page) => page.blocks.map((block) => block.id)),
+      blockIds,
+    );
+    assert.equal(
+      payload.documentId,
+      await evaluate("document.getElementById('document-id').textContent"),
+    );
+    assert.equal(payload.title, await evaluate("document.title"));
+    assert.ok(payload.view, "export preserves local outline view state");
+    assert.doesNotMatch(
+      html,
+      /class="(?:page|block)"[^>]*data-(?:page|block)-id=/,
+      "document is rendered only after bootstrap",
+    );
+    const parsed = await inspectStatic(filename, blockIds);
     assert.deepEqual(parsed.pageIds, pageIds);
     assert.deepEqual(parsed.blockIds, blockIds);
     assert.deepEqual(parsed.outlinePageIds, pageIds);
-    assert.deepEqual(parsed.invalidLinks, []);
-    assert.equal(parsed.inertLinks, 0);
     assert.deepEqual(
       parsed.charts,
       blockIds.includes(chartId) ? [chartId] : [],
     );
     assert.doesNotMatch(parsed.text, /EXCLUDEDPAGESENTINEL/);
-    if (!blockIds.includes(chartId))
-      assert.doesNotMatch(html, /"charts":\[\{"id":/);
     return parsed;
   };
 
@@ -566,37 +718,35 @@ test("real Chromium renders semantic outlines, consumes updates and exports work
     0,
   );
   const { filename, html: exported } = await downloadHtml();
-  const allIds = await evaluate(`(() => {
-    const doc = new DOMParser().parseFromString(${JSON.stringify(exported)}, 'text/html');
-    return {
-      pages: Array.from(doc.querySelectorAll('#pages .page'), node => node.dataset.pageId),
-      blocks: Array.from(doc.querySelectorAll('#pages .block'), node => node.dataset.blockId)
-    };
-  })()`);
-  assert.deepEqual(allIds, {
-    pages: [pageId, emptyPageId, excludedPageId],
-    blocks: [secondId, chartId, ...excludedBlockIds],
-  });
+  const payload = exportPayload(exported);
+  const expectedPages = [pageId, emptyPageId, excludedPageId];
+  const expectedBlocks = [secondId, chartId, ...excludedBlockIds];
+  assert.deepEqual(
+    payload.doc.pages.map((page) => page.id),
+    expectedPages,
+  );
+  assert.deepEqual(
+    payload.doc.pages.flatMap((page) => page.blocks.map((block) => block.id)),
+    expectedBlocks,
+  );
   assert.match(exported, /EXCLUDEDPAGESENTINEL/);
-  assert.match(exported, new RegExp(`href="#canvas-heading-${secondId}-0"`));
-  assert.doesNotMatch(exported, /id="outline-mode"|new WebSocket/);
+  assert.ok(
+    exported.includes("\\u003c/script>"),
+    "hostile payload is script-safe",
+  );
   assert.deepEqual(errors, []);
   assert.deepEqual(cdp.exceptions, []);
   assert.deepEqual(cdp.failures, []);
   // Close the live page/server, then deny network in the same real browser.
   await send("Page.navigate", { url: "about:blank" });
   await server.close();
-  await send("Network.emulateNetworkConditions", {
-    offline: true,
-    latency: 0,
-    downloadThroughput: 0,
-    uploadThroughput: 0,
-  });
+  const offlineRequestStart = cdp.requests.length;
+  await guardStatic(send);
   await send("Page.navigate", { url: pathToFileURL(filename).href });
   await until(
     () =>
       evaluate(
-        "document.querySelectorAll('a.outline-link').length > 0 && !!document.querySelector('[data-export-chart] canvas')",
+        `document.querySelectorAll('button.outline-link').length > 0 && !!document.querySelector('[data-block-id="${chartId}"] canvas')`,
       ),
     "offline exported document and chart",
   );
@@ -605,16 +755,52 @@ test("real Chromium renders semantic outlines, consumes updates and exports work
     "Second",
     "Quoted heading",
   ]);
+  const rendered = await evaluate<{
+    pageIds: string[];
+    blockIds: string[];
+    hidden: boolean;
+    injected: boolean;
+  }>(staticState);
+  assert.deepEqual(rendered.pageIds, expectedPages);
+  assert.deepEqual(rendered.blockIds, expectedBlocks);
+  assert.equal(rendered.hidden, true);
+  assert.equal(rendered.injected, false);
   assert.equal(
-    await evaluate("document.getElementById('outline-mode') === null"),
-    true,
+    await evaluate(
+      "document.querySelectorAll('.outline-heading .outline-heading').length",
+    ),
+    1,
   );
   await checkAllFolds();
-  const offlineTargets = await evaluate<boolean[]>(
-    "Array.from(document.querySelectorAll('a.outline-link'), link => !!document.getElementById(decodeURIComponent(link.hash.slice(1))))",
+  await evaluate("document.getElementById('outline-mode-structure').click()");
+  assert.equal(
+    await evaluate("document.querySelectorAll('.outline-block').length"),
+    expectedBlocks.length,
   );
-  assert.ok(offlineTargets.length > 3);
-  assert.ok(offlineTargets.every(Boolean));
+  await evaluate("document.getElementById('outline-mode-semantic').click()");
+  assert.deepEqual(await labels(), [
+    "Repeated heading",
+    "Second",
+    "Quoted heading",
+  ]);
+  assert.equal(
+    await evaluate(
+      `document.querySelector('[data-block-id="${excludedBlockIds[2]}"] pre code').textContent`,
+    ),
+    `const hostile = ${JSON.stringify(hostile)};`,
+  );
+  assert.equal(
+    await evaluate(
+      `!!document.querySelector('[data-block-id="${excludedBlockIds[2]}"] .hljs-keyword')`,
+    ),
+    true,
+  );
+  assert.equal(
+    await evaluate(
+      `!!document.querySelector('[data-block-id="${excludedBlockIds[3]}"] .katex') && !!document.querySelector('[data-block-id="${excludedBlockIds[4]}"] table') && !!document.querySelector('[data-block-id="${excludedBlockIds[4]}"] .katex')`,
+    ),
+    true,
+  );
   await evaluate(`window.offlineBranch = Array.from(document.querySelectorAll('.outline-heading')).find(node => node.querySelector(':scope > .outline-children').children.length);
     window.offlineBranch.querySelector(':scope > .outline-page-row > .outline-page-toggle').click()`);
   assert.equal(
@@ -631,16 +817,47 @@ test("real Chromium renders semantic outlines, consumes updates and exports work
   );
   assert.deepEqual(
     await evaluate(
-      "window.echarts.getInstanceByDom(document.querySelector('[data-export-chart]')).getOption().series[0].data",
+      `window.echarts.getInstanceByDom(document.querySelector('[data-block-id="${chartId}"] .block-content')).getOption().series[0].data`,
     ),
     [1, 2],
   );
   await evaluate(
-    "window.offlineBranch.querySelector(':scope > .outline-page-row > .outline-page-toggle').click(); document.querySelector('.outline-heading a').click()",
+    "window.offlineBranch.querySelector(':scope > .outline-page-row > .outline-page-toggle').click(); document.querySelector('.outline-heading button.outline-link').click()",
   );
   await until(
-    () => evaluate(`location.hash === '#canvas-heading-${secondId}-0'`),
-    "offline heading anchor navigation",
+    () =>
+      evaluate(
+        `(() => { const rect = document.getElementById('canvas-heading-${secondId}-0').getBoundingClientRect(); return rect.top >= 0 && rect.top < innerHeight; })()`,
+      ),
+    "offline heading button navigation",
+  );
+  // A user-gesture evaluation exercises the real file:// clipboard API/fallback.
+  const copyResult = await send("Runtime.evaluate", {
+    expression: `document.querySelector('[data-block-id="${excludedBlockIds[2]}"] .block-copy').click()`,
+    userGesture: true,
+  });
+  assert.equal(copyResult.exceptionDetails, undefined);
+  await until(
+    () =>
+      evaluate(
+        `document.querySelector('[data-block-id="${excludedBlockIds[2]}"] .block-copy').textContent === 'Copied'`,
+      ),
+    "offline code copy",
+  );
+  const offlinePdf = await send("Page.printToPDF", { printBackground: true });
+  assert.ok(offlinePdf.data, "static shared print lifecycle generates PDF");
+  await delay(600);
+  assert.deepEqual(await evaluate("window.staticAttempts"), {
+    fetch: 0,
+    xhr: 0,
+    ws: 0,
+    onlineListeners: [],
+  });
+  assert.deepEqual(
+    cdp.requests
+      .slice(offlineRequestStart)
+      .filter((request) => /^(https?|wss?):/.test(request.url)),
+    [],
   );
   assert.deepEqual(cdp.exceptions, []);
   assert.deepEqual(cdp.failures, []);

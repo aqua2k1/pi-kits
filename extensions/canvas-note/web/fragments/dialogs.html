@@ -1,0 +1,28 @@
+<dialog id="shutdown-dialog" aria-labelledby="shutdown-title" aria-describedby="shutdown-description">
+  <form method="dialog">
+    <h2 id="shutdown-title">关闭 Canvas Note 服务？</h2>
+    <p id="shutdown-description">所有 Canvas Note 网页将断开连接，已保存的文档保留。下次插入或更新内容时重新启动服务。</p>
+    <p id="shutdown-status" role="status"></p>
+    <div class="dialog-actions">
+      <button id="shutdown-cancel" type="submit" value="cancel">取消</button>
+      <button id="shutdown-confirm" type="button" class="primary">确认关闭</button>
+    </div>
+  </form>
+</dialog>
+<dialog id="reply-dialog" aria-labelledby="reply-title" aria-describedby="reply-context">
+  <form id="reply-form">
+    <div class="dialog-heading">
+      <h2 id="reply-title">Reply to selection</h2>
+      <button id="dismiss" type="button" aria-label="Close reply dialog">×</button>
+    </div>
+    <p id="reply-context" class="muted"></p>
+    <ul id="selected-summaries" aria-label="Selected pages and blocks"></ul>
+    <label for="reply-text">Your reply</label>
+    <textarea id="reply-text" rows="5" placeholder="Share feedback or ask for changes…" required></textarea>
+    <p id="reply-status" role="status" aria-live="polite"></p>
+    <div class="dialog-actions">
+      <button id="cancel" type="button">Cancel</button>
+      <button id="submit" type="submit" class="primary">Send reply</button>
+    </div>
+  </form>
+</dialog>

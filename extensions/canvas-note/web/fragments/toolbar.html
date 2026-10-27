@@ -1,0 +1,19 @@
+<header class="toolbar">
+  <a class="brand" href="#pages">Canvas Note</a>
+  <div id="document-id" class="document-id" aria-label="Document directory" hidden></div>
+  <div class="selection-tools" role="group" aria-label="Page and block selection">
+    <span id="selection-count" role="status">0 selected</span>
+    <button id="reply" type="button" class="primary" disabled>Reply</button>
+    <button id="export-toggle" type="button" popovertarget="export-menu">Export ▾</button>
+    <div id="export-menu" class="export-menu" popover>
+      <button id="save-pdf" type="button" disabled>Save PDF</button>
+      <button id="save-html" type="button" disabled>Save HTML</button>
+      <span id="export-status" role="status"></span>
+    </div>
+    <button id="clear" type="button" disabled>Clear</button>
+  </div>
+  <div class="connection-tools">
+    <span id="connection" role="status" data-state="connecting">Connecting…</span>
+    <button id="shutdown" type="button" disabled>Close server</button>
+  </div>
+</header>

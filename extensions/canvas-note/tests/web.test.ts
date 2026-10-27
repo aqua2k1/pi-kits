@@ -8,15 +8,16 @@ import {
   OperationKind,
   PageChangeKind,
 } from "../core/contracts.js";
+import { clientPage } from "./fixtures/client-page.ts";
 import { clientGlobals, clientScript } from "./fixtures/client-script.ts";
 
 // Evaluate only the helper block: it must not require DOM, sockets, timers or runtime state.
 const source = readFileSync(
-  new URL("../web/client.js", import.meta.url),
+  new URL("../web/document-view.js", import.meta.url),
   "utf8",
 );
 const script = clientScript(source);
-const boundary = script.indexOf("\n  (() => {");
+const boundary = script.indexOf("\n  // Shared local rendering");
 assert.ok(boundary > 0);
 const sandbox: typeof clientGlobals & {
   helpers?: Record<string, (...args: unknown[]) => unknown>;
@@ -156,10 +157,7 @@ test("document identity is displayed verbatim without changing the directory nam
       title: "Canvas Note",
     });
   }
-  const html = readFileSync(
-    new URL("../web/client.html", import.meta.url),
-    "utf8",
-  );
+  const html = clientPage();
   assert.match(
     html,
     /<link rel="icon" href="\/favicon\.svg" type="image\/svg\+xml" \/>/,
@@ -169,7 +167,10 @@ test("document identity is displayed verbatim without changing the directory nam
   assert.match(html, /id="outline-tree"/);
   assert.match(html, /aria-controls="outline-tree"/);
   assert.ok(
-    source.includes('$("document-id").textContent = presentation.identity'),
+    readFileSync(
+      new URL("../web/online-controller.js", import.meta.url),
+      "utf8",
+    ).includes('$("document-id").textContent = presentation.identity'),
   );
 });
 
