@@ -51,6 +51,31 @@ const payload = {
   },
 };
 
+test("Outline is the default while an explicitly saved Structure view is restored", () => {
+  const online = browser();
+  assert.equal(
+    online.get("outline-mode-semantic").getAttribute("aria-pressed"),
+    "true",
+  );
+  assert.equal(
+    online.get("outline-mode-structure").getAttribute("aria-pressed"),
+    "false",
+  );
+  const withoutView = browser({ doc, title: "Default static" });
+  assert.equal(
+    withoutView.get("outline-mode-semantic").getAttribute("aria-pressed"),
+    "true",
+  );
+  const savedStructure = browser({
+    ...payload,
+    view: { outlineMode: "structure" },
+  });
+  assert.equal(
+    savedStructure.get("outline-mode-structure").getAttribute("aria-pressed"),
+    "true",
+  );
+});
+
 test("nonblank embedded document renders all block kinds without online registrations", () => {
   const b = browser(payload);
   assert.equal(b.documentElement.dataset.mode, "static");
@@ -101,7 +126,9 @@ test("static outline restores view and keeps local navigation, switching and fol
   assert.equal(page.children[1].hidden, true);
   b.get("outline-toggle").emit("click");
   assert.equal(b.get("outline-tree").hidden, false);
-  b.get("outline-expand-all").emit("click");
+  assert.equal(b.get("outline-toggle-all").dataset.state, "0");
+  b.get("outline-toggle-all").emit("click");
+  assert.equal(b.get("outline-toggle-all").dataset.state, "1");
   assert.equal(page.children[1].hidden, false);
   const headingLink = b
     .get("outline-list")
@@ -117,7 +144,8 @@ test("static outline restores view and keeps local navigation, switching and fol
     .querySelectorAll(".outline-block-link")[0];
   blockLink.emit("click");
   assert.equal(b.block("text").writes.scrollIntoView, 1);
-  b.get("outline-collapse-all").emit("click");
+  b.get("outline-toggle-all").emit("click");
+  assert.equal(b.get("outline-toggle-all").dataset.state, "0");
   assert.equal(page.children[1].hidden, true);
   assert.equal(b.markdown.length, 1);
   assert.equal(b.charts[0].options.length, 1);

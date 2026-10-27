@@ -13,14 +13,13 @@
     </button>
   </div>
   <div id="outline-mode" class="outline-mode" role="group" aria-label="Contents view">
-    <button id="outline-mode-semantic" type="button" aria-pressed="false">Outline</button>
-    <button id="outline-mode-structure" type="button" aria-pressed="true">Structure</button>
+    <button id="outline-mode-semantic" type="button" aria-pressed="true">Outline</button>
+    <button id="outline-mode-structure" type="button" aria-pressed="false">Structure</button>
   </div>
   <div id="outline-actions" class="outline-mode" role="group" aria-label="Expand or collapse all contents">
-    <button id="outline-expand-all" type="button">Expand all</button>
-    <button id="outline-collapse-all" type="button">Collapse all</button>
+    <button id="outline-toggle-all" type="button" aria-controls="outline-list" aria-expanded="true" data-state="1">Collapse all</button>
   </div>
-  <nav id="outline-tree" aria-label="Pages and blocks">
+  <nav id="outline-tree" aria-label="Pages and headings">
     <ul id="outline-list" class="outline-list"></ul>
   </nav>
 </aside>

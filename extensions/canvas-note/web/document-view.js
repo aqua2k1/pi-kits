@@ -638,7 +638,7 @@ export function createDocumentView({
   const pages = new Map();
   const blocks = new Map();
   let outlineMode =
-    initialView.outlineMode === "semantic" ? "semantic" : "structure";
+    initialView.outlineMode === "structure" ? "structure" : "semantic";
   const dirtyOutlinePages = new Set();
   const outlineView = createOutlineView({
     document,
@@ -846,12 +846,26 @@ export function createDocumentView({
     });
   }
 
-  $("outline-expand-all").addEventListener("click", () => {
-    outlineView.setAllExpanded(true);
+  let allExpanded =
+    initialView.allExpanded === 0
+      ? 0
+      : initialView.allExpanded === 1
+        ? 1
+        : initialView.folds?.some(([, open]) => !open)
+          ? 0
+          : 1;
+  const toggleAll = $("outline-toggle-all");
+  function updateToggleAll() {
+    toggleAll.textContent = allExpanded ? "Collapse all" : "Expand all";
+    toggleAll.dataset.state = String(allExpanded);
+    toggleAll.setAttribute("aria-expanded", String(!!allExpanded));
+  }
+  toggleAll.addEventListener("click", () => {
+    allExpanded ^= 1;
+    outlineView.setAllExpanded(!!allExpanded);
+    updateToggleAll();
   });
-  $("outline-collapse-all").addEventListener("click", () => {
-    outlineView.setAllExpanded(false);
-  });
+  updateToggleAll();
 
   function setOutlineCollapsed(collapsed) {
     outline.classList.toggle("collapsed", collapsed);
@@ -1076,6 +1090,7 @@ export function createDocumentView({
         outlineMode,
         collapsed: outline.classList.contains("collapsed"),
         folds: outlineView.snapshotFolds(),
+        allExpanded,
       };
     },
     helpers: {

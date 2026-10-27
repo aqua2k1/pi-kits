@@ -3,7 +3,18 @@ import { test } from "node:test";
 import { setImmediate as settle } from "node:timers/promises";
 import { PageChangeKind } from "../core/contracts.js";
 import type { Block, Document, Operation, Page } from "../core/model.ts";
-import { browser, subtree, writeCount } from "./fixtures/browser.ts";
+import {
+  browser as createBrowser,
+  subtree,
+  writeCount,
+} from "./fixtures/browser.ts";
+
+// Reconciliation assertions below explicitly exercise the structural directory.
+const browser = () => {
+  const b = createBrowser();
+  b.get("outline-mode-structure").emit("click");
+  return b;
+};
 
 const text = (id: string, md = id): Block => ({
   id,

@@ -58,12 +58,24 @@ test("expand and collapse all affect every level in both directory modes without
       subtree(b.get("outline-list")).filter((node) =>
         node.classList.contains("outline-children"),
       );
-    b.get("outline-collapse-all").emit("click");
+    b.get("outline-toggle-all").emit("click");
+    assert.equal(b.get("outline-toggle-all").dataset.state, "0");
+    assert.equal(b.get("outline-toggle-all").textContent, "Expand all");
+    assert.equal(
+      b.get("outline-toggle-all").getAttribute("aria-expanded"),
+      "false",
+    );
     assert.ok(branches().length >= 2);
     assert.ok(branches().every((node) => node.hidden));
     b.snapshot(doc());
     assert.ok(branches().every((node) => node.hidden));
-    b.get("outline-expand-all").emit("click");
+    b.get("outline-toggle-all").emit("click");
+    assert.equal(b.get("outline-toggle-all").dataset.state, "1");
+    assert.equal(b.get("outline-toggle-all").textContent, "Collapse all");
+    assert.equal(
+      b.get("outline-toggle-all").getAttribute("aria-expanded"),
+      "true",
+    );
     assert.ok(branches().every((node) => !node.hidden));
   }
   assert.equal(writeCount(contentNodes), before);

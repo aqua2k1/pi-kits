@@ -261,7 +261,7 @@ test("real Chromium renders semantic outlines, consumes updates and exports work
     true,
   );
   const checkAllFolds = async () => {
-    await evaluate("document.getElementById('outline-collapse-all').click()");
+    await evaluate("document.getElementById('outline-toggle-all').click()");
     assert.equal(
       await evaluate(
         "Array.from(document.querySelectorAll('#outline-list .outline-children')).every(node => node.hidden)",
@@ -274,7 +274,7 @@ test("real Chromium renders semantic outlines, consumes updates and exports work
       ),
       true,
     );
-    await evaluate("document.getElementById('outline-expand-all').click()");
+    await evaluate("document.getElementById('outline-toggle-all').click()");
     assert.equal(
       await evaluate(
         "Array.from(document.querySelectorAll('#outline-list .outline-children')).every(node => !node.hidden)",
@@ -294,6 +294,12 @@ test("real Chromium renders semantic outlines, consumes updates and exports work
       "Array.from(document.querySelectorAll('#outline-mode button'), node => node.textContent)",
     ),
     ["Outline", "Structure"],
+  );
+  assert.equal(
+    await evaluate(
+      "document.getElementById('outline-mode-semantic').getAttribute('aria-pressed')",
+    ),
+    "true",
   );
   const originalDocument = await readFile(store.path, "utf8");
   await evaluate(`window.testChart = window.echarts.getInstanceByDom(document.querySelector('[data-block-id="${chartId}"] .block-content'));
