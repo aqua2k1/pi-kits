@@ -53,6 +53,14 @@ const assets = new Map<string, [string, string]>([
     "/outline-view.js",
     [join(assetRoot, "outline-view.js"), "text/javascript; charset=utf-8"],
   ],
+  [
+    "/selection-manager.js",
+    [join(assetRoot, "selection-manager.js"), "text/javascript; charset=utf-8"],
+  ],
+  [
+    "/export-scope.js",
+    [join(assetRoot, "export-scope.js"), "text/javascript; charset=utf-8"],
+  ],
   ["/client.css", [join(assetRoot, "client.css"), "text/css; charset=utf-8"]],
   ["/content.css", [join(assetRoot, "content.css"), "text/css; charset=utf-8"]],
   ["/print.css", [join(assetRoot, "print.css"), "text/css; charset=utf-8"]],

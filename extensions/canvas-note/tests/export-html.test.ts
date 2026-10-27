@@ -74,6 +74,13 @@ test("standalone HTML embeds resources and restores interactive charts in a real
 }, async () => {
   const dir = await mkdtemp(join(tmpdir(), "canvas-export-"));
   const files: Record<string, [string, string | Buffer]> = {
+    "/outline-view.js": [
+      "text/javascript",
+      await readFile(
+        new URL("../web/outline-view.js", import.meta.url),
+        "utf8",
+      ),
+    ],
     "/export-html.js": [
       "text/javascript",
       await readFile(new URL("../web/export-html.js", import.meta.url), "utf8"),

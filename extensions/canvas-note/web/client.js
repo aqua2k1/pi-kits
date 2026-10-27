@@ -12,12 +12,14 @@ import {
 } from "../core/contracts.js";
 import { createChartTheme } from "./chart-theme.js";
 import { exportHtml } from "./export-html.js";
+import { exportScope, projectExportDocument } from "./export-scope.js";
 import {
   buildPageOutline,
   headingTargetId,
   headingText,
 } from "./outline-model.js";
 import { createOutlineView } from "./outline-view.js";
+import { createSelectionManager } from "./selection-manager.js";
 
 {
   let chartThemeMode = "screen";
@@ -286,17 +288,11 @@ import { createOutlineView } from "./outline-view.js";
     }
   }
 
-  const selectedReply = (
-    version,
-    selection,
-    records,
-    pageSelection = new Set(),
-    pages = new Map(),
-  ) => {
+  const selectedReply = (version, selection, records, pages = new Map()) => {
     const context = {
       version,
-      blockIds: [...selection],
-      pageIds: [...pageSelection],
+      blockIds: [...selection.blockIds],
+      pageIds: [...selection.pageIds],
     };
     const pageSummaries = context.pageIds.map(
       (id) => `Page: ${pages.get(id).page.title || "Untitled page"}`,
@@ -615,8 +611,7 @@ import { createOutlineView } from "./outline-view.js";
     const outlineList = $("outline-list");
     const outlineToggle = $("outline-toggle");
     const dialog = $("reply-dialog");
-    const selection = new Set();
-    const pageSelection = new Set();
+    const selectionManager = createSelectionManager();
     const pages = new Map();
     const blocks = new Map();
     let outlineMode = "structure";
@@ -646,6 +641,25 @@ import { createOutlineView } from "./outline-view.js";
     let lastSubmission = null;
     let preparingPrint = false;
     let exportingHtml = false;
+    let printScope = null;
+    const printMarkers = new Set();
+
+    selectionManager.subscribe(({ blockIds, pageIds }) => {
+      for (const [ids, records, selected] of [
+        [blockIds, blocks, (id) => selectionManager.hasBlock(id)],
+        [pageIds, pages, (id) => selectionManager.hasPage(id)],
+      ]) {
+        for (const id of ids) {
+          const record = records.get(id);
+          if (!record) continue;
+          const checked = selected(id);
+          record.checkbox.checked = checked;
+          if (record.element.classList.contains("selected") !== checked)
+            record.element.classList.toggle("selected", checked);
+        }
+      }
+      updateControls();
+    });
 
     function send(message) {
       if (socket?.readyState !== WebSocket.OPEN) return false;
@@ -674,7 +688,7 @@ import { createOutlineView } from "./outline-view.js";
 
     function updateControls() {
       const next = controlState({
-        count: selection.size + pageSelection.size,
+        count: selectionManager.size,
         connected,
         closing,
         pending,
@@ -682,6 +696,9 @@ import { createOutlineView } from "./outline-view.js";
         version: doc?.version,
       });
       $("selection-count").textContent = next.selectionLabel;
+      $("export-toggle").title = selectionManager.size
+        ? "Export selected pages and blocks"
+        : "Export all pages";
       $("reply").disabled = next.replyDisabled;
       $("clear").disabled = next.clearDisabled;
       $("shutdown").disabled = next.shutdownDisabled;
@@ -783,10 +800,7 @@ import { createOutlineView } from "./outline-view.js";
       checkbox.type = "checkbox";
       checkbox.className = "block-select";
       checkbox.addEventListener("change", () => {
-        if (checkbox.checked) selection.add(id);
-        else selection.delete(id);
-        element.classList.toggle("selected", checkbox.checked);
-        updateControls();
+        selectionManager.setBlock(id, checkbox.checked);
       });
       const content = document.createElement("div");
       const copy = document.createElement("button");
@@ -847,7 +861,7 @@ import { createOutlineView } from "./outline-view.js";
       for (const pageId of dirtyOutlinePages) {
         const entry = pages.get(pageId);
         if (!entry) {
-          pageSelection.delete(pageId);
+          selectionManager.removePage(pageId);
           outlineView.removePage(pageId);
           continue;
         }
@@ -929,10 +943,7 @@ import { createOutlineView } from "./outline-view.js";
         caption.textContent = "Select page";
         label.append(checkbox, caption);
         checkbox.addEventListener("change", () => {
-          if (checkbox.checked) pageSelection.add(page.id);
-          else pageSelection.delete(page.id);
-          element.classList.toggle("selected", checkbox.checked);
-          updateControls();
+          selectionManager.setPage(page.id, checkbox.checked);
         });
         element.append(title, body, label);
         entry = { element, title, body, checkbox };
@@ -969,7 +980,7 @@ import { createOutlineView } from "./outline-view.js";
       record.element.remove();
       blocks.delete(id);
       failedBlocks.delete(id);
-      selection.delete(id);
+      selectionManager.removeBlock(id);
     }
 
     function finishUpdate() {
@@ -1015,7 +1026,7 @@ import { createOutlineView } from "./outline-view.js";
         if (livePages.has(id)) continue;
         entry.element.remove();
         pages.delete(id);
-        pageSelection.delete(id);
+        selectionManager.removePage(id);
       }
       syncOutline();
       awaitingSnapshot = false;
@@ -1078,19 +1089,66 @@ import { createOutlineView } from "./outline-view.js";
       }
     }
 
-    window.addEventListener("beforeprint", () => updateChartThemes("print"));
-    window.addEventListener("afterprint", () => updateChartThemes("screen"));
+    function preparePrintScope(selected = selectionManager.snapshot()) {
+      if (printScope || !doc) return;
+      printScope = exportScope(doc, selected);
+      if (printScope.all) return;
+      pagesRoot.classList.toggle("printing-selection", true);
+      for (const [index, id] of printScope.pageIds.entries()) {
+        const element = pages.get(id)?.element;
+        if (!element) continue;
+        element.classList.toggle("export-included", true);
+        if (index === 0) element.classList.toggle("export-first-page", true);
+        printMarkers.add(element);
+      }
+      for (const id of printScope.blockIds) {
+        const element = blocks.get(id)?.element;
+        if (!element) continue;
+        element.classList.toggle("export-included", true);
+        printMarkers.add(element);
+      }
+    }
+
+    function clearPrintScope() {
+      if (!printScope) return;
+      if (!printScope.all) pagesRoot.classList.remove("printing-selection");
+      for (const element of printMarkers) {
+        element.classList.remove("export-included");
+        element.classList.remove("export-first-page");
+      }
+      printMarkers.clear();
+      printScope = null;
+    }
+
+    window.addEventListener("beforeprint", () => {
+      preparePrintScope();
+      updateChartThemes("print");
+    });
+    window.addEventListener("afterprint", () => {
+      clearPrintScope();
+      updateChartThemes("screen");
+    });
     $("save-html").addEventListener("click", async () => {
       if (exportingHtml || preparingPrint || !doc?.pages.length) return;
       exportingHtml = true;
       $("export-status").textContent = "";
       updateControls();
       try {
+        const selected = selectionManager.snapshot();
+        const projected = projectExportDocument(doc, selected);
         await exportHtml({
           title: document.title,
           pages: pagesRoot,
           outline,
-          charts: doc.pages.flatMap((page) =>
+          scope: exportScope(doc, selected),
+          outlineNodes: projected.pages.map((page) =>
+            buildPageOutline(
+              page,
+              outlineMode,
+              (id) => blocks.get(id)?.headings || [],
+            ),
+          ),
+          charts: projected.pages.flatMap((page) =>
             page.blocks
               .filter(
                 (block) =>
@@ -1111,19 +1169,25 @@ import { createOutlineView } from "./outline-view.js";
     $("save-pdf").addEventListener("click", async () => {
       if (exportingHtml || preparingPrint || !doc?.pages.length) return;
       preparingPrint = true;
+      const selected = selectionManager.snapshot();
       $("save-pdf").title = "";
       updateControls();
       try {
+        const scope = exportScope(doc, selected);
+        const images = scope.blockIds.flatMap((id) =>
+          Array.from(blocks.get(id)?.content.querySelectorAll("img") || []),
+        );
         await Promise.all([
           document.fonts?.ready,
-          ...Array.from(pagesRoot.querySelectorAll("img"), (image) =>
-            image.decode?.().catch(() => {}),
-          ),
+          ...images.map((image) => image.decode?.().catch(() => {})),
         ]);
+        preparePrintScope(selected);
         window.print();
       } catch (error) {
         $("save-pdf").title = `Print failed: ${String(error)}`;
       } finally {
+        clearPrintScope();
+        if (chartThemeMode === "print") updateChartThemes("screen");
         preparingPrint = false;
         updateControls();
       }
@@ -1132,9 +1196,8 @@ import { createOutlineView } from "./outline-view.js";
     $("reply").addEventListener("click", () => {
       const selected = selectedReply(
         doc.version,
-        selection,
+        selectionManager.snapshot(),
         blocks,
-        pageSelection,
         pages,
       );
       replyContext = selected.context;
@@ -1152,17 +1215,7 @@ import { createOutlineView } from "./outline-view.js";
     });
 
     $("clear").addEventListener("click", () => {
-      selection.clear();
-      pageSelection.clear();
-      for (const entry of pages.values()) {
-        entry.checkbox.checked = false;
-        entry.element.classList.remove("selected");
-      }
-      for (const record of blocks.values()) {
-        record.checkbox.checked = false;
-        record.element.classList.remove("selected");
-      }
-      updateControls();
+      selectionManager.clear();
     });
 
     function dismiss() {
@@ -1258,22 +1311,7 @@ import { createOutlineView } from "./outline-view.js";
         } else if (pending && message.requestId === pending) {
           if (message.type === MessageKind.Ack) {
             pending = null;
-            for (const id of replyContext.blockIds) {
-              selection.delete(id);
-              const record = blocks.get(id);
-              if (record) {
-                record.checkbox.checked = false;
-                record.element.classList.remove("selected");
-              }
-            }
-            for (const id of replyContext.pageIds) {
-              pageSelection.delete(id);
-              const entry = pages.get(id);
-              if (entry) {
-                entry.checkbox.checked = false;
-                entry.element.classList.remove("selected");
-              }
-            }
+            selectionManager.remove(replyContext);
             $("reply-text").value = "";
             replyContext = null;
             lastSubmission = null;

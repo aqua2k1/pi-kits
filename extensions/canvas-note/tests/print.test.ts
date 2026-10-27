@@ -153,6 +153,82 @@ test("chart themes switch idempotently for print and restore cached screen color
   assert.equal(JSON.stringify(doc), before);
 });
 
+test("print scope shares page/block selections and cleans temporary markers without clearing selection", async () => {
+  const b = browser();
+  b.snapshot({
+    ...doc,
+    pages: [
+      ...doc.pages,
+      {
+        id: "other-page",
+        title: "Other",
+        blocks: [
+          { id: "other", type: "text", align: "left", spec: { md: "Other" } },
+        ],
+      },
+    ],
+  });
+  b.window.emit("beforeprint");
+  assert.equal(b.get("pages").classList.contains("printing-selection"), false);
+  b.window.emit("afterprint");
+  const checkbox = b.block("text").children[0];
+  checkbox.checked = true;
+  checkbox.emit("change");
+  b.window.emit("beforeprint");
+  assert.equal(b.get("pages").classList.contains("printing-selection"), true);
+  assert.equal(b.page("p").classList.contains("export-first-page"), true);
+  assert.equal(b.block("text").classList.contains("export-included"), true);
+  assert.equal(b.block("chart").classList.contains("export-included"), false);
+  assert.equal(
+    b.page("other-page").classList.contains("export-included"),
+    false,
+  );
+  b.window.emit("afterprint");
+  assert.equal(b.block("text").classList.contains("export-included"), false);
+  assert.equal(b.page("p").classList.contains("export-first-page"), false);
+  assert.equal(checkbox.checked, true);
+  const pageCheckbox = b.page("other-page").children[2].children[0];
+  pageCheckbox.checked = true;
+  pageCheckbox.emit("change");
+  b.window.emit("beforeprint");
+  assert.equal(
+    b.page("other-page").classList.contains("export-included"),
+    true,
+  );
+  assert.equal(b.block("other").classList.contains("export-included"), true);
+  assert.equal(b.block("text").classList.contains("export-included"), true);
+  assert.equal(b.block("chart").classList.contains("export-included"), false);
+  b.window.emit("afterprint");
+  b.printing.fail = true;
+  b.get("save-pdf").emit("click");
+  await settle();
+  assert.equal(b.get("pages").classList.contains("printing-selection"), false);
+  assert.equal(b.block("text").classList.contains("export-included"), false);
+  assert.equal(pageCheckbox.checked, true);
+  assert.equal(checkbox.checked, true);
+});
+
+test("PDF preparation does not wait for images outside the selected blocks", async () => {
+  const b = browser();
+  b.snapshot(doc);
+  const checkbox = b.block("text").children[0];
+  checkbox.checked = true;
+  checkbox.emit("change");
+  let decoded = false;
+  b.block("chart").children[1].append(
+    Object.assign(new Element("img"), {
+      decode() {
+        decoded = true;
+        return new Promise<void>(() => {});
+      },
+    }),
+  );
+  b.get("save-pdf").emit("click");
+  await settle();
+  assert.equal(decoded, false);
+  assert.equal(b.printing.calls, 1);
+});
+
 test("shared content, screen chrome and print rules have separate stylesheet ownership", async () => {
   const [html, content, screen, print] = await Promise.all(
     ["client.html", "content.css", "client.css", "print.css"].map((name) =>

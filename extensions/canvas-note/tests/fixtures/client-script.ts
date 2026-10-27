@@ -2,13 +2,17 @@ import assert from "node:assert/strict";
 import * as contracts from "../../core/contracts.js";
 import * as chartTheme from "../../web/chart-theme.js";
 import * as htmlExport from "../../web/export-html.js";
+import * as exportScope from "../../web/export-scope.js";
 import * as outlineModel from "../../web/outline-model.js";
 import * as outlineView from "../../web/outline-view.js";
+import * as selectionManager from "../../web/selection-manager.js";
 
 export const clientGlobals = {
   CanvasNoteContracts: contracts,
   CanvasNoteChartTheme: chartTheme,
   CanvasNoteHtmlExport: htmlExport,
+  CanvasNoteExportScope: exportScope,
+  CanvasNoteSelectionManager: selectionManager,
   CanvasNoteOutlineModel: outlineModel,
   CanvasNoteOutlineView: outlineView,
 };
@@ -39,6 +43,14 @@ export function clientScript(source: string): string {
       `Unknown chart theme import: ${name}`,
     );
   return source
+    .replace(
+      /^import\s*\{([^}]+)\}\s*from\s*"\.\/selection-manager\.js";\r?\n/m,
+      "const {$1} = CanvasNoteSelectionManager;\n",
+    )
+    .replace(
+      /^import\s*\{([^}]+)\}\s*from\s*"\.\/export-scope\.js";\r?\n/m,
+      "const {$1} = CanvasNoteExportScope;\n",
+    )
     .replace(imported, "const {$1} = CanvasNoteContracts;\n")
     .replace(themeImport, "const {$1} = CanvasNoteChartTheme;\n")
     .replace(

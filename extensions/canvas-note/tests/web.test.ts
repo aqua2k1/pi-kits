@@ -201,7 +201,11 @@ test("browser selection and wire-message helpers preserve input state", () => {
   const selection = new Set(["b"]);
   const records = new Map([["b", { block, pageTitle: "Report" }]]);
   const before = JSON.stringify(block);
-  const selected = helpers.selectedReply(4, selection, records) as {
+  const selected = helpers.selectedReply(
+    4,
+    { blockIds: [...selection], pageIds: [] },
+    records,
+  ) as {
     context: { version: number; blockIds: string[] };
     summaries: string[];
   };

@@ -15,6 +15,7 @@ const chromium = process.env.CHROMIUM_PATH || "chromium";
 const hasChromium = spawnSync(chromium, ["--version"]).status === 0;
 
 type CommandResult = {
+  data?: string;
   targetId?: string;
   sessionId?: string;
   result?: { value?: unknown };
@@ -101,13 +102,13 @@ test("real Chromium renders semantic outlines, consumes updates and exports work
         type: "text",
         title: "Logical block",
         spec: {
-          md: `# **Repeated** [heading](https://example.com)\n\n${spacer}\n\n\`\`\`md\n# Fake code heading\n\`\`\`\n\n<h2>Raw HTML heading</h2>`,
+          md: `# **Repeated** [heading](https://example.com)\n\nFIRSTBLOCKSENTINEL\n\n${spacer}\n\n\`\`\`md\n# Fake code heading\n\`\`\`\n\n<h2>Raw HTML heading</h2>`,
         },
       },
       {
         type: "text",
         spec: {
-          md: `### Repeated heading\n\n${spacer}\n\nSecond\n======\n\n> #### Quoted heading`,
+          md: `### Repeated heading\n\nSECONDBLOCKSENTINEL\n\n${spacer}\n\nSecond\n======\n\n> #### Quoted heading`,
         },
       },
       {
@@ -120,7 +121,19 @@ test("real Chromium renders semantic outlines, consumes updates and exports work
       },
     ],
   });
-  await store.insertPage({ title: "Empty page" });
+  const { pageId: emptyPageId } = await store.insertPage({
+    title: "Empty page",
+  });
+  const { pageId: excludedPageId } = await store.insertPage({
+    title: "Excluded page",
+  });
+  const { blockIds: excludedBlockIds } = await store.insertBlocks({
+    pageId: excludedPageId,
+    blocks: [
+      { type: "text", spec: { md: "EXCLUDEDPAGESENTINEL" } },
+      { type: "text", spec: { md: "MIXEDBLOCKSENTINEL" } },
+    ],
+  });
   const [firstId, secondId, chartId] = inserted.blockIds;
   const errors: unknown[] = [];
   const server = await startCanvasNoteServer({
@@ -280,11 +293,11 @@ test("real Chromium renders semantic outlines, consumes updates and exports work
     await evaluate(
       "document.querySelectorAll('#outline-list > .outline-page').length",
     ),
-    2,
+    3,
   );
   assert.equal(
     await evaluate(
-      "document.querySelectorAll('#outline-list > .outline-page:last-child .outline-heading').length",
+      "document.querySelectorAll('#outline-list > .outline-page:nth-child(2) .outline-heading').length",
     ),
     0,
   );
@@ -347,6 +360,166 @@ test("real Chromium renders semantic outlines, consumes updates and exports work
     true,
   );
   assert.equal(await readFile(store.path, "utf8"), originalDocument);
+  // Each click must produce a new completed download, not reuse an earlier file.
+  const downloadHtml = async () => {
+    // CDP's allow mode may overwrite identically named downloads. Isolate each
+    // click so a completed file can never be mistaken for a previous export.
+    const downloadDir = await mkdtemp(join(dir, "download-"));
+    await cdp.send("Browser.setDownloadBehavior", {
+      behavior: "allow",
+      downloadPath: downloadDir,
+    });
+    const existing = new Set(await readdir(downloadDir));
+    await evaluate(
+      "document.getElementById('export-toggle').click(); document.getElementById('save-html').click()",
+    );
+    const filename = await until(
+      async () =>
+        (await readdir(downloadDir)).find(
+          (name) => name.endsWith(".html") && !existing.has(name),
+        ),
+      "new actual HTML download",
+    );
+    await until(
+      () => evaluate("!document.getElementById('save-html').disabled"),
+      "HTML export controls restored",
+    );
+    const path = join(downloadDir, filename);
+    return { filename: path, html: await readFile(path, "utf8") };
+  };
+  const select = async (pageIds: string[], blockIds: string[]) => {
+    await evaluate(`(() => {
+      for (const checkbox of document.querySelectorAll('.page-select:checked, .block-select:checked')) checkbox.click();
+      for (const id of ${JSON.stringify(pageIds)}) document.querySelector('#pages .page[data-page-id="' + id + '"] .page-select').click();
+      for (const id of ${JSON.stringify(blockIds)}) document.querySelector('#pages .block[data-block-id="' + id + '"] .block-select').click();
+    })()`);
+  };
+  const liveState = () =>
+    evaluate(`({
+    pages: document.getElementById('pages').outerHTML,
+    outline: document.getElementById('outline-list').outerHTML,
+    checked: Array.from(document.querySelectorAll('.page-select, .block-select'), node => node.checked),
+    chartUnchanged: window.testChart === window.echarts.getInstanceByDom(document.querySelector('[data-block-id="${chartId}"] .block-content'))
+  })`);
+  const checkExport = async (pageIds: string[], blockIds: string[]) => {
+    const before = await liveState();
+    const { html } = await downloadHtml();
+    assert.deepEqual(
+      await liveState(),
+      before,
+      "HTML export preserves online DOM and selections",
+    );
+    const parsed = await evaluate<{
+      pageIds: string[];
+      blockIds: string[];
+      outlinePageIds: string[];
+      invalidLinks: string[];
+      inertLinks: number;
+      charts: string[];
+      promoted: boolean;
+      text: string;
+    }>(`(() => {
+      const doc = new DOMParser().parseFromString(${JSON.stringify(html)}, 'text/html');
+      return {
+        pageIds: Array.from(doc.querySelectorAll('#pages .page'), node => node.dataset.pageId),
+        blockIds: Array.from(doc.querySelectorAll('#pages .block'), node => node.dataset.blockId),
+        outlinePageIds: Array.from(doc.querySelectorAll('#outline-list > .outline-page'), node => node.dataset.pageId),
+        invalidLinks: Array.from(doc.querySelectorAll('a.outline-link')).filter(link => !doc.getElementById(decodeURIComponent(link.hash.slice(1)))).map(link => link.getAttribute('href')),
+        inertLinks: doc.querySelectorAll('button.outline-link').length,
+        charts: Array.from(doc.querySelectorAll('[data-export-chart]'), node => node.dataset.exportChart),
+        promoted: !!doc.querySelector('.outline-page > .outline-children > .outline-heading > .outline-page-row > a[href="#canvas-heading-${secondId}-0"]'),
+        text: doc.getElementById('pages').textContent
+      };
+    })()`);
+    assert.deepEqual(parsed.pageIds, pageIds);
+    assert.deepEqual(parsed.blockIds, blockIds);
+    assert.deepEqual(parsed.outlinePageIds, pageIds);
+    assert.deepEqual(parsed.invalidLinks, []);
+    assert.equal(parsed.inertLinks, 0);
+    assert.deepEqual(
+      parsed.charts,
+      blockIds.includes(chartId) ? [chartId] : [],
+    );
+    assert.doesNotMatch(parsed.text, /EXCLUDEDPAGESENTINEL/);
+    if (!blockIds.includes(chartId))
+      assert.doesNotMatch(html, /"charts":\[\{"id":/);
+    return parsed;
+  };
+
+  await select([], [secondId]);
+  const partial = await checkExport([pageId], [secondId]);
+  assert.equal(
+    partial.promoted,
+    true,
+    "child of an excluded heading is promoted to page level",
+  );
+  assert.match(partial.text, /SECONDBLOCKSENTINEL/);
+  assert.doesNotMatch(partial.text, /FIRSTBLOCKSENTINEL/);
+
+  // CDP runs Chromium's actual print lifecycle and print CSS, without a dialog.
+  await evaluate(`window.printEvents = [];
+    window.addEventListener('beforeprint', () => window.printEvents.push({
+      type: 'before', selected: document.getElementById('pages').classList.contains('printing-selection'),
+      pages: Array.from(document.querySelectorAll('#pages > .page.export-included'), node => node.dataset.pageId),
+      blocks: Array.from(document.querySelectorAll('#pages .block.export-included'), node => node.dataset.blockId)
+    }));
+    window.addEventListener('afterprint', () => window.printEvents.push({
+      type: 'after', markers: document.querySelectorAll('.printing-selection, .export-included, .export-first-page').length
+    }));`);
+  const checkedBeforePrint = await evaluate(
+    "Array.from(document.querySelectorAll('.page-select, .block-select'), node => node.checked)",
+  );
+  const pdf = await send("Page.printToPDF", { printBackground: true });
+  assert.ok(pdf.data, "Chromium generated a PDF");
+  const pdfBytes = Buffer.from(pdf.data, "base64");
+  assert.equal(pdfBytes.subarray(0, 5).toString(), "%PDF-");
+  assert.deepEqual(await evaluate("window.printEvents"), [
+    { type: "before", selected: true, pages: [pageId], blocks: [secondId] },
+    { type: "after", markers: 0 },
+  ]);
+  assert.deepEqual(
+    await evaluate(
+      "Array.from(document.querySelectorAll('.page-select, .block-select'), node => node.checked)",
+    ),
+    checkedBeforePrint,
+  );
+  assert.equal(
+    await evaluate(
+      `window.testChart === window.echarts.getInstanceByDom(document.querySelector('[data-block-id="${chartId}"] .block-content'))`,
+    ),
+    true,
+  );
+  if (spawnSync("pdftotext", ["-v"]).status === 0) {
+    const extracted = spawnSync("pdftotext", ["-", "-"], {
+      input: pdfBytes,
+      encoding: "utf8",
+    });
+    assert.equal(extracted.status, 0, extracted.stderr);
+    assert.match(extracted.stdout, /SECONDBLOCKSENTINEL/);
+    assert.doesNotMatch(
+      extracted.stdout,
+      /FIRSTBLOCKSENTINEL|EXCLUDEDPAGESENTINEL|MIXEDBLOCKSENTINEL|Empty page|Excluded page/,
+    );
+  } else {
+    t.diagnostic(
+      "pdftotext unavailable; generated PDF but skipped text assertions",
+    );
+  }
+
+  await select([emptyPageId], []);
+  await checkExport([emptyPageId], []);
+  // Reverse selection order and overlap a whole page with one of its blocks.
+  await select([emptyPageId, pageId], [excludedBlockIds[1], secondId]);
+  const mixed = await checkExport(
+    [pageId, emptyPageId, excludedPageId],
+    [firstId, secondId, chartId, excludedBlockIds[1]],
+  );
+  assert.match(mixed.text, /FIRSTBLOCKSENTINEL/);
+  assert.match(mixed.text, /SECONDBLOCKSENTINEL/);
+  assert.match(mixed.text, /MIXEDBLOCKSENTINEL/);
+  await select([], []);
+  // Restore the original selection: its later deletion must leave an all-export.
+  await select([], [firstId]);
   await evaluate(
     `window.oldHeading = document.getElementById('canvas-heading-${firstId}-0')`,
   );
@@ -386,14 +559,25 @@ test("real Chromium renders semantic outlines, consumes updates and exports work
     "surviving heading target",
   );
   // Use the real UI download path and the real DOM produced above.
-  await evaluate(
-    "document.getElementById('export-toggle').click(); document.getElementById('save-html').click()",
+  assert.equal(
+    await evaluate(
+      "document.querySelectorAll('.page-select:checked, .block-select:checked').length",
+    ),
+    0,
   );
-  const filename = await until(
-    async () => (await readdir(dir)).find((name) => name.endsWith(".html")),
-    "actual HTML download",
-  );
-  const exported = await readFile(join(dir, filename), "utf8");
+  const { filename, html: exported } = await downloadHtml();
+  const allIds = await evaluate(`(() => {
+    const doc = new DOMParser().parseFromString(${JSON.stringify(exported)}, 'text/html');
+    return {
+      pages: Array.from(doc.querySelectorAll('#pages .page'), node => node.dataset.pageId),
+      blocks: Array.from(doc.querySelectorAll('#pages .block'), node => node.dataset.blockId)
+    };
+  })()`);
+  assert.deepEqual(allIds, {
+    pages: [pageId, emptyPageId, excludedPageId],
+    blocks: [secondId, chartId, ...excludedBlockIds],
+  });
+  assert.match(exported, /EXCLUDEDPAGESENTINEL/);
   assert.match(exported, new RegExp(`href="#canvas-heading-${secondId}-0"`));
   assert.doesNotMatch(exported, /id="outline-mode"|new WebSocket/);
   assert.deepEqual(errors, []);
@@ -408,7 +592,7 @@ test("real Chromium renders semantic outlines, consumes updates and exports work
     downloadThroughput: 0,
     uploadThroughput: 0,
   });
-  await send("Page.navigate", { url: pathToFileURL(join(dir, filename)).href });
+  await send("Page.navigate", { url: pathToFileURL(filename).href });
   await until(
     () =>
       evaluate(

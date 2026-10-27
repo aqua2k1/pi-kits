@@ -1,5 +1,15 @@
+import { createOutlineView } from "./outline-view.js";
+
 // A standalone read-only snapshot: reuse rendered content, not the live client.
-export async function buildHtml({ title, pages, outline, charts, theme }) {
+export async function buildHtml({
+  title,
+  pages,
+  outline,
+  charts,
+  theme,
+  scope,
+  outlineNodes,
+}) {
   const output = document.implementation.createHTMLDocument(title);
   output.documentElement.lang = document.documentElement.lang;
   output.head.insertAdjacentHTML(
@@ -7,11 +17,46 @@ export async function buildHtml({ title, pages, outline, charts, theme }) {
     '<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">',
   );
   const root = pages.cloneNode(true);
+  root.classList.remove("printing-selection");
+  for (const node of root.querySelectorAll(
+    ".export-included, .export-first-page",
+  )) {
+    node.classList.remove("export-included", "export-first-page");
+  }
   const sidebar = outline?.cloneNode(true);
+  if (scope && !scope.all) {
+    const pageIds = new Set(scope.pageIds);
+    const blockIds = new Set(scope.blockIds);
+    for (const page of root.querySelectorAll(".page[data-page-id]"))
+      if (!pageIds.has(page.dataset.pageId)) page.remove();
+    for (const block of root.querySelectorAll(".block[data-block-id]"))
+      if (!blockIds.has(block.dataset.blockId)) block.remove();
+  }
   if (!sidebar) root.classList.remove("outline-collapsed");
   if (sidebar) {
     // Export the active outline snapshot, not inert online view controls.
     sidebar.querySelector("#outline-mode")?.remove();
+    if (outlineNodes) {
+      const initialFolds = new Map();
+      for (const entry of sidebar.querySelectorAll("[data-outline-id]")) {
+        const children = Array.from(entry.children).find((node) =>
+          node.classList.contains("outline-children"),
+        );
+        if (children)
+          initialFolds.set(entry.dataset.outlineId, !children.hidden);
+      }
+      const list = sidebar.querySelector(".outline-list");
+      list.replaceChildren();
+      const view = createOutlineView({
+        document: output,
+        root: list,
+        resolveTarget: () => null,
+        initialFolds,
+      });
+      outlineNodes.forEach((node, index) => {
+        view.updatePage(node, index);
+      });
+    }
     const targets = new Map();
     for (const node of root.querySelectorAll(
       "[data-page-id], [data-block-id]",
@@ -33,8 +78,10 @@ export async function buildHtml({ title, pages, outline, charts, theme }) {
       const key = block
         ? `block-${block.dataset.blockId}`
         : `page-${button.closest(".outline-page").dataset.pageId}`;
-      const target = headingTargets.has(button.dataset.targetId)
-        ? button.dataset.targetId
+      const target = button.dataset.targetId
+        ? headingTargets.has(button.dataset.targetId)
+          ? button.dataset.targetId
+          : undefined
         : targets.get(key);
       if (!target) continue;
       const link = output.createElement("a");
@@ -55,10 +102,18 @@ export async function buildHtml({ title, pages, outline, charts, theme }) {
     node.remove();
   for (const node of root.querySelectorAll(".selected"))
     node.classList.remove("selected");
-  const snapshots = charts.map(({ id, option }) => ({
-    id,
-    option: JSON.parse(JSON.stringify(option)),
-  }));
+  const retainedBlocks = new Set(
+    Array.from(
+      root.querySelectorAll(".block[data-block-id]"),
+      (node) => node.dataset.blockId,
+    ),
+  );
+  const snapshots = charts
+    .filter(({ id }) => retainedBlocks.has(id))
+    .map(({ id, option }) => ({
+      id,
+      option: JSON.parse(JSON.stringify(option)),
+    }));
   const snapshotTheme = JSON.parse(JSON.stringify(theme));
   for (const { id } of snapshots) {
     const block = Array.from(root.querySelectorAll("[data-block-id]")).find(

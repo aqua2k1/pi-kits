@@ -338,6 +338,8 @@ test("real HTTP, WebSocket snapshots, atomic rename watch, reply acknowledgment 
     "/chart-theme.js",
     "/outline-model.js",
     "/outline-view.js",
+    "/selection-manager.js",
+    "/export-scope.js",
     "/export-html.js",
     "/client.css",
     "/content.css",

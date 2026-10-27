@@ -50,8 +50,16 @@
     overflow: visible;
   }
 
+  #pages.printing-selection > .page:not(.export-included),
+  #pages.printing-selection > .page > div > .block:not(.export-included) {
+    display: none;
+  }
+
   .page + .page {
     break-before: page;
+  }
+  .page.export-first-page {
+    break-before: auto;
   }
 
   .block {

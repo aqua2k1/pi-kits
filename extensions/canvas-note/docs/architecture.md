@@ -39,6 +39,8 @@ flowchart LR
 | `web/client.css` | 屏幕专属纸面布局、目录、选择框、工具栏与弹窗样式 |
 | `web/print.css` | 纸张、浅色配色、隐藏交互与分页规则 |
 | `web/chart-theme.js` | 从页面配色纯构造屏幕与打印图表主题 |
+| `web/selection-manager.js` | 独立页与 Block 选择状态、快照与按变化 ID 通知 |
+| `web/export-scope.js` | 选择快照到文档子集与导出 ID 范围的纯投影 |
 | `web/outline-model.js` | 纯目录节点、标题文字与锚点构造，结构目录与语义大纲投影 |
 | `web/outline-view.js` | 共享目录 DOM 渲染、稳定条目复用、折叠状态与目标导航 |
 | `web/client.js` | 消费操作、按 ID 渲染、标题解析与目录编排、连接恢复、选择与提交 |
@@ -103,6 +105,12 @@ sequenceDiagram
 
 共享视图按节点 ID 复用目录 DOM，持有折叠状态并在点击时解析目标 DOM。客户端缓存每块标题与正文目标引用，增量批次只重建涉及页的目录，快照恢复和视图切换才遍历所有页；两种目录均只驻留浏览器内存。
 
+## 选择与导出
+
+选择管理器独占 `blockSelection`、`pageSelection`，通过变化 ID 订阅同步勾选 DOM；回复与导出只消费独立快照。回复保留两种选择范围，ACK 只移除本次快照；导出将整页与 Block 取并集，按原文档顺序投影，空选择表示全部，过期 ID 不回退到全量。
+
+HTML 从投影范围裁剪克隆正文，并按子集重建当前目录，保留对应折叠状态；只嵌入保留的图表和图片。打印通过临时类和 print-only CSS 标记相同范围，打印结束或失败清理标记；正文、图表实例与选择始终保留。
+
 ## 新增类型
 
 Block 类型在 `core/contracts.js` 的 `BlockKind` 与 `blockDefinitions` 中声明内容校验、摘要；Block 的可选 `title` 是公共元数据，目录优先显示它，没有时回退到 `type`；浏览器在 `web/client.js` 的 `blockHandlers` 中补充渲染。TypeBox 枚举、客户端白名单和业务分派从这些定义派生，不再逐处维护类型列表。
@@ -149,7 +157,8 @@ Block 类型在 `core/contracts.js` 的 `BlockKind` 与 `blockDefinitions` 中�
 - HTML 导出克隆正文和目录，不修改在线 DOM 或图表实例；资源全部内嵌，目录按钮转为稳定锚点链接，离线脚本只恢复目录折叠和 ECharts，不加载在线客户端，避免导出文件连接服务。图表配置序列化转义 `<`，避免内容提前结束脚本标签。
 - 复制内容从当前 Block 数据按类型投影，不读取渲染 DOM，避免混入按钮、高亮标签或旧内容；复制按钮不得改变多选状态，剪贴板回退使用的临时元素在成功或失败后均清理。
 - Code 只在显式 `language` 被本地 Highlight.js common build 支持时高亮；省略、空或未知语言保留纯文本，避免猜测语言改变展示。代码只读且不执行，HTML 内容必须作为文字处理，避免代码块触发脚本。
-- 页和 Block 独立选择，混选时保留两种范围；回复校验版本并分别保留所选页和块的完整快照后才确认成功，避免丢失页级意图或引用更新后内容。
+- 页和 Block 的选择状态只由独立管理器修改，回复保留两种范围而导出按文档顺序取并集；导出不清空选择，避免动作间状态耦合或重复输出。
+- 回复校验版本并分别保留所选页和块的完整快照后才确认成功，避免丢失页级意图或引用更新后内容。
 - 完整反馈包含 `requestId`、`version`、`reply` 和含完整快照的 `pages`、`blocks`，保存为与 `doc.json` 并列的 `feedback-<requestId>.json`；不适合作文件名的 `requestId` 使用其哈希，避免非法路径。文件作为笔记长期保留，交付、重载和关闭服务不得删除，避免丢失用户引用的原内容。
 - 交付顺序固定为原子保存反馈文件、在 Pi 会话保存轻量引用、发送 `followUp`；ACK 前完成文件与引用持久化，避免确认成功却丢失回复。
 - 正常反馈与待交付恢复上下文均仅包含用户回复、`pageIds`、`blockIds`、`version`、`snapshotPath` 和 `documentPath`，不包含块正文；模型按需用 `read` 读取 `snapshotPath`，修改前检查当前 `documentPath`，避免按旧快照覆盖后续更改。
@@ -167,4 +176,4 @@ Block 类型在 `core/contracts.js` 的 `BlockKind` 与 `blockDefinitions` 中�
 
 `tests/changes.test.ts` 用冻结输入验证纯变更可组合、显式 ID、版本不变和失败时输入不变；`tests/model.test.ts`、`tests/server.test.ts` 继续覆盖 Store 的落盘与同步行为。
 
-`npm test --workspace canvas-note` 运行 `tests/*.test.ts`，覆盖原子批次、并发写入、提交订阅、真实 HTTP/WebSocket、操作增量、快照恢复、回复去重、过期反馈、服务重启与工具 handler。`tests/contracts.test.ts` 校验共享枚举、内容定义与注册完整性，包含 Code 合法/非法内容、原样摘要与输入不变性；`tests/model.test.ts` 校验 TypeBox 联合 schema 覆盖、Code 插入与读取、整体替换、换类型、删除和原子失败；`tests/presentation.test.ts`、`tests/protocol.test.ts`、`tests/web.test.ts` 校验纯构造结果与输入不变性；反馈与模型测试同时校验投影阶段不提交状态。`tests/reconcile.test.ts` 通过 `tests/fixtures/browser.ts` 的最小浏览器环境执行完整客户端脚本，验证局部 DOM 写入、图表生命周期、选择保留和版本恢复。`tests/browser-outline.test.ts` 在检测到 Chromium 时通过 CDP 驱动真实客户端，验证 WebSocket 更新、标题跳转避让工具栏、UI 下载与禁网离线导航及图表。`tests/outline.test.ts` 覆盖纯目录模型与共享视图；`tests/semantic-outline.test.ts` 覆盖真实 Marked 标题提取、跨块层级、重复标题、视图切换、局部更新与目标引用清理。`tests/chart-theme.test.ts` 校验主题纯构造与真实 ECharts 显式样式优先；`tests/print.test.ts` 验证样式分层、字体图片就绪、打印重试与状态保留。`tests/math.test.ts` 使用真实 Marked 和 KaTeX 覆盖 Markdown 行内与展示公式、中文相邻、代码、转义及解析错误；复杂公式样例集中在 `tests/fixtures/math.ts`。`tests/export-html.test.ts` 覆盖导出失败后的控件恢复；检测到 Chromium 时验证资源内嵌、在线 DOM 不变、脚本安全序列化、离线目录跳转与折叠和图表恢复。根测试覆盖实际 Pi 独立加载和生产依赖安装。
+`npm test --workspace canvas-note` 运行 `tests/*.test.ts`，覆盖原子批次、并发写入、提交订阅、真实 HTTP/WebSocket、操作增量、快照恢复、回复去重、过期反馈、服务重启与工具 handler。`tests/contracts.test.ts` 校验共享枚举、内容定义与注册完整性，包含 Code 合法/非法内容、原样摘要与输入不变性；`tests/model.test.ts` 校验 TypeBox 联合 schema 覆盖、Code 插入与读取、整体替换、换类型、删除和原子失败；`tests/presentation.test.ts`、`tests/protocol.test.ts`、`tests/web.test.ts` 校验纯构造结果与输入不变性；反馈与模型测试同时校验投影阶段不提交状态。`tests/reconcile.test.ts` 通过 `tests/fixtures/browser.ts` 的最小浏览器环境执行完整客户端脚本，验证局部 DOM 写入、图表生命周期、选择保留和版本恢复。`tests/browser-outline.test.ts` 在检测到 Chromium 时通过 CDP 驱动真实客户端，验证 WebSocket 更新、标题跳转避让工具栏、所选范围的 HTML/PDF 导出与禁网离线导航及图表。`tests/selection.test.ts`、`tests/export-scope.test.ts` 覆盖独立选择通知、快照、去重和纯范围投影；`tests/outline.test.ts` 覆盖纯目录模型与共享视图；`tests/semantic-outline.test.ts` 覆盖真实 Marked 标题提取、跨块层级、重复标题、视图切换、局部更新与目标引用清理。`tests/chart-theme.test.ts` 校验主题纯构造与真实 ECharts 显式样式优先；`tests/print.test.ts` 验证样式分层、字体图片就绪、打印重试与状态保留。`tests/math.test.ts` 使用真实 Marked 和 KaTeX 覆盖 Markdown 行内与展示公式、中文相邻、代码、转义及解析错误；复杂公式样例集中在 `tests/fixtures/math.ts`。`tests/export-html.test.ts` 覆盖导出失败后的控件恢复；检测到 Chromium 时验证资源内嵌、在线 DOM 不变、脚本安全序列化、离线目录跳转与折叠和图表恢复。根测试覆盖实际 Pi 独立加载和生产依赖安装。

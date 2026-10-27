@@ -1,7 +1,12 @@
 /** Keyed DOM renderer and fold state shared by both logical outline modes. */
-export function createOutlineView({ document, root, resolveTarget }) {
+export function createOutlineView({
+  document,
+  root,
+  resolveTarget,
+  initialFolds = new Map(),
+}) {
   const pages = new Map();
-  const folds = new Map();
+  const folds = new Map(initialFolds);
   const place = (parent, child, index) => {
     if (parent.children[index] !== child)
       parent.insertBefore(child, parent.children[index] || null);
@@ -21,6 +26,7 @@ export function createOutlineView({ document, root, resolveTarget }) {
   function create(node) {
     const element = document.createElement("li");
     element.className = `outline-${node.kind}`;
+    element.dataset.outlineId = node.id;
     if (node.kind === "page") element.dataset.pageId = node.target.pageId;
     if (node.kind === "block") element.dataset.blockId = node.target.blockId;
     const link = document.createElement("button");
