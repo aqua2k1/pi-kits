@@ -66,6 +66,10 @@ body {
 .block[data-align="right"] .block-content {
   text-align: right;
 }
+.block-content .katex-display {
+  /* Include KaTeX's vertical glyph overflow, including large-font formulas. */
+  padding-block: 1em;
+}
 .block-content > :first-child {
   margin-top: 0;
 }
@@ -163,10 +167,18 @@ body {
   list-style-position: inside;
 }
 .block-content table {
-  display: inline-table;
+  display: block;
+  width: max-content;
   border-collapse: collapse;
   max-width: 100%;
   font-size: var(--font-size-sm);
+}
+.block[data-align="center"] .block-content table {
+  margin-inline: auto;
+}
+.block[data-align="right"] .block-content table {
+  margin-left: auto;
+  margin-right: 0;
 }
 .block-content th,
 .block-content td {

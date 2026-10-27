@@ -10,6 +10,7 @@ import { pathToFileURL } from "node:url";
 import { WebSocket } from "ws";
 import { DocumentStore } from "../core/store.ts";
 import { startCanvasNoteServer } from "../server/index.ts";
+import { complexFormulas } from "./fixtures/math.ts";
 
 const chromium = process.env.CHROMIUM_PATH || "chromium";
 const hasChromium = spawnSync(chromium, ["--version"]).status === 0;
@@ -134,6 +135,8 @@ test("real Chromium renders semantic outlines, consumes updates and exports work
     title: "Excluded page",
   });
   const hostile = "</script><script>window.exportInjection = true</script>";
+  const wideColumns = Array.from({ length: 40 }, (_, i) => `Column ${i}`);
+  const wideRow = wideColumns.map(() => "unbreakable-cell-value");
   const { blockIds: excludedBlockIds } = await store.insertBlocks({
     pageId: excludedPageId,
     blocks: [
@@ -153,6 +156,35 @@ test("real Chromium renders semantic outlines, consumes updates and exports work
           md: "| Name | Value |\n| --- | --- |\n| Offline | 42 |\n\nInline math $a^2$.",
         },
       },
+      {
+        type: "text",
+        spec: {
+          md: String.raw`行内公式 $A_t$。大字号行内公式 $\Huge\frac{a_1^2}{b_2^3}$。`,
+        },
+      },
+      {
+        type: "text",
+        spec: { md: `$$\n${String.raw`\Huge\frac{a_1^2}{b_2^3}`}\n$$` },
+      },
+      ...complexFormulas.map(({ latex }) => ({
+        type: "text" as const,
+        spec: { md: `$$\n${latex}\n$$` },
+      })),
+      {
+        type: "text",
+        spec: {
+          md: `\`\`\`text\n${"wide-code ".repeat(100)}\n\`\`\`\n\n| ${wideColumns.join(" | ")} |\n| ${wideColumns.map(() => "---").join(" | ")} |\n| ${wideRow.join(" | ")} |`,
+        },
+      },
+      {
+        type: "table",
+        spec: { columns: wideColumns, rows: [wideRow] },
+      },
+      ...(["left", "center", "right"] as const).map((align) => ({
+        type: "table" as const,
+        align,
+        spec: { columns: ["Symbol", "Value"], rows: [["$A_t$", 42]] },
+      })),
     ],
   });
   const [firstId, secondId, chartId] = inserted.blockIds;
@@ -252,6 +284,81 @@ test("real Chromium renders semantic outlines, consumes updates and exports work
       ),
     "actual client WebSocket snapshot",
   );
+  const checkContentOverflow = async () => {
+    const state = await evaluate<{
+      vertical: string[];
+      rootOverflow: string[];
+      horizontal: string[];
+      alignment: boolean[];
+      wrappedTables: number;
+    }>(`(async () => {
+      await document.fonts.ready;
+      await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+      const ids = ${JSON.stringify(excludedBlockIds.slice(3))};
+      const roots = ids.map(id => document.querySelector('[data-block-id="' + id + '"] .block-content'));
+      const state = { vertical: [], rootOverflow: roots.map(node => getComputedStyle(node).overflowY), horizontal: [], alignment: [], wrappedTables: 0 };
+      state.wrappedTables = roots.flatMap(root => [...root.querySelectorAll('table')]).filter(table => !table.parentElement.classList.contains('block-content')).length;
+      for (const [index, id] of ${JSON.stringify(excludedBlockIds.slice(-3))}.entries()) {
+        const root = document.querySelector('[data-block-id="' + id + '"] .block-content');
+        const rootBox = root.getBoundingClientRect();
+        const first = root.querySelector('th').getBoundingClientRect();
+        const last = root.querySelector('tr').lastElementChild.getBoundingClientRect();
+        const left = first.left - rootBox.left;
+        const right = rootBox.right - last.right;
+        state.alignment.push(index === 0 ? Math.abs(left) < 1 : index === 1 ? Math.abs(left - right) < 1 : Math.abs(right) < 1);
+      }
+      for (const root of roots) {
+        for (const node of [root, ...root.querySelectorAll('table, .katex-display, pre')]) {
+          node.scrollTop = 10000;
+          if (node.scrollTop > 0) state.vertical.push(root.closest('.block').dataset.blockId);
+          node.scrollTop = 0;
+          node.scrollLeft = 10000;
+          if (node.scrollLeft > 0 && node !== root) {
+            state.horizontal.push(node.tagName === 'PRE' ? 'code' : node.tagName === 'TABLE' ? 'table' : 'math');
+          }
+          node.scrollLeft = 0;
+        }
+      }
+      return state;
+    })()`);
+    assert.deepEqual(
+      state.vertical,
+      [],
+      "content must not have vertical scroll containers",
+    );
+    assert.ok(state.rootOverflow.every((value) => value === "visible"));
+    assert.equal(
+      state.wrappedTables,
+      0,
+      "tables must not need JS scroll wrappers",
+    );
+    assert.deepEqual(
+      state.alignment,
+      [true, true, true],
+      "narrow tables retain left, center and right alignment",
+    );
+    for (const kind of ["code", "table", "math"]) {
+      assert.ok(
+        state.horizontal.includes(kind),
+        `${kind} must retain local horizontal scrolling`,
+      );
+    }
+  };
+  for (const width of [1280, 768, 480]) {
+    await send("Emulation.setDeviceMetricsOverride", {
+      width,
+      height: 900,
+      deviceScaleFactor: 1,
+      mobile: false,
+    });
+    await checkContentOverflow();
+  }
+  await send("Emulation.setDeviceMetricsOverride", {
+    width: 1280,
+    height: 900,
+    deviceScaleFactor: 1,
+    mobile: false,
+  });
   assert.equal(
     await evaluate(`(() => {
     const page = document.querySelector('.page').getBoundingClientRect();
@@ -756,6 +863,7 @@ test("real Chromium renders semantic outlines, consumes updates and exports work
       ),
     "offline exported document and chart",
   );
+  await checkContentOverflow();
   assert.deepEqual(await labels(), [
     "Repeated heading",
     "Second",

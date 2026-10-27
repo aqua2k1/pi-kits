@@ -477,9 +477,12 @@
     text-decoration-color: var(--accent);
   }
 
-  .block-content,
-  .block-content pre {
+  .block-content :is(pre, table) {
     overflow-x: auto;
+  }
+  .block-content .katex-display {
+    overflow-x: auto;
+    overflow-y: hidden;
   }
 }
 
