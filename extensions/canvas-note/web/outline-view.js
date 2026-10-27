@@ -99,6 +99,15 @@ export function createOutlineView({ document, root, resolveTarget }) {
   return {
     updatePage,
     removePage,
+    setAllExpanded(open) {
+      for (const page of pages.values()) {
+        for (const entry of page.entries.values()) {
+          if (!entry.toggle) continue;
+          folds.set(entry.node.id, open);
+          expanded(entry);
+        }
+      }
+    },
     retainPages(ids) {
       for (const id of pages.keys()) if (!ids.has(id)) removePage(id);
     },

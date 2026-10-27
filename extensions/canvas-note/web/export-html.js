@@ -182,20 +182,32 @@ function restoreDocument({ charts, theme }) {
         collapsed ? "Expand contents" : "Collapse contents",
       );
     });
-    for (const button of outline.querySelectorAll(".outline-page-toggle")) {
+    function setExpanded(button, open) {
+      const entry = button.closest("li");
+      const children = Array.from(entry.children).find((node) =>
+        node.classList.contains("outline-children"),
+      );
+      if (!children) return;
+      children.hidden = !open;
+      button.textContent = open ? "▾" : "▸";
+      button.setAttribute("aria-expanded", String(open));
+      button.setAttribute(
+        "aria-label",
+        `${open ? "Collapse" : "Expand"} ${entry.querySelector(".outline-link").textContent}`,
+      );
+    }
+    const buttons = outline.querySelectorAll(".outline-page-toggle");
+    for (const button of buttons) {
       button.addEventListener("click", () => {
-        const entry = button.closest("li");
-        const children = Array.from(entry.children).find((node) =>
-          node.classList.contains("outline-children"),
-        );
-        if (!children) return;
-        children.hidden = !children.hidden;
-        button.textContent = children.hidden ? "▸" : "▾";
-        button.setAttribute("aria-expanded", String(!children.hidden));
-        button.setAttribute(
-          "aria-label",
-          `${children.hidden ? "Expand" : "Collapse"} ${entry.querySelector(".outline-link").textContent}`,
-        );
+        setExpanded(button, button.getAttribute("aria-expanded") !== "true");
+      });
+    }
+    for (const [id, open] of [
+      ["outline-expand-all", true],
+      ["outline-collapse-all", false],
+    ]) {
+      document.getElementById(id)?.addEventListener("click", () => {
+        for (const button of buttons) setExpanded(button, open);
       });
     }
   }

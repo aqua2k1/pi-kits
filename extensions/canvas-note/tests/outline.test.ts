@@ -101,6 +101,13 @@ test("shared outline view owns DOM, retains stable entries and only navigates ta
     subtree(root).find((node) => node.dataset.blockId === "a"),
     block,
   );
+  view.setAllExpanded(true);
+  assert.equal(root.children[0].children[1].hidden, false);
+  view.setAllExpanded(false);
+  assert.equal(root.children[0].children[1].hidden, true);
+  const collapsedWrites = writeCount(subtree(root));
+  view.setAllExpanded(false);
+  assert.equal(writeCount(subtree(root)), collapsedWrites);
   view.removePage("p");
   assert.equal(root.children.length, 0);
 });

@@ -218,10 +218,54 @@ test("real Chromium renders semantic outlines, consumes updates and exports work
       ),
     "actual client WebSocket snapshot",
   );
+  assert.equal(
+    await evaluate(`(() => {
+    const page = document.querySelector('.page').getBoundingClientRect();
+    const selection = document.querySelector('.page-selection').getBoundingClientRect();
+    return selection.left - page.left < 30 && selection.top - page.top < 30;
+  })()`),
+    true,
+  );
+  const checkAllFolds = async () => {
+    await evaluate("document.getElementById('outline-collapse-all').click()");
+    assert.equal(
+      await evaluate(
+        "Array.from(document.querySelectorAll('#outline-list .outline-children')).every(node => node.hidden)",
+      ),
+      true,
+    );
+    assert.equal(
+      await evaluate(
+        "Array.from(document.querySelectorAll('#outline-list .outline-page-toggle')).every(node => node.getAttribute('aria-expanded') === 'false')",
+      ),
+      true,
+    );
+    await evaluate("document.getElementById('outline-expand-all').click()");
+    assert.equal(
+      await evaluate(
+        "Array.from(document.querySelectorAll('#outline-list .outline-children')).every(node => !node.hidden)",
+      ),
+      true,
+    );
+    assert.equal(
+      await evaluate(
+        "Array.from(document.querySelectorAll('#outline-list .outline-page-toggle')).every(node => node.getAttribute('aria-expanded') === 'true')",
+      ),
+      true,
+    );
+  };
+  await checkAllFolds();
+  assert.deepEqual(
+    await evaluate(
+      "Array.from(document.querySelectorAll('#outline-mode button'), node => node.textContent)",
+    ),
+    ["Outline", "Structure"],
+  );
   const originalDocument = await readFile(store.path, "utf8");
   await evaluate(`window.testChart = window.echarts.getInstanceByDom(document.querySelector('[data-block-id="${chartId}"] .block-content'));
     document.querySelector('[data-block-id="${firstId}"] .block-select').click();
     document.getElementById('outline-mode-semantic').click();`);
+  await checkAllFolds();
   const labels = () =>
     evaluate<string[]>(
       "Array.from(document.querySelectorAll('.outline-heading > .outline-page-row > .outline-link'), node => node.textContent)",
@@ -381,6 +425,7 @@ test("real Chromium renders semantic outlines, consumes updates and exports work
     await evaluate("document.getElementById('outline-mode') === null"),
     true,
   );
+  await checkAllFolds();
   const offlineTargets = await evaluate<boolean[]>(
     "Array.from(document.querySelectorAll('a.outline-link'), link => !!document.getElementById(decodeURIComponent(link.hash.slice(1))))",
   );

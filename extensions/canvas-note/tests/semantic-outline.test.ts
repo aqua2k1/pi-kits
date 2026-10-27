@@ -47,6 +47,30 @@ const targets = (b: ReturnType<typeof browser>, id: string) =>
     (node) => node.dataset.outlineHeading !== undefined,
   );
 
+test("expand and collapse all affect every level in both directory modes without changing content", () => {
+  const b = browser();
+  b.snapshot(doc());
+  const contentNodes = subtree(b.get("pages"));
+  const before = writeCount(contentNodes);
+  for (const mode of ["structure", "semantic"]) {
+    b.get(`outline-mode-${mode}`).emit("click");
+    const branches = () =>
+      subtree(b.get("outline-list")).filter((node) =>
+        node.classList.contains("outline-children"),
+      );
+    b.get("outline-collapse-all").emit("click");
+    assert.ok(branches().length >= 2);
+    assert.ok(branches().every((node) => node.hidden));
+    b.snapshot(doc());
+    assert.ok(branches().every((node) => node.hidden));
+    b.get("outline-expand-all").emit("click");
+    assert.ok(branches().every((node) => !node.hidden));
+  }
+  assert.equal(writeCount(contentNodes), before);
+  assert.equal(b.charts.length, 1);
+  assert.equal(b.charts[0].disposed, 0);
+});
+
 test("semantic outline derives parsed headings across blocks and switches without rendering or selection changes", () => {
   const b = browser();
   b.snapshot(doc());

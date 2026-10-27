@@ -328,7 +328,7 @@
   .page-selection {
     position: absolute;
     top: 0.6rem;
-    right: 0.8rem;
+    left: 0.8rem;
     display: flex;
     align-items: center;
     gap: 0.4rem;

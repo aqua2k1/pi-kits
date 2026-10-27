@@ -54,7 +54,7 @@ const result = await tools.insert_blocks({
 
 ## 目录与大纲
 
-左侧点击“Structure”查看页与 Block 的结构目录，点击“Outline”查看按页分组的正文标题大纲。点击条目跳转正文，点击箭头折叠子层级；切换视图保留正文、选择和图表状态。
+左侧点击“Structure”查看页与 Block 的结构目录，点击“Outline”查看按页分组的正文标题大纲。点击条目跳转正文，点击箭头折叠子层级，点击“Expand all / Collapse all”展开或折叠当前目录的所有层级（离线 HTML 同样保留这两个按钮）；切换视图保留正文、选择和图表状态。
 
 大纲提取文字中的 Markdown 标题（`#`～`######` 与下划线式标题），按页内正文顺序跨 Block 组织层级；重复标题分别定位，跳级标题挂到最近的较低级标题下。空页保留页条目。两种目录均由文档派生并只保存在浏览器内存，不写入文档文件。
 
@@ -126,7 +126,7 @@ await tools.update_page({ pageId: "<另一个 Page ID>", change: { kind: "delete
 
 ## 多选回复
 
-勾选页右上角“Select page”针对整页反馈，或勾选 Block 左上角选择框针对具体内容反馈，再点击顶部“回复”。页独立选择，不改变页内 Block 的勾选状态；支持多页及与 Block 混选，同一页与其 Block 同时选中时保留两种范围。弹窗分别列出页和内容块，空页也可选择；点击“Clear”清空全部选择。
+勾选页左上角“Select page”针对整页反馈，或勾选 Block 左上角选择框针对具体内容反馈，再点击顶部“回复”。页独立选择，不改变页内 Block 的勾选状态；支持多页及与 Block 混选，同一页与其 Block 同时选中时保留两种范围。弹窗分别列出页和内容块，空页也可选择；点击“Clear”清空全部选择。
 
 完整反馈包含 `requestId`、`version`、`reply` 和含完整快照的 `pages`、`blocks`，保存在与 `doc.json` 并列的 `feedback-<requestId>.json`；不适合作文件名的 `requestId` 使用其哈希。反馈文件作为笔记的一部分长期保留，交付、重载和关闭服务均不删除它。先原子保存反馈文件，再在 Pi 会话保存轻量引用，最后发送 `followUp`；持久化在向浏览器确认成功（ACK）前完成。
 

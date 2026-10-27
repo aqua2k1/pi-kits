@@ -888,6 +888,13 @@ import { createOutlineView } from "./outline-view.js";
       });
     }
 
+    $("outline-expand-all").addEventListener("click", () => {
+      outlineView.setAllExpanded(true);
+    });
+    $("outline-collapse-all").addEventListener("click", () => {
+      outlineView.setAllExpanded(false);
+    });
+
     function setOutlineCollapsed(collapsed) {
       outline.classList.toggle("collapsed", collapsed);
       outlineTree.hidden = collapsed;
