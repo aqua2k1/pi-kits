@@ -39,7 +39,9 @@ flowchart LR
 | `web/client.css` | 屏幕专属纸面布局、目录、选择框、工具栏与弹窗样式 |
 | `web/print.css` | 纸张、浅色配色、隐藏交互与分页规则 |
 | `web/chart-theme.js` | 从页面配色纯构造屏幕与打印图表主题 |
-| `web/client.js` | 消费操作、按 ID 渲染、固定 page/block 目录、连接恢复、选择与提交 |
+| `web/outline-model.js` | 纯目录节点、标题文字与锚点构造，结构目录与语义大纲投影 |
+| `web/outline-view.js` | 共享目录 DOM 渲染、稳定条目复用、折叠状态与目标导航 |
+| `web/client.js` | 消费操作、按 ID 渲染、标题解析与目录编排、连接恢复、选择与提交 |
 | `web/export-html.js` | 克隆正文、内嵌资源与 ECharts、生成和下载离线单文件 HTML |
 
 ## 数据流
@@ -95,6 +97,12 @@ sequenceDiagram
 
 文本渲染通过独立的 Marked 实例接入 `marked-katex-extension`，启用 `nonStandard` 解析紧邻中文的美元符号公式。插件在 KaTeX 之后从本地 UMD 资源加载；公式沿用 `throwOnError: true`、`trust: false`、`strict: "error"`，结果统一经 DOMPurify 清理。Markdown 公式随现有正文 DOM 打印和导出，不增加导出脚本。
 
+## 目录数据与视图
+
+浏览器从内存文档按页生成统一节点 `{ id, kind, label, target, children }`；结构目录投影 Page / Block 元数据，语义大纲使用文本渲染时的 Marked tokens 提取标题，以级别栈跨 Block 建树。目标使用 page、block 或 heading 描述符，模型不访问 DOM，也不保存目录 DOM 或折叠状态。正文渲染复用同一份 tokens，为 Markdown 标题绑定 Block ID 与序号组成的锚点；重复标题独立定位。
+
+共享视图按节点 ID 复用目录 DOM，持有折叠状态并在点击时解析目标 DOM。客户端缓存每块标题与正文目标引用，增量批次只重建涉及页的目录，快照恢复和视图切换才遍历所有页；两种目录均只驻留浏览器内存。
+
 ## 新增类型
 
 Block 类型在 `core/contracts.js` 的 `BlockKind` 与 `blockDefinitions` 中声明内容校验、摘要；Block 的可选 `title` 是公共元数据，目录优先显示它，没有时回退到 `type`；浏览器在 `web/client.js` 的 `blockHandlers` 中补充渲染。TypeBox 枚举、客户端白名单和业务分派从这些定义派生，不再逐处维护类型列表。
@@ -131,7 +139,9 @@ Block 类型在 `core/contracts.js` 的 `BlockKind` 与 `blockDefinitions` 中�
 - 操作仅作内存中的实时通知，不维护持久化事件日志；JSON 是恢复依据，首次连接与重连始终取完整快照。
 - 客户端只消费基准版本匹配、版本连续且文档身份一致的操作批次；不匹配时请求一次 `resync`，暂停消费和回复直到完整快照恢复，避免在错误基线上继续更新。
 - 浏览器正常路径直接消费 Block 和 Page 操作，不做全量差异比较；完整快照恢复才遍历协调。稳定 ID 保留原 DOM、选择、图表实例和目录条目，删除、更换类型、渲染失败或页面退出时释放图表资源。
-- 目录固定在左侧并独立滚动；目录只通过稳定 page/block ID 定位正文，折叠目录不得改变正文状态，避免导航操作干扰文档渲染。
+- 目录数据与视图分离，数据只描述节点和目标；视图独占目录 DOM 与折叠状态，点击时解析目标引用，避免目录投影修改正文或混入持久化数据。
+- 语义大纲与正文复用 Marked tokens，只收集 Markdown heading；正文重渲染时替换该块标题和目标缓存，失败或换类型时清空，避免代码误识别或跳转已脱离文档的 DOM。
+- 目录固定在左侧并独立滚动；切换、折叠和跳转不得改变正文、选择或图表，HTML 导出保留当前视图与有效锚点，避免阅读操作干扰文档状态。
 - 渲染错误每版本每 Block 只成功回报一次；重复快照不重复发送，发送失败可在后续快照重试，避免目录监听与显式同步重复触发修复。
 - 页修改必须有有效变更，重名、空标题、删除与重命名混用或未知 ID 均不写入、不发布提交，避免无效版本；删除当前页仅在落盘成功后清空指针，下次隐式插入创建新页。
 - 页修改仅 flush 已运行服务，不启动或重启监听，避免仅管理页面时占用端口。
@@ -157,4 +167,4 @@ Block 类型在 `core/contracts.js` 的 `BlockKind` 与 `blockDefinitions` 中�
 
 `tests/changes.test.ts` 用冻结输入验证纯变更可组合、显式 ID、版本不变和失败时输入不变；`tests/model.test.ts`、`tests/server.test.ts` 继续覆盖 Store 的落盘与同步行为。
 
-`npm test --workspace canvas-note` 运行 `tests/*.test.ts`，覆盖原子批次、并发写入、提交订阅、真实 HTTP/WebSocket、操作增量、快照恢复、回复去重、过期反馈、服务重启与工具 handler。`tests/contracts.test.ts` 校验共享枚举、内容定义与注册完整性，包含 Code 合法/非法内容、原样摘要与输入不变性；`tests/model.test.ts` 校验 TypeBox 联合 schema 覆盖、Code 插入与读取、整体替换、换类型、删除和原子失败；`tests/presentation.test.ts`、`tests/protocol.test.ts`、`tests/web.test.ts` 校验纯构造结果与输入不变性；反馈与模型测试同时校验投影阶段不提交状态。`tests/reconcile.test.ts` 通过 `tests/fixtures/browser.ts` 的最小浏览器环境执行完整客户端脚本，验证局部 DOM 写入、图表生命周期、选择保留和版本恢复。`tests/chart-theme.test.ts` 校验主题纯构造与真实 ECharts 显式样式优先；`tests/print.test.ts` 验证样式分层、字体图片就绪、打印重试与状态保留。`tests/math.test.ts` 使用真实 Marked 和 KaTeX 覆盖 Markdown 行内与展示公式、中文相邻、代码、转义及解析错误；复杂公式样例集中在 `tests/fixtures/math.ts`。`tests/export-html.test.ts` 覆盖导出失败后的控件恢复；检测到 Chromium 时验证资源内嵌、在线 DOM 不变、脚本安全序列化、离线目录跳转与折叠和图表恢复。根测试覆盖实际 Pi 独立加载和生产依赖安装。
+`npm test --workspace canvas-note` 运行 `tests/*.test.ts`，覆盖原子批次、并发写入、提交订阅、真实 HTTP/WebSocket、操作增量、快照恢复、回复去重、过期反馈、服务重启与工具 handler。`tests/contracts.test.ts` 校验共享枚举、内容定义与注册完整性，包含 Code 合法/非法内容、原样摘要与输入不变性；`tests/model.test.ts` 校验 TypeBox 联合 schema 覆盖、Code 插入与读取、整体替换、换类型、删除和原子失败；`tests/presentation.test.ts`、`tests/protocol.test.ts`、`tests/web.test.ts` 校验纯构造结果与输入不变性；反馈与模型测试同时校验投影阶段不提交状态。`tests/reconcile.test.ts` 通过 `tests/fixtures/browser.ts` 的最小浏览器环境执行完整客户端脚本，验证局部 DOM 写入、图表生命周期、选择保留和版本恢复。`tests/browser-outline.test.ts` 在检测到 Chromium 时通过 CDP 驱动真实客户端，验证 WebSocket 更新、标题跳转避让工具栏、UI 下载与禁网离线导航及图表。`tests/outline.test.ts` 覆盖纯目录模型与共享视图；`tests/semantic-outline.test.ts` 覆盖真实 Marked 标题提取、跨块层级、重复标题、视图切换、局部更新与目标引用清理。`tests/chart-theme.test.ts` 校验主题纯构造与真实 ECharts 显式样式优先；`tests/print.test.ts` 验证样式分层、字体图片就绪、打印重试与状态保留。`tests/math.test.ts` 使用真实 Marked 和 KaTeX 覆盖 Markdown 行内与展示公式、中文相邻、代码、转义及解析错误；复杂公式样例集中在 `tests/fixtures/math.ts`。`tests/export-html.test.ts` 覆盖导出失败后的控件恢复；检测到 Chromium 时验证资源内嵌、在线 DOM 不变、脚本安全序列化、离线目录跳转与折叠和图表恢复。根测试覆盖实际 Pi 独立加载和生产依赖安装。

@@ -10,6 +10,8 @@ export async function buildHtml({ title, pages, outline, charts, theme }) {
   const sidebar = outline?.cloneNode(true);
   if (!sidebar) root.classList.remove("outline-collapsed");
   if (sidebar) {
+    // Export the active outline snapshot, not inert online view controls.
+    sidebar.querySelector("#outline-mode")?.remove();
     const targets = new Map();
     for (const node of root.querySelectorAll(
       "[data-page-id], [data-block-id]",
@@ -20,12 +22,20 @@ export async function buildHtml({ title, pages, outline, charts, theme }) {
       node.id = `canvas-${key}`;
       targets.set(key, node.id);
     }
+    const headingTargets = new Set(
+      Array.from(
+        root.querySelectorAll("[data-outline-heading]"),
+        (node) => node.id,
+      ),
+    );
     for (const button of sidebar.querySelectorAll(".outline-link")) {
       const block = button.closest(".outline-block");
       const key = block
         ? `block-${block.dataset.blockId}`
         : `page-${button.closest(".outline-page").dataset.pageId}`;
-      const target = targets.get(key);
+      const target = headingTargets.has(button.dataset.targetId)
+        ? button.dataset.targetId
+        : targets.get(key);
       if (!target) continue;
       const link = output.createElement("a");
       link.className = button.className;
@@ -113,7 +123,7 @@ export async function buildHtml({ title, pages, outline, charts, theme }) {
       html { scroll-behavior: smooth; }
       ${sidebar ? "" : "#pages, #pages.outline-collapsed { margin-left: 0; }"}
       .block { padding: .85rem .65rem; }
-      .page, .block { scroll-margin-top: 1.5rem; }
+      .page, .block, [data-outline-heading] { scroll-margin-top: 1.5rem; }
       .outline-link { text-decoration: none; }
     }`;
   output.head.append(layout);
@@ -174,14 +184,17 @@ function restoreDocument({ charts, theme }) {
     });
     for (const button of outline.querySelectorAll(".outline-page-toggle")) {
       button.addEventListener("click", () => {
-        const page = button.closest(".outline-page");
-        const children = page.querySelector(".outline-children");
+        const entry = button.closest("li");
+        const children = Array.from(entry.children).find((node) =>
+          node.classList.contains("outline-children"),
+        );
+        if (!children) return;
         children.hidden = !children.hidden;
         button.textContent = children.hidden ? "▸" : "▾";
         button.setAttribute("aria-expanded", String(!children.hidden));
         button.setAttribute(
           "aria-label",
-          `${children.hidden ? "Expand" : "Collapse"} ${page.querySelector(".outline-page-link").textContent}`,
+          `${children.hidden ? "Expand" : "Collapse"} ${entry.querySelector(".outline-link").textContent}`,
         );
       });
     }

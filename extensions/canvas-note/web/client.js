@@ -12,6 +12,12 @@ import {
 } from "../core/contracts.js";
 import { createChartTheme } from "./chart-theme.js";
 import { exportHtml } from "./export-html.js";
+import {
+  buildPageOutline,
+  headingTargetId,
+  headingText,
+} from "./outline-model.js";
+import { createOutlineView } from "./outline-view.js";
 
 {
   let chartThemeMode = "screen";
@@ -55,7 +61,7 @@ import { exportHtml } from "./export-html.js";
     };
   }
 
-  function renderMarkdown(md) {
+  function renderMarkdown(md, headings = []) {
     const parser = new window.marked.Marked(
       window.markedKatex({
         nonStandard: true,
@@ -64,7 +70,29 @@ import { exportHtml } from "./export-html.js";
         strict: "error",
       }),
     );
-    return parser.parse(md);
+    const tokens = parser.lexer(md);
+    const markers = new Map();
+    const nonce = Math.random().toString(36).slice(2);
+    parser.walkTokens(tokens, (token) => {
+      if (token.type !== "heading") return;
+      const ordinal = headings.length;
+      const marker = `${nonce}-${ordinal}`;
+      markers.set(token, marker);
+      headings.push({
+        marker,
+        ordinal,
+        depth: token.depth,
+        label: headingText(token.tokens) || token.text,
+      });
+    });
+    parser.use({
+      renderer: {
+        heading(token) {
+          return `<h${token.depth} data-outline-heading="${markers.get(token)}">${this.parser.parseInline(token.tokens)}</h${token.depth}>\n`;
+        },
+      },
+    });
+    return parser.parser(tokens);
   }
 
   const blockHandlers = defineHandlers(BlockKind, {
@@ -72,10 +100,27 @@ import { exportHtml } from "./export-html.js";
       ...blockDefinitions[BlockKind.Text],
       copyText: blockDefinitions[BlockKind.Text].summarize,
       render(record, block) {
-        record.content.innerHTML = window.DOMPurify.sanitize(
-          renderMarkdown(block.spec.md),
-          { SANITIZE_NAMED_PROPS: true },
+        const headings = [];
+        const html = renderMarkdown(block.spec.md, headings);
+        record.content.innerHTML = window.DOMPurify.sanitize(html, {
+          SANITIZE_NAMED_PROPS: true,
+        });
+        const targets = new Map();
+        const ordinals = new Map(
+          headings.map((heading) => [heading.marker, heading.ordinal]),
         );
+        for (const target of record.content.querySelectorAll(
+          "[data-outline-heading]",
+        )) {
+          const ordinal = ordinals.get(
+            target.getAttribute("data-outline-heading"),
+          );
+          if (ordinal === undefined || targets.has(ordinal)) continue;
+          target.id = headingTargetId(block.id, ordinal);
+          targets.set(ordinal, target);
+        }
+        record.headings = headings;
+        record.headingTargets = targets;
         openMarkdownLinksInNewTabs(record.content);
       },
     },
@@ -574,7 +619,19 @@ import { exportHtml } from "./export-html.js";
     const pageSelection = new Set();
     const pages = new Map();
     const blocks = new Map();
-    const outlinePages = new Map();
+    let outlineMode = "structure";
+    const dirtyOutlinePages = new Set();
+    const outlineView = createOutlineView({
+      document,
+      root: outlineList,
+      resolveTarget(target) {
+        if (target.kind === "page") return pages.get(target.pageId)?.element;
+        const record = blocks.get(target.blockId);
+        return target.kind === "heading"
+          ? record?.headingTargets?.get(target.ordinal)
+          : record?.element;
+      },
+    });
     const failedBlocks = new Set();
     let doc = null;
     let awaitingSnapshot = true;
@@ -702,6 +759,8 @@ import { exportHtml } from "./export-html.js";
         disposeChart(record);
         record.content.replaceChildren();
       }
+      record.headings = [];
+      record.headingTargets = new Map();
       record.revision = presentation.revision;
       failedBlocks.delete(record.id);
       record.errorReported = false;
@@ -772,158 +831,61 @@ import { exportHtml } from "./export-html.js";
       }
     }
 
-    function scrollToOutlineTarget(target) {
-      target?.scrollIntoView?.({ behavior: "smooth", block: "start" });
+    function syncOutlinePage(pageId) {
+      dirtyOutlinePages.add(pageId);
     }
 
-    function outlineBlockLabel(block) {
-      return blockLabel(block);
+    function syncOutlineBlock(pageId) {
+      syncOutlinePage(pageId);
     }
 
-    function setOutlinePageExpanded(entry) {
-      entry.children.hidden = !entry.expanded;
-      entry.toggle.textContent = entry.expanded ? "▾" : "▸";
-      entry.toggle.setAttribute("aria-expanded", String(entry.expanded));
-      entry.toggle.setAttribute(
-        "aria-label",
-        `${entry.expanded ? "Collapse" : "Expand"} ${entry.label}`,
-      );
+    function removeOutlineBlock(pageId) {
+      syncOutlinePage(pageId);
     }
 
-    function createOutlinePage(page) {
-      const element = document.createElement("li");
-      element.className = "outline-page";
-      element.dataset.pageId = page.id;
-      const row = document.createElement("div");
-      row.className = "outline-page-row";
-      const toggle = document.createElement("button");
-      toggle.type = "button";
-      toggle.className = "outline-page-toggle";
-      const link = document.createElement("button");
-      link.type = "button";
-      link.className = "outline-link outline-page-link";
-      const children = document.createElement("ul");
-      children.className = "outline-children";
-      const entry = {
-        pageId: page.id,
-        element,
-        toggle,
-        link,
-        children,
-        blocks: new Map(),
-        expanded: true,
-        label: "",
-      };
-      toggle.addEventListener("click", () => {
-        entry.expanded = !entry.expanded;
-        setOutlinePageExpanded(entry);
-      });
-      link.addEventListener("click", () => {
-        scrollToOutlineTarget(pages.get(entry.pageId)?.element);
-      });
-      row.append(toggle, link);
-      element.append(row, children);
-      setOutlinePageExpanded(entry);
-      return entry;
-    }
-
-    function createOutlineBlock(block, pageId) {
-      const element = document.createElement("li");
-      element.className = "outline-block";
-      element.dataset.blockId = block.id;
-      const link = document.createElement("button");
-      link.type = "button";
-      link.className = "outline-link outline-block-link";
-      link.addEventListener("click", () => {
-        scrollToOutlineTarget(blocks.get(block.id)?.element);
-      });
-      element.append(link);
-      return { pageId, element, link, label: "" };
-    }
-
-    function syncOutlinePageEntry(pageId, pageIndex) {
-      const pageEntry = pages.get(pageId);
-      if (!pageEntry) {
-        pageSelection.delete(pageId);
-        const stale = outlinePages.get(pageId);
-        stale?.element.remove();
-        outlinePages.delete(pageId);
-        return;
+    function flushOutline() {
+      for (const pageId of dirtyOutlinePages) {
+        const entry = pages.get(pageId);
+        if (!entry) {
+          pageSelection.delete(pageId);
+          outlineView.removePage(pageId);
+          continue;
+        }
+        outlineView.updatePage(
+          buildPageOutline(
+            entry.page,
+            outlineMode,
+            (id) => blocks.get(id)?.headings || [],
+          ),
+          doc.pages.indexOf(entry.page),
+        );
       }
-      let entry = outlinePages.get(pageId);
-      if (!entry) {
-        entry = createOutlinePage(pageEntry.page);
-        outlinePages.set(pageId, entry);
-      }
-      const pageLabel = pageEntry.page.title || "Untitled page";
-      if (entry.label !== pageLabel) {
-        entry.label = pageLabel;
-        entry.link.textContent = pageLabel;
-        entry.link.setAttribute("aria-label", `Go to ${pageLabel}`);
-        setOutlinePageExpanded(entry);
-      }
-      const index = pageIndex ?? doc.pages.indexOf(pageEntry.page);
-      if (index >= 0) place(outlineList, entry.element, index);
-      return entry;
-    }
-
-    function syncOutlineBlock(pageId, block, blockIndex) {
-      const pageEntry = pages.get(pageId);
-      const entry = syncOutlinePageEntry(pageId);
-      if (!pageEntry || !entry) return;
-      let blockEntry = entry.blocks.get(block.id);
-      if (!blockEntry) {
-        blockEntry = createOutlineBlock(block, pageId);
-        entry.blocks.set(block.id, blockEntry);
-      }
-      const label = outlineBlockLabel(block);
-      if (blockEntry.label !== label) {
-        blockEntry.label = label;
-        blockEntry.link.textContent = label;
-      }
-      const ariaLabel = `Go to ${entry.label}, ${label}`;
-      if (blockEntry.ariaLabel !== ariaLabel) {
-        blockEntry.ariaLabel = ariaLabel;
-        blockEntry.link.setAttribute("aria-label", ariaLabel);
-      }
-      const index = blockIndex ?? pageEntry.page.blocks.indexOf(block);
-      if (index >= 0) place(entry.children, blockEntry.element, index);
-    }
-
-    function removeOutlineBlock(pageId, blockId) {
-      const entry = outlinePages.get(pageId);
-      const blockEntry = entry?.blocks.get(blockId);
-      if (!blockEntry) return;
-      blockEntry.element.remove();
-      entry.blocks.delete(blockId);
-    }
-
-    function syncOutlinePage(pageId, pageIndex) {
-      const pageEntry = pages.get(pageId);
-      const entry = syncOutlinePageEntry(pageId, pageIndex);
-      if (!pageEntry || !entry) return;
-      const liveBlocks = new Set();
-      pageEntry.page.blocks.forEach((block, blockIndex) => {
-        liveBlocks.add(block.id);
-        syncOutlineBlock(pageId, block, blockIndex);
-      });
-      for (const [id] of entry.blocks) {
-        if (!liveBlocks.has(id)) removeOutlineBlock(pageId, id);
-      }
+      dirtyOutlinePages.clear();
     }
 
     function syncOutline() {
       if (!doc) return;
-      const livePages = new Set();
-      doc.pages.forEach((page, pageIndex) => {
-        livePages.add(page.id);
-        syncOutlinePage(page.id, pageIndex);
+      outlineView.retainPages(new Set(doc.pages.map((page) => page.id)));
+      for (const page of doc.pages) syncOutlinePage(page.id);
+      flushOutline();
+    }
+
+    const modeButtons = [
+      ["outline-mode-structure", "structure"],
+      ["outline-mode-semantic", "semantic"],
+    ];
+    for (const [id, mode] of modeButtons) {
+      $(id).addEventListener("click", () => {
+        if (outlineMode === mode) return;
+        outlineMode = mode;
+        for (const [buttonId, buttonMode] of modeButtons)
+          $(buttonId).setAttribute("aria-pressed", String(mode === buttonMode));
+        outlineTree.setAttribute(
+          "aria-label",
+          mode === "structure" ? "Pages and blocks" : "Pages and headings",
+        );
+        syncOutline();
       });
-      for (const [id, entry] of outlinePages) {
-        if (livePages.has(id)) continue;
-        entry.element.remove();
-        outlinePages.delete(id);
-      }
     }
 
     function setOutlineCollapsed(collapsed) {
@@ -1004,6 +966,7 @@ import { exportHtml } from "./export-html.js";
     }
 
     function finishUpdate() {
+      flushOutline();
       const empty = doc.pages.length === 0;
       if ($("empty").hidden !== !empty) $("empty").hidden = !empty;
       const emptyText = "This canvas is empty. New pages will appear here.";

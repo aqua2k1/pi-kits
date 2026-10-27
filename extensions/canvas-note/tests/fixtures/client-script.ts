@@ -2,11 +2,15 @@ import assert from "node:assert/strict";
 import * as contracts from "../../core/contracts.js";
 import * as chartTheme from "../../web/chart-theme.js";
 import * as htmlExport from "../../web/export-html.js";
+import * as outlineModel from "../../web/outline-model.js";
+import * as outlineView from "../../web/outline-view.js";
 
 export const clientGlobals = {
   CanvasNoteContracts: contracts,
   CanvasNoteChartTheme: chartTheme,
   CanvasNoteHtmlExport: htmlExport,
+  CanvasNoteOutlineModel: outlineModel,
+  CanvasNoteOutlineView: outlineView,
 };
 
 // vm.Script cannot link ESM. Bind static imports to the actual modules,
@@ -40,5 +44,13 @@ export function clientScript(source: string): string {
     .replace(
       /^import\s*\{([^}]+)\}\s*from\s*"\.\/export-html\.js";\r?\n/m,
       "const {$1} = CanvasNoteHtmlExport;\n",
+    )
+    .replace(
+      /^import\s*\{([^}]+)\}\s*from\s*"\.\/outline-model\.js";\r?\n/m,
+      "const {$1} = CanvasNoteOutlineModel;\n",
+    )
+    .replace(
+      /^import\s*\{([^}]+)\}\s*from\s*"\.\/outline-view\.js";\r?\n/m,
+      "const {$1} = CanvasNoteOutlineView;\n",
     );
 }

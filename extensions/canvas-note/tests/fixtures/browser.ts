@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { runInNewContext } from "node:vm";
+import { Marked, type MarkedExtension, type TokensList } from "marked";
 import markedKatex from "marked-katex-extension";
 import type { Document, Operation } from "../../core/model.ts";
 import { clientGlobals, clientScript } from "./client-script.ts";
@@ -58,6 +59,7 @@ export class Element extends Events {
   value = "";
   type = "";
   scope = "";
+  id = "";
 
   constructor(readonly tagName: string) {
     super();
@@ -95,6 +97,27 @@ export class Element extends Events {
     this.count("innerHTML");
     this.detachChildren();
     this.values.innerHTML = value;
+    // Materialize generated Markdown heading anchors without simulating an HTML DOM.
+    for (const match of value.matchAll(
+      /<h([1-6])\b([^>]*)>([\s\S]*?)<\/h\1>/g,
+    )) {
+      if (!match[2].includes("data-outline-heading")) continue;
+      const heading = new Element(`h${match[1]}`);
+      heading.textContent = match[3]
+        .replace(/<[^>]*>/g, "")
+        .replace(/&amp;/g, "&")
+        .replace(/&lt;/g, "<")
+        .replace(/&gt;/g, ">")
+        .replace(/&quot;/g, '"')
+        .replace(/&#39;/g, "'");
+      for (const attribute of match[2].matchAll(/([\w-]+)="([^"]*)"/g)) {
+        heading.setAttribute(attribute[1], attribute[2]);
+        if (attribute[1] === "id") heading.id = attribute[2];
+        if (attribute[1] === "data-outline-heading")
+          heading.dataset.outlineHeading = attribute[2];
+      }
+      this.append(heading);
+    }
   }
   get className(): string {
     return String(this.values.className ?? "");
@@ -124,6 +147,10 @@ export class Element extends Events {
   setAttribute(name: string, value: string) {
     this.count(`attribute.${name}`);
     this.attributes[name] = value;
+  }
+
+  getAttribute(name: string) {
+    return this.attributes[name] ?? null;
   }
 
   private detachChildren() {
@@ -185,10 +212,19 @@ export class Element extends Events {
   scrollIntoView() {
     this.count("scrollIntoView");
   }
-  querySelectorAll(tag: string) {
+  querySelectorAll(selector: string) {
     return subtree(this)
       .slice(1)
-      .filter((node) => node.tagName === tag);
+      .filter((node) =>
+        selector.split(",").some((part) => {
+          const tag = part.trim();
+          if (tag === "[data-outline-heading]")
+            return node.dataset.outlineHeading !== undefined;
+          if (tag === "[id]") return !!node.id;
+          if (tag.startsWith(".")) return node.classList.contains(tag.slice(1));
+          return node.tagName === tag;
+        }),
+      );
   }
 
   createTHead() {
@@ -343,10 +379,34 @@ export function browser() {
     markedKatex,
     marked: {
       Marked: class {
-        parse(md: string) {
+        private actual: Marked;
+        private sources = new WeakMap<TokensList, string>();
+        constructor(...extensions: MarkedExtension[]) {
+          this.actual = new Marked(...extensions);
+        }
+        use(...extensions: MarkedExtension[]) {
+          this.actual.use(...extensions);
+          return this;
+        }
+        lexer(md: string) {
           markdown.push(md);
           if (md === "BROKEN") throw new Error("invalid markdown");
-          return `<p>${md}</p>`;
+          const tokens = this.actual.lexer(md);
+          this.sources.set(tokens, md);
+          return tokens;
+        }
+        parser(tokens: TokensList) {
+          const html = this.actual.parser(tokens);
+          // Preserve legacy fixture rendering for tests unrelated to headings.
+          return html.includes("data-outline-heading")
+            ? html
+            : `<p>${this.sources.get(tokens) ?? ""}</p>`;
+        }
+        parse(md: string) {
+          return this.parser(this.lexer(md));
+        }
+        walkTokens(...args: Parameters<Marked["walkTokens"]>) {
+          return this.actual.walkTokens(...args);
         }
       },
     },

@@ -128,7 +128,7 @@ test("standalone HTML embeds resources and restores interactive charts in a real
       <div class="outline-header"><span class="outline-title">Contents</span><button id="outline-toggle" aria-controls="outline-tree" aria-expanded="false">›</button></div>
       <nav id="outline-tree" hidden><ul class="outline-list"><li class="outline-page" data-page-id="p"><div class="outline-page-row"><button class="outline-page-toggle" aria-expanded="true">▾</button><button class="outline-link outline-page-link">Export</button></div><ul class="outline-children"><li class="outline-block" data-block-id="chart"><button class="outline-link outline-block-link">Chart</button></li></ul></li></ul></nav>
     </aside>
-    <main id="pages" class="outline-collapsed"><section class="page selected" data-page-id="p"><h1>Export</h1><label class="page-selection"><input type="checkbox" class="page-select" checked>Select page</label>
+    <main id="pages" class="outline-collapsed"><h2 id="canvas-heading-chart-0" data-outline-heading="0">Repeated heading</h2><h3 id="canvas-heading-chart-1" data-outline-heading="1">Repeated heading</h3><section class="page selected" data-page-id="p"><h1>Export</h1><label class="page-selection"><input type="checkbox" class="page-select" checked>Select page</label>
     <div class="block selected" data-block-id="chart"><input class="block-select"><div class="block-content content-chart"><canvas></canvas></div><button class="block-copy">Copy</button></div>
     <p><code>&lt;script&gt;not executable&lt;/script&gt;</code><img src="/image.svg" srcset="/image.svg 2x"></p></section></main>
     <script type="module">
@@ -139,6 +139,10 @@ test("standalone HTML embeds resources and restores interactive charts in a real
       pages.append(formula);
       if (!formula.querySelector('.katex')) throw new Error('Inline math was not rendered');
       const outline = document.getElementById('outline');
+      const headingItem = document.createElement('li');
+      headingItem.className = 'outline-heading';
+      headingItem.innerHTML = '<div class="outline-page-row"><button class="outline-page-toggle" aria-expanded="true">▾</button><button class="outline-link outline-block-link" data-target-id="canvas-heading-chart-0">Repeated heading</button></div><ul class="outline-children"><li class="outline-heading"><div class="outline-page-row"><button class="outline-link outline-block-link" data-target-id="canvas-heading-chart-1">Repeated heading</button></div></li></ul>';
+      outline.querySelector('.outline-children').append(headingItem);
       const before = pages.outerHTML + outline.outerHTML;
       try {
         const html = await buildHtml({ title: 'Export <test>', pages, outline, theme: {}, charts: [{ id: 'chart', option: {
@@ -219,6 +223,11 @@ test("standalone HTML embeds resources and restores interactive charts in a real
         if (!outline.querySelector('.outline-children').hidden || pageToggle.getAttribute('aria-expanded') !== 'false') throw new Error('Page collapse failed');
         pageToggle.click();
         if (outline.querySelector('.outline-children').hidden) throw new Error('Page expand failed');
+        const headingToggle = outline.querySelector('.outline-heading .outline-page-toggle');
+        headingToggle.click();
+        if (!headingToggle.closest('li').querySelector('.outline-children').hidden) throw new Error('Heading collapse failed');
+        if (outline.querySelector('.outline-children').hidden) throw new Error('Heading collapse affected page');
+        headingToggle.click();
         for (const link of outline.querySelectorAll('a.outline-link')) {
           link.click();
           if (!document.getElementById(decodeURIComponent(location.hash.slice(1)))) throw new Error('Broken navigation');
@@ -250,6 +259,8 @@ test("standalone HTML embeds resources and restores interactive charts in a real
     assert.match(offline.stdout, /data-outline-test="passed"/);
     assert.match(html, /href="#canvas-page-p"/);
     assert.match(html, /href="#canvas-block-chart"/);
+    assert.match(html, /href="#canvas-heading-chart-0"/);
+    assert.match(html, /href="#canvas-heading-chart-1"/);
     assert.match(offline.stdout, /class="katex"/);
     assert.doesNotMatch(
       offline.stdout,

@@ -336,6 +336,8 @@ test("real HTTP, WebSocket snapshots, atomic rename watch, reply acknowledgment 
     "/favicon.svg",
     "/client.js",
     "/chart-theme.js",
+    "/outline-model.js",
+    "/outline-view.js",
     "/export-html.js",
     "/client.css",
     "/content.css",

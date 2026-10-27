@@ -227,6 +227,23 @@
   .outline.collapsed .outline-title {
     display: none;
   }
+  .outline-mode {
+    display: flex;
+    gap: 0.25rem;
+    padding: 0.5rem;
+  }
+  .outline-mode button {
+    flex: 1;
+    padding: 0.3rem;
+    font-size: var(--font-size-xs);
+  }
+  .outline-mode button[aria-pressed="true"] {
+    background: var(--selection);
+    color: var(--text);
+  }
+  .outline.collapsed .outline-mode {
+    display: none;
+  }
   #outline-tree {
     min-height: 0;
     overflow: auto;
@@ -322,6 +339,9 @@
   .page-select {
     accent-color: var(--accent);
     cursor: pointer;
+  }
+  [data-outline-heading] {
+    scroll-margin-top: calc(var(--toolbar-height) + 1rem);
   }
   .block {
     scroll-margin-top: 6rem;

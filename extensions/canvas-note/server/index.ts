@@ -45,6 +45,14 @@ const assets = new Map<string, [string, string]>([
     "/export-html.js",
     [join(assetRoot, "export-html.js"), "text/javascript; charset=utf-8"],
   ],
+  [
+    "/outline-model.js",
+    [join(assetRoot, "outline-model.js"), "text/javascript; charset=utf-8"],
+  ],
+  [
+    "/outline-view.js",
+    [join(assetRoot, "outline-view.js"), "text/javascript; charset=utf-8"],
+  ],
   ["/client.css", [join(assetRoot, "client.css"), "text/css; charset=utf-8"]],
   ["/content.css", [join(assetRoot, "content.css"), "text/css; charset=utf-8"]],
   ["/print.css", [join(assetRoot, "print.css"), "text/css; charset=utf-8"]],

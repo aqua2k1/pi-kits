@@ -1,0 +1,418 @@
+import assert from "node:assert/strict";
+import { spawn, spawnSync } from "node:child_process";
+import { once } from "node:events";
+import { mkdtemp, readdir, readFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { test } from "node:test";
+import { setTimeout as delay } from "node:timers/promises";
+import { pathToFileURL } from "node:url";
+import { WebSocket } from "ws";
+import { DocumentStore } from "../core/store.ts";
+import { startCanvasNoteServer } from "../server/index.ts";
+
+const chromium = process.env.CHROMIUM_PATH || "chromium";
+const hasChromium = spawnSync(chromium, ["--version"]).status === 0;
+
+type CommandResult = {
+  targetId?: string;
+  sessionId?: string;
+  result?: { value?: unknown };
+  exceptionDetails?: unknown;
+};
+
+// Drive the actual installed browser through CDP; no DOM, parser, network or
+// renderer mocks are involved in this test.
+async function connectBrowser(endpoint: string) {
+  const socket = new WebSocket(endpoint);
+  await once(socket, "open");
+  let nextId = 0;
+  const pending = new Map<
+    number,
+    { resolve(value: CommandResult): void; reject(error: Error): void }
+  >();
+  const exceptions: unknown[] = [];
+  const failures: unknown[] = [];
+  socket.on("message", (raw) => {
+    const message = JSON.parse(raw.toString());
+    if (message.id) {
+      const request = pending.get(message.id);
+      pending.delete(message.id);
+      if (message.error)
+        request?.reject(new Error(JSON.stringify(message.error)));
+      else request?.resolve(message.result);
+    } else if (message.method === "Runtime.exceptionThrown") {
+      exceptions.push(message.params.exceptionDetails);
+    } else if (
+      message.method === "Network.responseReceived" &&
+      message.params.response.status >= 400
+    ) {
+      failures.push(message.params.response);
+    }
+  });
+  socket.on("close", () => {
+    for (const request of pending.values())
+      request.reject(new Error("Browser disconnected"));
+    pending.clear();
+  });
+  const send = (
+    method: string,
+    params: object = {},
+    sessionId?: string,
+  ): Promise<CommandResult> => {
+    const id = ++nextId;
+    return new Promise((resolve, reject) => {
+      pending.set(id, { resolve, reject });
+      socket.send(JSON.stringify({ id, method, params, sessionId }));
+    });
+  };
+  return { send, exceptions, failures, close: () => socket.close() };
+}
+
+async function until<T>(
+  probe: () => Promise<T>,
+  description: string,
+): Promise<NonNullable<T>> {
+  const deadline = Date.now() + 15000;
+  while (Date.now() < deadline) {
+    const result = await probe();
+    if (result) return result as NonNullable<T>;
+    await delay(50);
+  }
+  throw new Error(`Timed out: ${description}`);
+}
+
+test("real Chromium renders semantic outlines, consumes updates and exports working offline navigation", {
+  skip: !hasChromium,
+  timeout: 90000,
+}, async (t) => {
+  const dir = await mkdtemp(join(tmpdir(), "canvas-outline-browser-"));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  const store = new DocumentStore(join(dir, "doc.json"));
+  const { pageId } = await store.insertPage({ title: "Browser report" });
+  const spacer = Array.from(
+    { length: 35 },
+    (_, i) => `Paragraph ${i}: browser navigation fixture.`,
+  ).join("\n\n");
+  const inserted = await store.insertBlocks({
+    pageId,
+    blocks: [
+      {
+        type: "text",
+        title: "Logical block",
+        spec: {
+          md: `# **Repeated** [heading](https://example.com)\n\n${spacer}\n\n\`\`\`md\n# Fake code heading\n\`\`\`\n\n<h2>Raw HTML heading</h2>`,
+        },
+      },
+      {
+        type: "text",
+        spec: {
+          md: `### Repeated heading\n\n${spacer}\n\nSecond\n======\n\n> #### Quoted heading`,
+        },
+      },
+      {
+        type: "chart",
+        spec: {
+          xAxis: { data: ["a", "b"] },
+          yAxis: {},
+          series: [{ type: "bar", data: [1, 2] }],
+        },
+      },
+    ],
+  });
+  await store.insertPage({ title: "Empty page" });
+  const [firstId, secondId, chartId] = inserted.blockIds;
+  const errors: unknown[] = [];
+  const server = await startCanvasNoteServer({
+    host: "127.0.0.1",
+    port: 0,
+    store,
+    onReply() {},
+    onRenderError: (error) => {
+      errors.push(error);
+    },
+    onError: (error) => errors.push(error),
+  });
+  t.after(() => server.close());
+  const child = spawn(
+    chromium,
+    [
+      "--headless",
+      "--no-sandbox",
+      "--disable-gpu",
+      "--remote-debugging-port=0",
+      `--user-data-dir=${join(dir, "profile")}`,
+      "about:blank",
+    ],
+    { stdio: ["ignore", "ignore", "pipe"] },
+  );
+  t.after(async () => {
+    if (child.exitCode === null && child.signalCode === null) {
+      const exited = once(child, "exit");
+      child.kill();
+      await exited;
+    }
+  });
+  const endpoint = await new Promise<string>((resolve, reject) => {
+    let output = "";
+    const timeout = setTimeout(
+      () => reject(new Error(`Chromium startup timed out: ${output}`)),
+      10000,
+    );
+    child.once("error", (error) => {
+      clearTimeout(timeout);
+      reject(error);
+    });
+    child.once("exit", (code) => {
+      clearTimeout(timeout);
+      reject(new Error(`Chromium exited ${code}: ${output}`));
+    });
+    child.stderr.on("data", (chunk) => {
+      output += chunk.toString();
+      const match = /DevTools listening on (ws:\/\/\S+)/.exec(output);
+      if (match) {
+        clearTimeout(timeout);
+        resolve(match[1]);
+      }
+    });
+  });
+  const cdp = await connectBrowser(endpoint);
+  t.after(() => cdp.close());
+  const { targetId } = await cdp.send("Target.createTarget", {
+    url: "about:blank",
+  });
+  const { sessionId } = await cdp.send("Target.attachToTarget", {
+    targetId,
+    flatten: true,
+  });
+  const send = (method: string, params: object = {}) =>
+    cdp.send(method, params, sessionId);
+  const evaluate = async <T = unknown>(expression: string): Promise<T> => {
+    const result = await send("Runtime.evaluate", {
+      expression,
+      awaitPromise: true,
+      returnByValue: true,
+    });
+    if (result.exceptionDetails)
+      throw new Error(JSON.stringify(result.exceptionDetails));
+    return result.result?.value as T;
+  };
+  await send("Runtime.enable");
+  await send("Page.enable");
+  await send("Network.enable");
+  await send("Emulation.setDeviceMetricsOverride", {
+    width: 1280,
+    height: 900,
+    deviceScaleFactor: 1,
+    mobile: false,
+  });
+  await cdp.send("Browser.setDownloadBehavior", {
+    behavior: "allow",
+    downloadPath: dir,
+  });
+  await send("Page.navigate", { url: server.url });
+  await until(
+    () =>
+      evaluate(
+        "document.getElementById('connection')?.textContent === 'Connected'",
+      ),
+    "actual client WebSocket snapshot",
+  );
+  const originalDocument = await readFile(store.path, "utf8");
+  await evaluate(`window.testChart = window.echarts.getInstanceByDom(document.querySelector('[data-block-id="${chartId}"] .block-content'));
+    document.querySelector('[data-block-id="${firstId}"] .block-select').click();
+    document.getElementById('outline-mode-semantic').click();`);
+  const labels = () =>
+    evaluate<string[]>(
+      "Array.from(document.querySelectorAll('.outline-heading > .outline-page-row > .outline-link'), node => node.textContent)",
+    );
+  assert.deepEqual(await labels(), [
+    "Repeated heading",
+    "Repeated heading",
+    "Second",
+    "Quoted heading",
+  ]);
+  assert.equal(
+    await evaluate(
+      "document.querySelectorAll('#outline-list > .outline-page').length",
+    ),
+    2,
+  );
+  assert.equal(
+    await evaluate(
+      "document.querySelectorAll('#outline-list > .outline-page:last-child .outline-heading').length",
+    ),
+    0,
+  );
+  assert.equal(
+    await evaluate(
+      "document.querySelectorAll('.outline-heading .outline-heading').length",
+    ),
+    2,
+  );
+  assert.equal(
+    await evaluate(
+      `document.querySelector('[data-block-id="${firstId}"] .block-select').checked`,
+    ),
+    true,
+  );
+  assert.equal(
+    await evaluate(
+      `window.testChart === window.echarts.getInstanceByDom(document.querySelector('[data-block-id="${chartId}"] .block-content'))`,
+    ),
+    true,
+  );
+  // Verify the real scroll target is visible below the sticky toolbar.
+  await evaluate(
+    "document.querySelectorAll('.outline-heading > .outline-page-row > .outline-link')[1].click()",
+  );
+  const position = await evaluate<{
+    top: number;
+    toolbarBottom: number;
+    height: number;
+  }>(`new Promise(resolve => {
+    const target = document.getElementById('canvas-heading-${secondId}-0');
+    let previous, stable = 0;
+    const frame = () => {
+      const top = target.getBoundingClientRect().top;
+      stable = previous !== undefined && Math.abs(top - previous) < 0.1 ? stable + 1 : 0;
+      previous = top;
+      if (stable >= 12) resolve({ top, toolbarBottom: document.querySelector('.toolbar').getBoundingClientRect().bottom, height: innerHeight });
+      else requestAnimationFrame(frame);
+    };
+    requestAnimationFrame(frame);
+  })`);
+  assert.ok(
+    position.top >= position.toolbarBottom && position.top < position.height,
+    `Heading is obscured after scroll settles: ${JSON.stringify(position)}`,
+  );
+  await evaluate(
+    "document.querySelector('.outline-heading .outline-page-toggle').click(); document.getElementById('outline-mode-structure').click()",
+  );
+  assert.equal(
+    await evaluate(
+      "document.querySelector('.outline-block .outline-link').textContent",
+    ),
+    "Logical block",
+  );
+  await evaluate("document.getElementById('outline-mode-semantic').click()");
+  assert.equal(
+    await evaluate(
+      "document.querySelector('.outline-heading > .outline-children').hidden",
+    ),
+    true,
+  );
+  assert.equal(await readFile(store.path, "utf8"), originalDocument);
+  await evaluate(
+    `window.oldHeading = document.getElementById('canvas-heading-${firstId}-0')`,
+  );
+  await store.updateBlocks({
+    blocks: [
+      { blockId: firstId, spec: { md: `## Revised heading\n\n${spacer}` } },
+    ],
+  });
+  await until(
+    async () => (await labels())[0] === "Revised heading",
+    "incremental heading update",
+  );
+  assert.equal(
+    await evaluate(
+      `!window.oldHeading.isConnected && document.getElementById('canvas-heading-${firstId}-0') !== window.oldHeading`,
+    ),
+    true,
+  );
+  await store.updateBlocks({ blocks: [{ blockId: firstId, type: null }] });
+  await until(
+    async () => (await labels()).length === 3,
+    "deleted heading removal and reparenting",
+  );
+  assert.deepEqual(await labels(), [
+    "Repeated heading",
+    "Second",
+    "Quoted heading",
+  ]);
+  await evaluate(
+    "document.querySelector('.outline-heading > .outline-page-row > .outline-link').click()",
+  );
+  await until(
+    () =>
+      evaluate(
+        `document.getElementById('canvas-heading-${secondId}-0').getBoundingClientRect().top < innerHeight`,
+      ),
+    "surviving heading target",
+  );
+  // Use the real UI download path and the real DOM produced above.
+  await evaluate(
+    "document.getElementById('export-toggle').click(); document.getElementById('save-html').click()",
+  );
+  const filename = await until(
+    async () => (await readdir(dir)).find((name) => name.endsWith(".html")),
+    "actual HTML download",
+  );
+  const exported = await readFile(join(dir, filename), "utf8");
+  assert.match(exported, new RegExp(`href="#canvas-heading-${secondId}-0"`));
+  assert.doesNotMatch(exported, /id="outline-mode"|new WebSocket/);
+  assert.deepEqual(errors, []);
+  assert.deepEqual(cdp.exceptions, []);
+  assert.deepEqual(cdp.failures, []);
+  // Close the live page/server, then deny network in the same real browser.
+  await send("Page.navigate", { url: "about:blank" });
+  await server.close();
+  await send("Network.emulateNetworkConditions", {
+    offline: true,
+    latency: 0,
+    downloadThroughput: 0,
+    uploadThroughput: 0,
+  });
+  await send("Page.navigate", { url: pathToFileURL(join(dir, filename)).href });
+  await until(
+    () =>
+      evaluate(
+        "document.querySelectorAll('a.outline-link').length > 0 && !!document.querySelector('[data-export-chart] canvas')",
+      ),
+    "offline exported document and chart",
+  );
+  assert.deepEqual(await labels(), [
+    "Repeated heading",
+    "Second",
+    "Quoted heading",
+  ]);
+  assert.equal(
+    await evaluate("document.getElementById('outline-mode') === null"),
+    true,
+  );
+  const offlineTargets = await evaluate<boolean[]>(
+    "Array.from(document.querySelectorAll('a.outline-link'), link => !!document.getElementById(decodeURIComponent(link.hash.slice(1))))",
+  );
+  assert.ok(offlineTargets.length > 3);
+  assert.ok(offlineTargets.every(Boolean));
+  await evaluate(`window.offlineBranch = Array.from(document.querySelectorAll('.outline-heading')).find(node => node.querySelector(':scope > .outline-children').children.length);
+    window.offlineBranch.querySelector(':scope > .outline-page-row > .outline-page-toggle').click()`);
+  assert.equal(
+    await evaluate(
+      "window.offlineBranch.querySelector(':scope > .outline-children').hidden",
+    ),
+    true,
+  );
+  assert.equal(
+    await evaluate(
+      "document.querySelector('.outline-page > .outline-children').hidden",
+    ),
+    false,
+  );
+  assert.deepEqual(
+    await evaluate(
+      "window.echarts.getInstanceByDom(document.querySelector('[data-export-chart]')).getOption().series[0].data",
+    ),
+    [1, 2],
+  );
+  await evaluate(
+    "window.offlineBranch.querySelector(':scope > .outline-page-row > .outline-page-toggle').click(); document.querySelector('.outline-heading a').click()",
+  );
+  await until(
+    () => evaluate(`location.hash === '#canvas-heading-${secondId}-0'`),
+    "offline heading anchor navigation",
+  );
+  assert.deepEqual(cdp.exceptions, []);
+  assert.deepEqual(cdp.failures, []);
+});
