@@ -149,72 +149,57 @@ test("repository and independent extension manifests declare the same explicit e
   );
 });
 
-test("Canvas Note prompt loads from root and independent packages and expands complete requests", async (t) => {
+test("Canvas Note skill loads manually from root and independent packages without a prompt template", async (t) => {
   const { DefaultResourceLoader, SettingsManager } = await import(
     "@earendil-works/pi-coding-agent"
   );
-  const { expandPromptTemplate } = await import(
+  const { formatSkillsForPrompt } = await import(
     new URL(
-      "../node_modules/@earendil-works/pi-coding-agent/dist/core/prompt-templates.js",
+      "../node_modules/@earendil-works/pi-coding-agent/dist/core/skills.js",
       import.meta.url,
     ).href
   );
-  const expected = join(root, "extensions/canvas-note/prompts/canvas-note.md");
+  const skillDir = join(root, "extensions/canvas-note/skills/canvas-note");
+  const expected = join(skillDir, "SKILL.md");
   for (const source of [root, join(root, "extensions/canvas-note")]) {
     const manifest = JSON.parse(
       readFileSync(join(source, "package.json"), "utf8"),
     );
     assert.deepEqual(
-      manifest.pi.prompts.map((entry: string) => resolve(source, entry)),
-      [expected],
+      manifest.pi.skills.map((entry: string) => resolve(source, entry)),
+      [skillDir],
     );
-    const dir = mkdtempSync(join(tmpdir(), "pi-kits-prompt-"));
+    assert.equal(manifest.pi.prompts, undefined);
+    const dir = mkdtempSync(join(tmpdir(), "pi-kits-skill-"));
     t.after(() => rmSync(dir, { recursive: true, force: true }));
     const loader = new DefaultResourceLoader({
       cwd: dir,
       agentDir: dir,
       settingsManager: SettingsManager.inMemory({
-        packages: [{ source, extensions: [], skills: [], themes: [] }],
+        packages: [{ source, extensions: [], prompts: [], themes: [] }],
       }),
       noExtensions: true,
-      noSkills: true,
       noThemes: true,
       noContextFiles: true,
     });
     await loader.reload();
-    const { prompts, diagnostics } = loader.getPrompts();
+    const { skills, diagnostics } = loader.getSkills();
     assert.deepEqual(diagnostics, []);
-    assert.equal(prompts.length, 1);
-    const prompt = prompts[0];
-    assert.equal(prompt.name, "canvas-note");
-    assert.equal(prompt.argumentHint, "<msg>");
-    assert.equal(prompt.filePath, expected);
-    assert.equal(
-      prompt.description,
-      "Create or update interactive documents with Canvas Note",
-    );
-    assert.ok(prompt.content.includes("$ARGUMENTS"));
-    const expanded = expandPromptTemplate(
-      '/canvas-note Analyze "API compatibility" and draw a chart',
-      prompts,
-    );
-    assert.ok(
-      expanded.endsWith(
-        "User request:\nAnalyze API compatibility and draw a chart",
-      ),
-    );
-    assert.equal(expanded.includes("$ARGUMENTS"), false);
-    const empty = expandPromptTemplate("/canvas-note", prompts);
-    assert.ok(
-      empty.includes(
-        "If no request is provided, ask what the user wants to create or change.",
-      ),
-    );
-    assert.equal(empty.includes("$ARGUMENTS"), false);
-    assert.equal(
-      expandPromptTemplate("/another-command request", prompts),
-      "/another-command request",
-    );
+    const canvasSkills = skills.filter((skill) => skill.name === "canvas-note");
+    assert.equal(canvasSkills.length, 1);
+    const skill = canvasSkills[0];
+    assert.equal(skill.name, "canvas-note");
+    assert.equal(skill.filePath, expected);
+    assert.equal(skill.disableModelInvocation, true);
+    assert.equal(formatSkillsForPrompt(canvasSkills), "");
+    assert.ok(!formatSkillsForPrompt(skills).includes(expected));
+    assert.deepEqual(loader.getPrompts().prompts, []);
+    const instructions = readFileSync(skill.filePath, "utf8");
+    assert.match(instructions, /searchTools/);
+    assert.match(instructions, /describeNamespace/);
+    assert.match(instructions, /snapshotPath/);
+    assert.match(instructions, /documentPath/);
+    assert.equal(instructions.includes("$ARGUMENTS"), false);
   }
 });
 

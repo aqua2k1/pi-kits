@@ -41,6 +41,7 @@ test("extension registers four tools and the server command; real handlers lazil
   );
   type Tool = {
     name: string;
+    exposure: string;
     execute: (
       id: string,
       params: unknown,
@@ -74,6 +75,9 @@ test("extension registers four tools and the server command; real handlers lazil
     "update_blocks",
     "update_page",
   ]);
+  for (const tool of tools.values()) {
+    assert.equal(tool.exposure, "deferred");
+  }
   const ctx = {
     cwd: agentDir,
     sessionManager: { getSessionId: () => "integration", getBranch: () => [] },
@@ -321,12 +325,7 @@ test("real Pi SDK loads Canvas Note and dispatches its lifecycle and tools", asy
   const page = session.getToolDefinition("insert_page");
   const insert = session.getToolDefinition("insert_blocks");
   assert.ok(page && insert);
-  assert.deepEqual(session.getActiveToolNames().sort(), [
-    "insert_blocks",
-    "insert_page",
-    "update_blocks",
-    "update_page",
-  ]);
+  assert.deepEqual(session.getActiveToolNames(), []);
   const pageResult = await page.execute(
     "sdk-page",
     { title: "SDK 报告" },
@@ -374,6 +373,7 @@ test("real Pi SDK loads Canvas Note and dispatches its lifecycle and tools", asy
   );
   await session.reload();
   await assert.rejects(fetch(url));
+  assert.deepEqual(session.getActiveToolNames(), []);
   const reloadedPage = session.getToolDefinition("insert_page");
   assert.ok(reloadedPage);
   const reopened = await reloadedPage.execute(

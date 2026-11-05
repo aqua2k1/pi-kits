@@ -122,6 +122,7 @@ export default function canvasNoteExtension(pi: ExtensionAPI) {
     },
   });
   const common = {
+    exposure: "deferred" as const,
     namespace: {
       name: "canvas-note",
       description:

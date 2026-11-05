@@ -12,8 +12,8 @@
     "extensions": [
       "./index.ts"
     ],
-    "prompts": [
-      "./prompts/canvas-note.md"
+    "skills": [
+      "./skills/canvas-note"
     ]
   },
   "scripts": {

@@ -2,6 +2,8 @@
 
 插件串行修改 JSON，落盘后记录操作，WebSocket 推送操作增量供浏览器消费；首次连接、重连和外部文件修改使用完整快照恢复。HTTP 服务提供本地渲染资源。
 
+`skills/canvas-note/SKILL.md` 提供手动加载的工作流，设置 `disable-model-invocation: true`，根包与独立包均声明该资源。Pi 原生命令 `/skill:canvas-note` 加载指导与用户请求；四工具统一使用 `exposure: "deferred"`，注册和参数契约仍由入口与核心层提供；初始活动工具列表不包含它们，Codemode 按需发现并调用，或由 `tool_search` 搜索激活。
+
 ## 模块关系
 
 ```mermaid
