@@ -224,18 +224,18 @@ test("flat resource declarations select web-kits without legacy aliases", async 
   );
   assert.deepEqual(
     await resolveWorkerExtensions([
-      { source: root, extensions: ["stats", "web-kits"] },
+      { source: root, extensions: ["open", "web-kits"] },
     ]),
     [
-      join(root, "extensions/stats/index.ts"),
+      join(root, "extensions/open/index.ts"),
       join(root, "extensions/web-kits/index.ts"),
     ],
   );
   assert.deepEqual(
     await resolveWorkerExtensions([
-      { source: join(root, "extensions/stats"), extensions: ["stats"] },
+      { source: join(root, "extensions/open"), extensions: ["open"] },
     ]),
-    [join(root, "extensions/stats/index.ts")],
+    [join(root, "extensions/open/index.ts")],
   );
   assert.deepEqual(
     await resolveWorkerExtensions([
@@ -244,6 +244,7 @@ test("flat resource declarations select web-kits without legacy aliases", async 
     [join(root, "extensions/web-kits/index.ts")],
   );
   for (const name of [
+    "stats",
     "workspace-kit",
     "usage-kit",
     "workflow-kit",

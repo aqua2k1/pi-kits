@@ -19,7 +19,6 @@ pi install https://github.com/aqua2k1/pi-kits.git
 | [preview](extensions/preview/README.md) | 只读预览会话回复 |
 | [context-preview](extensions/context-preview/README.md) | 查看模型请求 payload |
 | [provider-usage](extensions/provider-usage/README.md) | 显示服务商余额与额度 |
-| [stats](extensions/stats/README.md) | 生成 Token 和费用统计报告 |
 | [token-meter](extensions/token-meter/README.md) | 编辑器下方信息行显示最近请求的 TTFT 和 TPS |
 | [handoff](extensions/handoff/README.md) | 克隆会话并生成交接摘要 |
 | [notify](extensions/notify/README.md) | 任务完成桌面通知 |
@@ -30,6 +29,8 @@ pi install https://github.com/aqua2k1/pi-kits.git
 `terminal` 扩展已从主线移除，原实现保留在 `archive/terminal` 分支；`/vim`、`/lg`、`/fm` 不再注册，建议通过 mux 启动相应程序。
 
 `commit` 扩展原实现保留在 `archive/commit` 分支；主线保留旧 `commit` 配置兼容，提交由编码 Agent 执行。
+
+`stats` 扩展原实现保留在 `archive/stats` 分支；主线保留旧 `stats` 配置兼容，`/stats` 不再注册。
 
 ## 配置
 
