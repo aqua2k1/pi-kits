@@ -25,6 +25,7 @@ export async function runDockedPanel<T>(
   ) => DockedPanelComponent,
   options: {
     signal?: AbortSignal;
+    customOptions?: Parameters<ExtensionUIContext["custom"]>[1];
     lifecycle?: DockedPanelLifecycle;
     isCancelled?: (result: T) => boolean;
   } = {},
@@ -86,7 +87,7 @@ export async function runDockedPanel<T>(
         lifecycle?.onOpen?.();
       }
       return component;
-    });
+    }, options.customOptions);
     if (!failed) {
       signal?.throwIfAborted();
       status = options.isCancelled?.(result) ? "cancelled" : "completed";

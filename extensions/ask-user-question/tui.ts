@@ -15,6 +15,13 @@ export function askTabbedQuestions(
     ui,
     (tui, theme, keys, done) =>
       new TabbedQuestionnaire(tui, theme, keys, params, done),
-    { signal, lifecycle, isCancelled: (result) => result.cancelled },
+    {
+      signal,
+      lifecycle,
+      customOptions: {
+        blocked: { kind: "question", message: "Questionnaire" },
+      },
+      isCancelled: (result) => result.cancelled,
+    },
   );
 }

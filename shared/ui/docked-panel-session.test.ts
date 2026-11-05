@@ -18,6 +18,7 @@ const theme = {} as Theme;
 function harness(
   options: {
     beforeFactory?: () => void;
+    customOptions?: Parameters<ExtensionUIContext["custom"]>[1];
     hostError?: "before" | "after";
     hostFailure?: Error;
     createError?: boolean;
@@ -43,7 +44,7 @@ function harness(
       factory: Parameters<ExtensionUIContext["custom"]>[0],
       customOptions: Parameters<ExtensionUIContext["custom"]>[1],
     ): Promise<T> {
-      assert.equal(customOptions, undefined);
+      assert.equal(customOptions, options.customOptions);
       if (options.hostError === "before") throw options.hostFailure ?? failure;
       options.beforeFactory?.();
       return new Promise<T>((resolve, reject) => {
@@ -121,6 +122,7 @@ function harness(
         },
         {
           signal,
+          customOptions: options.customOptions,
           isCancelled: (result) => result.cancelled,
           lifecycle: {
             onOpen() {
@@ -164,6 +166,19 @@ for (const cancelled of [false, true]) {
     assert.equal(host.disposals, 1);
   });
 }
+
+test("session forwards native custom options unchanged to the host", async () => {
+  const host = harness({
+    customOptions: {
+      overlay: false,
+      blocked: { kind: "question", message: "Pick a target" },
+    },
+    interact(_component, done) {
+      done({ cancelled: false });
+    },
+  });
+  assert.deepEqual(await host.run(), { cancelled: false });
+});
 
 test("open abort settles host, detaches listener and closes once after cleanup", async () => {
   const controller = new AbortController();

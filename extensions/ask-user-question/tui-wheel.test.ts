@@ -140,7 +140,9 @@ function mount(fullscreen = true) {
       factory: Parameters<ExtensionUIContext["custom"]>[0],
       options: Parameters<ExtensionUIContext["custom"]>[1],
     ): Promise<T> {
-      assert.equal(options, undefined);
+      assert.deepEqual(options, {
+        blocked: { kind: "question", message: "Questionnaire" },
+      }); // Dock in the editor, never overlay.
       const savedText = editor.getValue();
       return new Promise<T>((resolve, reject) => {
         let closed = false;

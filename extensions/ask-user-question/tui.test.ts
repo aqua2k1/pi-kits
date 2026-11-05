@@ -177,7 +177,9 @@ function testUI(
       factory: Parameters<ExtensionUIContext["custom"]>[0],
       options: Parameters<ExtensionUIContext["custom"]>[1],
     ): Promise<T> {
-      assert.equal(options, undefined); // Dock in the editor, never overlay.
+      assert.deepEqual(options, {
+        blocked: { kind: "question", message: "Questionnaire" },
+      }); // Dock in the editor, never overlay.
       beforeFactory?.();
       return new Promise<T>((resolve) => {
         let finished = false;
