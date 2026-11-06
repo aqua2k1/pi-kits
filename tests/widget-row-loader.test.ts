@@ -44,8 +44,8 @@ test("independently loaded extensions preserve both widget contributors across r
         modelRegistry: { getApiKeyForProvider: async () => "fixture-token" },
       };
       const paths = [
-        resolve("extensions/provider-usage/index.ts"),
-        resolve("extensions/token-meter/index.ts"),
+        resolve("extensions/pi-provider-usage/index.ts"),
+        resolve("extensions/pi-token-meter/index.ts"),
       ];
       async function emit(extensions, name, event = {}) {
         for (const extension of extensions) {

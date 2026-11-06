@@ -7,7 +7,7 @@
 在仓库根目录执行：
 
 ```sh
-pi install ./extensions/subagent
+pi install ./extensions/pi-subagent
 ```
 
 运行需要 Herdr；Pi 任务使用 PATH 中的 `pi`，Codex 任务使用 `codex`。Codex 的进程清理使用 POSIX 进程组。

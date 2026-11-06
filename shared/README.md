@@ -23,4 +23,4 @@ flowchart LR
 
 ## 配置
 
-公共库没有独立配置文件；扩展负责读取 `pi-kits.json` 并传入所需参数。通知库本身不读取开关，平台依赖见[通知说明](../extensions/notify/docs/usage.md)。
+公共库没有独立配置文件；扩展负责读取 `pi-kits.json` 并传入所需参数。通知库本身不读取开关，平台依赖见[通知说明](../extensions/pi-notify/docs/usage.md)。

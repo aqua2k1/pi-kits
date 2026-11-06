@@ -1,6 +1,6 @@
-# preview
+# output-viewer
 
-`/preview` 选择当前会话分支的一轮回复进行只读预览，`Alt+P` 直接预览最新回复。
+`/output-viewer` 选择当前会话分支的一轮回复进行只读预览，`Alt+P` 直接预览最新回复。
 
 ## 安装
 
@@ -13,9 +13,9 @@ pi install https://github.com/aqua2k1/pi-kits.git
 在已有回复且空闲的 Pi 交互式终端中输入，选择一轮回复后打开预览：
 
 ```text
-/preview
-/preview --thinking
-/preview --help
+/output-viewer
+/output-viewer --thinking
+/output-viewer --help
 ```
 
 | 参数 | 说明 |

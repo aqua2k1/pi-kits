@@ -25,7 +25,7 @@
 
 默认采用 Gruvbox 深色配色。
 
-配色资源位置：`extensions/canvas-note/theme.json`（扩展安装目录内）。修改后刷新网页生效，无需 `/reload`。各键均为字符串，接受 `#RGB`、`#RGBA`、`#RRGGBB`、`#RRGGBBAA`；省略或无效的值沿用默认配色，JSON 损坏或文件缺失时整页沿用默认配色。
+配色资源位置：`extensions/pi-canvas-note/theme.json`（扩展安装目录内）。修改后刷新网页生效，无需 `/reload`。各键均为字符串，接受 `#RGB`、`#RGBA`、`#RRGGBB`、`#RRGGBBAA`；省略或无效的值沿用默认配色，JSON 损坏或文件缺失时整页沿用默认配色。
 
 | 键 | 默认值 | 说明 |
 |---|---|---|

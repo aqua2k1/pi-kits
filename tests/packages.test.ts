@@ -85,6 +85,16 @@ test("repository and independent extension manifests declare the same explicit e
       readFileSync(join(dir, "package.json"), "utf8"),
     );
     assert.ok(manifest.keywords.includes("pi-package"));
+    assert.match(
+      manifest.name,
+      /^pi-/u,
+      `${name}: package name must use the pi-* prefix`,
+    );
+    assert.equal(
+      manifest.name,
+      name,
+      `${name}: folder and package names must match`,
+    );
     assert.ok(Array.isArray(manifest.pi.extensions));
     assert.ok(
       manifest.pi.extensions.length > 0,
@@ -159,9 +169,9 @@ test("Canvas Note skill loads manually from root and independent packages withou
       import.meta.url,
     ).href
   );
-  const skillDir = join(root, "extensions/canvas-note/skills/canvas-note");
+  const skillDir = join(root, "extensions/pi-canvas-note/skills/canvas-note");
   const expected = join(skillDir, "SKILL.md");
-  for (const source of [root, join(root, "extensions/canvas-note")]) {
+  for (const source of [root, join(root, "extensions/pi-canvas-note")]) {
     const manifest = JSON.parse(
       readFileSync(join(source, "package.json"), "utf8"),
     );
@@ -205,28 +215,31 @@ test("Canvas Note skill loads manually from root and independent packages withou
 
 test("flat resource declarations select web-kits without legacy aliases", async () => {
   const { resolveWorkerExtensions } = await import(
-    "../extensions/subagent/runtime/pi/extensions.ts"
+    "../extensions/pi-subagent/runtime/pi/extensions.ts"
   );
   assert.deepEqual(
     await resolveWorkerExtensions([
       { source: root, extensions: ["open", "web-kits"] },
     ]),
     [
-      join(root, "extensions/open/index.ts"),
-      join(root, "extensions/web-kits/index.ts"),
+      join(root, "extensions/pi-open/index.ts"),
+      join(root, "extensions/pi-web-kits/index.ts"),
     ],
   );
   assert.deepEqual(
     await resolveWorkerExtensions([
-      { source: join(root, "extensions/open"), extensions: ["open"] },
+      { source: join(root, "extensions/pi-open"), extensions: ["open"] },
     ]),
-    [join(root, "extensions/open/index.ts")],
+    [join(root, "extensions/pi-open/index.ts")],
   );
   assert.deepEqual(
     await resolveWorkerExtensions([
-      { source: join(root, "extensions/web-kits"), extensions: ["web-kits"] },
+      {
+        source: join(root, "extensions/pi-web-kits"),
+        extensions: ["web-kits"],
+      },
     ]),
-    [join(root, "extensions/web-kits/index.ts")],
+    [join(root, "extensions/pi-web-kits/index.ts")],
   );
   for (const name of [
     "stats",

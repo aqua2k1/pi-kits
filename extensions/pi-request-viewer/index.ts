@@ -1,18 +1,18 @@
 /**
- * /context-preview — open neovim to preview the most recent provider request payload.
+ * /request-viewer — open neovim to preview the most recent provider request payload.
  *
  * Behavior:
- *   - /context-preview         — open nvim -R on a temp .json file with cached payload (or empty)
- *   - /context-preview start   — start caching payloads from before_provider_request
- *   - /context-preview stop    — stop caching (keeps last cached payload viewable)
- *   - /context-preview status  — show enabled/disabled state
- *   - /context-preview help    — show usage and subcommand meanings
+ *   - /request-viewer         — open nvim -R on a temp .json file with cached payload (or empty)
+ *   - /request-viewer start   — start caching payloads from before_provider_request
+ *   - /request-viewer stop    — stop caching (keeps last cached payload viewable)
+ *   - /request-viewer status  — show enabled/disabled state
+ *   - /request-viewer help    — show usage and subcommand meanings
  *
  * The payload is the raw HTTP request body object from before_provider_request.
  * Pure read-only preview: nothing is written back to the session. The temp file
  * is deleted when nvim exits.
  *
- * Usage: /context-preview [start|stop|status|help]  (no subcommand = preview)
+ * Usage: /request-viewer [start|stop|status|help]  (no subcommand = preview)
  */
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
@@ -20,7 +20,7 @@ import { readPiKitsConfig } from "@pi-kits/config";
 import { readonlyPreview } from "../../shared/readonly-preview.ts";
 
 const HELP_TEXT = [
-  "/context-preview [start|stop|status|help]",
+  "/request-viewer [start|stop|status|help]",
   "",
   "  (无参数)  用 nvim -R 只读查看最近一次 provider 请求 payload；",
   "            未启用缓存或尚无请求时内容为空",
@@ -51,12 +51,12 @@ export default function (pi: ExtensionAPI) {
     }
   });
 
-  pi.registerCommand("context-preview", {
+  pi.registerCommand("request-viewer", {
     description:
       "Preview the provider request payload in neovim (read-only). Subcommands: start | stop | status | help",
     handler: async (args, ctx) => {
       if (ctx.mode !== "tui") {
-        ctx.ui.notify("/context-preview 需要交互式终端", "error");
+        ctx.ui.notify("/request-viewer 需要交互式终端", "error");
         return;
       }
 
@@ -64,19 +64,19 @@ export default function (pi: ExtensionAPI) {
 
       if (sub === "start") {
         enabled = true;
-        ctx.ui.notify("context-preview 已启用", "info");
+        ctx.ui.notify("request-viewer 已启用", "info");
         return;
       }
 
       if (sub === "stop") {
         enabled = false;
-        ctx.ui.notify("context-preview 已禁用（已缓存内容保留）", "info");
+        ctx.ui.notify("request-viewer 已禁用（已缓存内容保留）", "info");
         return;
       }
 
       if (sub === "status") {
         ctx.ui.notify(
-          `context-preview: ${enabled ? "已启用" : "已禁用"}`,
+          `request-viewer: ${enabled ? "已启用" : "已禁用"}`,
           "info",
         );
         return;
@@ -99,7 +99,7 @@ export default function (pi: ExtensionAPI) {
         lastPayload != null ? JSON.stringify(lastPayload, null, 2) : "";
 
       const result = await readonlyPreview(ctx, {
-        prefix: "pi-context-preview-",
+        prefix: "pi-request-viewer-",
         extension: "json",
         editor: config.terminal.editor,
         body,
@@ -109,7 +109,7 @@ export default function (pi: ExtensionAPI) {
         return;
       }
       if (result.kind === "launch-error") {
-        ctx.ui.notify("/context-preview 打开 nvim 失败", "error");
+        ctx.ui.notify("/request-viewer 打开 nvim 失败", "error");
         return;
       }
     },

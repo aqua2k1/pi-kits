@@ -7,11 +7,11 @@ import type {
   Theme,
   ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
-import askExtension from "../extensions/ask-user-question/index.ts";
-import openExtension from "../extensions/open/index.ts";
-import { registerSubagents } from "../extensions/subagent/index.ts";
-import type { MuxAdapter } from "../extensions/subagent/mux/index.ts";
-import webExtension from "../extensions/web-kits/index.ts";
+import askExtension from "../extensions/pi-ask-user-question/index.ts";
+import openExtension from "../extensions/pi-open/index.ts";
+import { registerSubagents } from "../extensions/pi-subagent/index.ts";
+import type { MuxAdapter } from "../extensions/pi-subagent/mux/index.ts";
+import webExtension from "../extensions/pi-web-kits/index.ts";
 import { useAgentDir } from "./helpers/agent-dir.ts";
 
 const theme = {

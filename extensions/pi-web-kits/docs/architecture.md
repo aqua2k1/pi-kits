@@ -121,8 +121,8 @@ GitHub 处理器返回空结果时转原生 HTTP；HTTP 原始响应先流式写
 在仓库根目录运行[包脚本](../package.json)：
 
 ```sh
-npm test --workspace=web-kits
-npm run typecheck --workspace=web-kits
+npm test --workspace=pi-web-kits
+npm run typecheck --workspace=pi-web-kits
 ```
 
 | 测试文件（相对扩展目录） | 覆盖模块 |

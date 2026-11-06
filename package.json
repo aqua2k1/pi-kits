@@ -6,37 +6,37 @@
     "pi-package"
   ],
   "extensionResources": {
-    "canvas-note": "./extensions/canvas-note/index.ts",
-    "open": "./extensions/open/index.ts",
-    "preview": "./extensions/preview/index.ts",
-    "context-preview": "./extensions/context-preview/index.ts",
-    "provider-usage": "./extensions/provider-usage/index.ts",
-    "token-meter": "./extensions/token-meter/index.ts",
-    "handoff": "./extensions/handoff/index.ts",
-    "notify": "./extensions/notify/index.ts",
-    "ask-user-question": "./extensions/ask-user-question/index.ts",
-    "subagent": "./extensions/subagent/index.ts",
-    "web-kits": "./extensions/web-kits/index.ts"
+    "canvas-note": "./extensions/pi-canvas-note/index.ts",
+    "open": "./extensions/pi-open/index.ts",
+    "preview": "./extensions/pi-output-viewer/index.ts",
+    "context-preview": "./extensions/pi-request-viewer/index.ts",
+    "provider-usage": "./extensions/pi-provider-usage/index.ts",
+    "token-meter": "./extensions/pi-token-meter/index.ts",
+    "handoff": "./extensions/pi-handoff/index.ts",
+    "notify": "./extensions/pi-notify/index.ts",
+    "ask-user-question": "./extensions/pi-ask-user-question/index.ts",
+    "subagent": "./extensions/pi-subagent/index.ts",
+    "web-kits": "./extensions/pi-web-kits/index.ts"
   },
   "pi": {
     "extensions": [
-      "./extensions/canvas-note/index.ts",
-      "./extensions/open/index.ts",
-      "./extensions/preview/index.ts",
-      "./extensions/context-preview/index.ts",
-      "./extensions/provider-usage/index.ts",
-      "./extensions/token-meter/index.ts",
-      "./extensions/handoff/index.ts",
-      "./extensions/notify/index.ts",
-      "./extensions/ask-user-question/index.ts",
-      "./extensions/subagent/index.ts",
-      "./extensions/web-kits/index.ts"
+      "./extensions/pi-canvas-note/index.ts",
+      "./extensions/pi-open/index.ts",
+      "./extensions/pi-output-viewer/index.ts",
+      "./extensions/pi-request-viewer/index.ts",
+      "./extensions/pi-provider-usage/index.ts",
+      "./extensions/pi-token-meter/index.ts",
+      "./extensions/pi-handoff/index.ts",
+      "./extensions/pi-notify/index.ts",
+      "./extensions/pi-ask-user-question/index.ts",
+      "./extensions/pi-subagent/index.ts",
+      "./extensions/pi-web-kits/index.ts"
     ],
     "themes": [
       "./themes/gruvbox.json"
     ],
     "skills": [
-      "./extensions/canvas-note/skills/canvas-note"
+      "./extensions/pi-canvas-note/skills/canvas-note"
     ]
   },
   "peerDependencies": {

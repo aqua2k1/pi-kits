@@ -5,8 +5,8 @@ import type {
   ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
 import { stripTerminalSequences, visibleWidth } from "@earendil-works/pi-tui";
-import providerUsage from "../extensions/provider-usage/index.ts";
-import tokenMeter from "../extensions/token-meter/index.ts";
+import providerUsage from "../extensions/pi-provider-usage/index.ts";
+import tokenMeter from "../extensions/pi-token-meter/index.ts";
 import { useAgentDir } from "./helpers/agent-dir.ts";
 
 type Handler = (event: unknown, ctx: ExtensionContext) => unknown;

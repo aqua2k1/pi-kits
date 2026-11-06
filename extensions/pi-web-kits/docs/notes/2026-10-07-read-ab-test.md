@@ -21,8 +21,8 @@ PI_KITS_TEST_MODEL="<model-id>" \
 PI_KITS_TEST_PROVIDER="<provider>" \
 PI_KITS_TEST_THINKING=low \
 PI_KITS_TEST_TOKENS="<code-a>,<code-b>,<code-c>" \
-PI_KITS_TEST_EXTENSION="/<checkout>/extensions/web-kits/index.ts" \
-node --import tsx --test extensions/web-kits/fetch/model-read.test.ts
+PI_KITS_TEST_EXTENSION="/<checkout>/extensions/pi-web-kits/index.ts" \
+node --import tsx --test extensions/pi-web-kits/fetch/model-read.test.ts
 ```
 
 | 环境变量 | 实验用途 |

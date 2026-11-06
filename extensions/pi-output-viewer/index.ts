@@ -1,5 +1,5 @@
 /**
- * /preview - pick one of the agent's complete replies and preview it in neovim.
+ * /output-viewer - pick one of the agent's complete replies and preview it in neovim.
  *
  * Behavior:
  *   - While the agent is busy (streaming / running tools): notify and do nothing.
@@ -19,7 +19,7 @@
  * file is deleted when nvim exits. User may still `:w!` to another path; only
  * the original temp path is removed.
  *
- * Usage: /preview [--thinking]
+ * Usage: /output-viewer [--thinking]
  */
 
 import type {
@@ -32,7 +32,7 @@ import { readonlyPreview } from "../../shared/readonly-preview.ts";
 /** Max chars of the reply snippet shown in the selector. */
 const SNIPPET_MAX = 50;
 
-const USAGE = "/preview [--thinking]";
+const USAGE = "/output-viewer [--thinking]";
 
 const HELP_TEXT = [
   USAGE,
@@ -190,7 +190,7 @@ async function openPreview(
   }
 
   if (ctx.mode !== "tui") {
-    ctx.ui.notify("/preview 需要交互式终端", "error");
+    ctx.ui.notify("/output-viewer 需要交互式终端", "error");
     return;
   }
 
@@ -229,7 +229,7 @@ async function openPreview(
   }
 
   const result = await readonlyPreview(ctx, {
-    prefix: "pi-preview-",
+    prefix: "pi-output-viewer-",
     extension: "md",
     editor: options.editor,
     body,
@@ -239,7 +239,7 @@ async function openPreview(
     return;
   }
   if (result.kind === "launch-error") {
-    ctx.ui.notify("/preview 打开 nvim 失败", "error");
+    ctx.ui.notify("/output-viewer 打开 nvim 失败", "error");
     return;
   }
 }
@@ -248,9 +248,9 @@ export default function (pi: ExtensionAPI) {
   const config = readPiKitsConfig();
   if (!config.preview.enabled) return;
 
-  pi.registerCommand("preview", {
+  pi.registerCommand("output-viewer", {
     description:
-      "Preview a past reply in neovim (read-only). Usage: /preview [--thinking]",
+      "Preview a past reply in neovim (read-only). Usage: /output-viewer [--thinking]",
     handler: async (args, ctx) => {
       const parsed = parsePreviewArgs(args);
       if ("error" in parsed) {

@@ -12,7 +12,7 @@ for (const [config, enabled] of [
   [{ contextPreview: { enabled: false } }, false],
   [{ contextPreview: { enabled: true } }, true],
 ] as const) {
-  test(`context-preview factory respects configuration ${JSON.stringify(config)}`, (t) => {
+  test(`request-viewer factory respects configuration ${JSON.stringify(config)}`, (t) => {
     useAgentDir(t, config);
     const commands: string[] = [];
     const hooks: string[] = [];
@@ -24,7 +24,7 @@ for (const [config, enabled] of [
         hooks.push(name);
       },
     } as unknown as ExtensionAPI);
-    assert.deepEqual(commands, enabled ? ["context-preview"] : []);
+    assert.deepEqual(commands, enabled ? ["request-viewer"] : []);
     assert.deepEqual(
       hooks,
       enabled ? ["session_start", "before_provider_request"] : [],

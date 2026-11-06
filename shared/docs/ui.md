@@ -46,7 +46,7 @@ of sacrificing the title or active input to a bottom rule.
 
 Questionnaire data, state transitions, keys, question/option text, tab labels,
 review/confirmation, and custom `Input` focus/IME handling remain in
-`extensions/ask-user-question/ui/`. `tui.ts` adapts those to the shared session;
+`extensions/pi-ask-user-question/ui/`. `tui.ts` adapts those to the shared session;
 `index.ts` wires callbacks to `pi.events`. `core.ts` owns schemas, answer types,
 answer construction and native non-TUI dialogs. UI depends on the business core
 and shared design primitives, not the other way around. Shared files are library

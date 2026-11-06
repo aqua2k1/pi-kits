@@ -12,7 +12,7 @@ for (const [config, enabled] of [
   [{ preview: { enabled: false } }, false],
   [{ preview: { enabled: true } }, true],
 ] as const) {
-  test(`preview factory respects configuration ${JSON.stringify(config)}`, (t) => {
+  test(`output-viewer factory respects configuration ${JSON.stringify(config)}`, (t) => {
     useAgentDir(t, config);
     const commands: string[] = [];
     const shortcuts: string[] = [];
@@ -24,7 +24,7 @@ for (const [config, enabled] of [
         shortcuts.push(shortcut);
       },
     } as unknown as ExtensionAPI);
-    assert.deepEqual(commands, enabled ? ["preview"] : []);
+    assert.deepEqual(commands, enabled ? ["output-viewer"] : []);
     assert.deepEqual(shortcuts, enabled ? ["alt+p"] : []);
   });
 }

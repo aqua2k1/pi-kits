@@ -8,9 +8,9 @@ import type {
   ExtensionCommandContext,
   ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
-import contextPreview from "../extensions/context-preview/index.ts";
-import open from "../extensions/open/index.ts";
-import preview from "../extensions/preview/index.ts";
+import open from "../extensions/pi-open/index.ts";
+import preview from "../extensions/pi-output-viewer/index.ts";
+import contextPreview from "../extensions/pi-request-viewer/index.ts";
 
 let agentDir: string;
 const originalAgentDir = process.env.PI_CODING_AGENT_DIR;
@@ -45,8 +45,8 @@ function host() {
 test("workspace entries keep public names without implicit sibling registration", () => {
   const expected = [
     [open, ["open"]],
-    [preview, ["preview"]],
-    [contextPreview, ["context-preview"]],
+    [preview, ["output-viewer"]],
+    [contextPreview, ["request-viewer"]],
   ] as const;
   for (const [entry, names] of expected) {
     const h = host();
@@ -65,7 +65,7 @@ test("request caching stays opt-in and resets at session start", async () => {
     mode: "tui",
     ui: { notify: (message: string) => notifications.push(message) },
   } as unknown as ExtensionCommandContext;
-  const command = h.commands.get("context-preview");
+  const command = h.commands.get("request-viewer");
   assert.ok(command);
   await command.handler("status", ctx);
   assert.match(notifications.pop() ?? "", /已禁用/);
@@ -81,11 +81,11 @@ test("context preview rejects RPC before interacting with a terminal", async () 
   const h = host();
   contextPreview(h.pi);
   const notifications: string[] = [];
-  await h.commands.get("context-preview")?.handler("", {
+  await h.commands.get("request-viewer")?.handler("", {
     mode: "rpc",
     ui: { notify: (message: string) => notifications.push(message) },
   } as unknown as ExtensionCommandContext);
-  assert.deepEqual(notifications, ["/context-preview 需要交互式终端"]);
+  assert.deepEqual(notifications, ["/request-viewer 需要交互式终端"]);
 });
 
 test("disabled workspace registers no commands, tools, shortcuts or hooks", () => {

@@ -1,6 +1,6 @@
-# context-preview
+# request-viewer
 
-`/context-preview` 缓存并只读查看最近一次模型请求的原始请求体。
+`/request-viewer` 缓存并只读查看最近一次模型请求的原始请求体。
 
 ## 安装
 
@@ -13,16 +13,16 @@ pi install https://github.com/aqua2k1/pi-kits.git
 在 Pi 交互式终端中启用缓存，发送一条消息后查看请求：
 
 ```text
-/context-preview start
+/request-viewer start
 ```
 
 发送消息、模型请求发出后输入：
 
 ```text
-/context-preview
-/context-preview status
-/context-preview stop
-/context-preview help
+/request-viewer
+/request-viewer status
+/request-viewer stop
+/request-viewer help
 ```
 
 | 参数 | 说明 |
