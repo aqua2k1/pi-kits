@@ -5,19 +5,17 @@
 ```json
 {
   "query": "<检索主题>",
-  "provider": "searxng",
   "max_results": 5,
   "domains": ["example.com", "*.example.org"],
   "recency_days": 7
 }
 ```
 
-工具通过 SearXNG 或 Codex 搜索，返回标题、URL 和片段。
+工具按配置选择 SearXNG 或 Codex 搜索，主服务由 `search.routing.provider` 指定，返回标题、URL 和片段。
 
 | 参数 | 说明 |
 |---|---|
 | `query` | 必填，去除首尾空白后为 1–2000 字符 |
-| `provider` | 本次主服务：`searxng`、`codex-alpha-search`；省略时用配置，覆盖后仍沿用配置的回退策略 |
 | `max_results` | 整数 1–10；省略时取 `search.maxResults`，默认 5 |
 | `domains` | 最多 20 个主机名，每项最多 253 字符；去除首尾空白、忽略大小写；`example.com` 包含自身及子域，`*.example.org` 仅含子域 |
 | `recency_days` | 整数 1–3650；近期筛选由服务执行，SearXNG 按 1、7、31 天边界映射为日、周、月，其余映射为年 |

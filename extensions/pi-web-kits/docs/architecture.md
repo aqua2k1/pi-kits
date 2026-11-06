@@ -97,14 +97,14 @@ GitHub 处理器返回空结果时转原生 HTTP；HTTP 原始响应先流式写
 
 ## 约束
 
-- `web_search` 与 `web_fetch` 共享 `web-kits` namespace，保持 Codemode 分组与发现入口一致；工具名称、参数和默认 direct 暴露保持不变。
+- `web_search` 与 `web_fetch` 共享 `web-kits` namespace，保持 Codemode 分组与发现入口一致；工具名称与默认 direct 暴露保持不变；主备搜索服务只由配置决定，工具参数仅描述搜索需求，避免模型覆盖路由策略。
 - `index.ts` 将同一文件与环境快照交给工具和诊断命令，保持状态展示与实际请求一致；`index.test.ts` 和 `commands.test.ts` 检查启动后读取次数。
 - `composition.ts` 负责具体服务组装，`core/router.ts` 仅调用工厂与路由，保证未使用的服务不会触发认证或配置检查；`composition.test.ts` 覆盖惰性构造与凭据隔离。
 - 搜索路由保留服务返回的脱敏查询，防止原始输入覆盖清理结果；`core/router.test.ts` 检查返回查询，`composition.test.ts` 检查回退中的凭据反射。
 - 搜索回退使用 `core/errors.ts` 的分类策略并在尝试间检查取消信号，避免无效请求或用户取消继续调用备用服务；`core/router.test.ts` 覆盖这些分支。
 - Codex 从 Pi 认证接口获取 OAuth 凭据并使用固定搜索端点，避免把其他来源的请求地址和头部混入请求；`providers/codex/auth.test.ts` 和 `composition.test.ts` 检查此边界。
 - 搜索传输的单次截止时间覆盖认证、请求与响应流，且重定向采用报错策略，避免认证结束过晚仍发请求或重定向转发凭据；`shared/http.test.ts`、Codex 服务测试与 SearXNG 重定向测试覆盖该行为。
-- `schema.ts` 派生公开输出和相关内部类型，注册处引用同一输出契约，防止机器字段与类型分歧；`index.test.ts` 对返回值执行 schema 检查。
+- `schema.ts` 统一用 TypeBox 构造公开输出并派生类型，字符串枚举显式声明 `type: "string"`，注册处引用同一输出契约，防止机器字段与类型分歧；`schema.test.ts` 检查枚举和类型推导，`index.test.ts` 检查工具返回值。
 - 两个输出格式器以完整序列化返回值计算预算，计入文本、详情和机器数据副本，避免单份内容合规而总返回值超限；边界见 `shared/limits.ts`，测试见两份 `format.test.ts`。
 - 抓取格式器仅公开保存元数据，布局基于最终文本计算，使 `read` 的偏移与返回行数一致；`fetch/format.test.ts` 和 `fetch/read-integration.test.ts` 覆盖空行、UTF-8 与分页。
 - 格式化在线程中使用固定选项和资源预算，失败返回输入；调用方在保存前检查取消，避免阻塞主线程或将已取消请求当作成功保存；实现见 `fetch/formatters/`、`fetch/http.ts` 与 `fetch/github.ts`。

@@ -13,6 +13,7 @@ import { tmpdir } from "node:os";
 import { basename, join, resolve } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
+import { Value } from "typebox/value";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
 const extensions = readdirSync(join(root, "extensions"), {
@@ -273,13 +274,19 @@ test("repository declares an independent valid Gruvbox theme", async () => {
     readFileSync(resolve(root, repository.pi.themes[0]), "utf8"),
   );
   assert.equal(theme.name, "gruvbox");
-  const { validateThemeJson } = await import(
-    new URL(
-      "../node_modules/@earendil-works/pi-coding-agent/dist/modes/interactive/theme/theme-json.js",
-      import.meta.url,
-    ).href
+  assert.equal(theme.$schema, "https://pi.dev/schemas/theme.schema.json");
+  const schemaPath = new URL(
+    "../schemas/theme.schema.json",
+    import.meta.resolve("@earendil-works/pi-coding-agent"),
   );
-  assert.doesNotThrow(() => validateThemeJson("gruvbox", theme));
+  const schema = JSON.parse(readFileSync(schemaPath, "utf8"));
+  assert.equal(
+    Value.Check(schema, theme),
+    true,
+    "Gruvbox must satisfy Pi's published schema",
+  );
+  assert.equal(Value.Check(schema, { ...theme, name: 42 }), false);
+  assert.equal(Value.Check(schema, { ...theme, colors: {} }), false);
   for (const color of Object.values(theme.colors)) {
     assert.ok(typeof color === "string" && color in theme.vars);
   }

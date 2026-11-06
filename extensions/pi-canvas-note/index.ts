@@ -247,9 +247,9 @@ export default function canvasNoteExtension(pi: ExtensionAPI) {
       });
     },
   });
-  pi.on("session_start", async (_event, ctx) => {
+  pi.on("session_start", async (event, ctx) => {
     latestContext = ctx;
-    await feedbackInbox.restore(ctx);
+    await feedbackInbox.restore(ctx, event.reason !== "reload");
     checkAddress(ctx);
   });
   pi.on("session_shutdown", () =>

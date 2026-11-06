@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
   initTheme,
+  keyHint,
+  keyText,
   type Theme,
   type ToolDefinition,
   ToolExecutionComponent,
@@ -110,7 +112,7 @@ test("native notifications show latest reply revision and independent outcome", 
   };
   const rendered = renderSubagentNotification(
     message,
-    { expanded: false, outputPad: 0 },
+    { expanded: false, outputPad: 0, keyText, keyHint },
     theme,
   );
   assert.ok(rendered);
@@ -121,7 +123,7 @@ test("native notifications show latest reply revision and independent outcome", 
   message.details.sessionUpdate.hasReply = false;
   const renderedEmpty = renderSubagentNotification(
     message,
-    { expanded: false, outputPad: 0 },
+    { expanded: false, outputPad: 0, keyText, keyHint },
     theme,
   );
   assert.ok(renderedEmpty);

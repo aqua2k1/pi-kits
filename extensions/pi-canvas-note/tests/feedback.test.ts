@@ -42,8 +42,14 @@ function harness() {
       handlers.set(name, handler),
     appendEntry: (customType: string, data: unknown) =>
       entries.push({ type: "custom", customType, data }),
-    sendUserMessage: (message: string) => {
-      assert.equal(entries.at(-1)?.customType, "canvas-note-feedback");
+    sendUserMessage: (message: string, options: unknown) => {
+      assert.ok(
+        entries.some((entry) => entry.customType === "canvas-note-feedback"),
+      );
+      assert.deepEqual(options, {
+        deliverAs: "followUp",
+        expandPromptTemplates: false,
+      });
       sent.push(message);
     },
   } as unknown as ExtensionAPI;
@@ -64,7 +70,7 @@ function assertCompact(text: string) {
   assert.equal(text.includes('"spec"'), false);
 }
 
-test("snapshots persist before dispatch; normal and pending messages contain references only", async (t) => {
+test("snapshots persist before dispatch; restored follow-ups contain references only", async (t) => {
   const documentPath = await fixture(t);
   const { entries, handlers, sent, pi, ctx } = harness();
   const inbox = createFeedbackInbox(pi);
@@ -78,44 +84,29 @@ test("snapshots persist before dispatch; normal and pending messages contain ref
   assert.deepEqual(JSON.parse(await readFile(path, "utf8")), reply);
   assertCompact(sent[0]);
   assert.equal(JSON.stringify(entries).includes("large chart content"), false);
-  assert.equal(
-    handlers.get("before_agent_start")?.({ prompt: sent[0] }),
-    undefined,
-  );
-  const context = handlers.get("before_agent_start")?.({ prompt: "继续" }) as {
-    message: { content: string; details: { ids: string[] } };
-  };
-  assertCompact(context.message.content);
-  assert.deepEqual(context.message.details.ids, [reply.requestId]);
-  assert.deepEqual(
-    handlers.get("before_agent_start")?.({ prompt: "继续" }),
-    context,
-  );
+  assert.equal(handlers.has("before_agent_start"), false);
+  await inbox.restore(ctx());
+  assert.equal(sent.length, 1, "already queued feedback is not re-enqueued");
+  inbox.clear();
+  await inbox.restore(ctx());
+  assert.equal(sent.length, 2);
+  assert.equal(sent[1], sent[0]);
+  assertCompact(sent[1]);
   assert.equal(
     entries.length,
     1,
-    "projecting pending context must not mark it delivered",
+    "enqueueing must not mark feedback delivered",
   );
-  inbox.clear();
-  await inbox.restore(ctx());
-  assert.ok(handlers.get("before_agent_start")?.({ prompt: "继续" }));
   handlers.get("message_end")?.({
-    message: {
-      role: "custom",
-      customType: "canvas-note-feedback-pending",
-      details: { ids: [reply.requestId] },
-    },
+    message: { role: "user", content: sent[1] },
   });
-  assert.equal(
-    handlers.get("before_agent_start")?.({ prompt: "继续" }),
-    undefined,
-  );
+
   inbox.clear();
   await inbox.restore(ctx());
   await inbox.accept(reply, documentPath);
   assert.equal(
     sent.length,
-    1,
+    2,
     "delivered feedback remains deduplicated after reload",
   );
   assert.deepEqual(
@@ -133,17 +124,14 @@ for (const mode of ["string", "text blocks"] as const) {
     handlers.get("message_end")?.({
       message: { role: "user", content: "Unrelated" },
     });
-    assert.ok(handlers.get("before_agent_start")?.({ prompt: "Continue" }));
+
     assert.equal(entries.length, 1);
     const content =
       mode === "string"
         ? sent[0]
         : sent[0].split("\n").map((text) => ({ type: "text", text }));
     handlers.get("message_end")?.({ message: { role: "user", content } });
-    assert.equal(
-      handlers.get("before_agent_start")?.({ prompt: "Continue" }),
-      undefined,
-    );
+
     assert.deepEqual(
       entries.map((entry) => entry.customType),
       ["canvas-note-feedback", "canvas-note-feedback-delivered"],
@@ -182,9 +170,10 @@ test("session persistence failure leaves a reusable snapshot without accepting f
   assert.equal(sent.length, 1);
 });
 
-test("rejected prompt delivery remains recoverable via compact pending context", async (t) => {
+test("rejected delivery is restored through a compact follow-up", async (t) => {
   const documentPath = await fixture(t);
-  const { pi, ctx, handlers } = harness();
+  const { pi, ctx, sent } = harness();
+  const send = pi.sendUserMessage;
   pi.sendUserMessage = () => {
     throw new Error("inference unavailable");
   };
@@ -194,11 +183,10 @@ test("rejected prompt delivery remains recoverable via compact pending context",
     /inference unavailable/,
   );
   inbox.clear();
+  pi.sendUserMessage = send;
   await inbox.restore(ctx());
-  const result = handlers.get("before_agent_start")?.({
-    prompt: "continue",
-  }) as { message: { content: string } };
-  assertCompact(result.message.content);
+  assert.equal(sent.length, 1);
+  assertCompact(sent[0]);
 });
 
 test("unsafe request IDs stay beside the document and do not overwrite conflicting snapshots", async (t) => {
@@ -272,20 +260,17 @@ for (const mixed of [false, true]) {
     assert.equal(sent[0].includes("Also captured"), false);
     inbox.clear();
     await inbox.restore(ctx());
-    const pending = handlers.get("before_agent_start")?.({
-      prompt: "continue",
-    }) as { message: { content: string } };
-    assert.ok(pending.message.content.includes('"pageIds":["p"]'));
-    assert.equal(pending.message.content.includes("Full page content"), false);
+    assert.equal(sent.length, 2);
+    assert.ok(sent[1].includes('"pageIds":["p"]'));
+    assert.equal(sent[1].includes("Full page content"), false);
     await inbox.accept(feedback, documentPath);
-    assert.equal(sent.length, 1, "restored page feedback is deduplicated");
+    assert.equal(sent.length, 2, "restored page feedback is deduplicated");
     handlers.get("message_end")?.({
       message: { role: "user", content: sent[0] },
     });
-    assert.equal(
-      handlers.get("before_agent_start")?.({ prompt: "continue" }),
-      undefined,
-    );
+    inbox.clear();
+    await inbox.restore(ctx());
+    assert.equal(sent.length, 2, "delivered page feedback is not re-enqueued");
     assert.deepEqual(
       JSON.parse(await readFile(reference.snapshotPath, "utf8")),
       saved,
@@ -300,7 +285,7 @@ for (const mixed of [false, true]) {
   });
 }
 
-test("legacy compact references default pageIds and recognize already queued legacy prompts", async (t) => {
+test("legacy compact references default pageIds and recognize delivered legacy prompts", async (t) => {
   const documentPath = await fixture(t);
   const { entries, sent, handlers, pi, ctx } = harness();
   const inbox = createFeedbackInbox(pi);
@@ -310,27 +295,20 @@ test("legacy compact references default pageIds and recognize already queued leg
   const legacyPrompt = sent[0].replace(',"pageIds":[]', "");
   inbox.clear();
   await inbox.restore(ctx());
-  assert.equal(
-    handlers.get("before_agent_start")?.({ prompt: legacyPrompt }),
-    undefined,
-  );
-  const pending = handlers.get("before_agent_start")?.({
-    prompt: "continue",
-  }) as { message: { content: string } };
-  assert.ok(pending.message.content.includes('"pageIds":[]'));
+  assert.equal(sent.length, 2);
+  assert.ok(sent[1].includes('"pageIds":[]'));
   handlers.get("message_end")?.({
     message: { role: "user", content: legacyPrompt },
   });
-  assert.equal(
-    handlers.get("before_agent_start")?.({ prompt: "continue" }),
-    undefined,
-  );
+  inbox.clear();
+  await inbox.restore(ctx());
+  assert.equal(sent.length, 2, "legacy delivery prevents further replay");
 });
 
 test("legacy pending snapshots migrate to files and compact session references", async (t) => {
   const cwd = dirname(await fixture(t));
   const id = "2026-01-01T00-00-00Z-00000000-0000-0000-0000-000000000000";
-  const { entries, handlers, pi, ctx } = harness();
+  const { entries, sent, pi, ctx } = harness();
   entries.push({
     type: "custom",
     customType: "canvas-note-document",
@@ -348,10 +326,8 @@ test("legacy pending snapshots migrate to files and compact session references",
     JSON.parse(await readFile(reference.snapshotPath, "utf8")),
     reply,
   );
-  const result = handlers.get("before_agent_start")?.({
-    prompt: "continue",
-  }) as { message: { content: string } };
-  assertCompact(result.message.content);
+  assert.equal(sent.length, 1);
+  assertCompact(sent[0]);
   const length = entries.length;
   await inbox.restore(ctx(cwd));
   assert.equal(
@@ -359,4 +335,37 @@ test("legacy pending snapshots migrate to files and compact session references",
     length,
     "already migrated references need no further writes",
   );
+  assert.equal(
+    sent.length,
+    1,
+    "repeated restore does not duplicate follow-ups",
+  );
+});
+
+test("multiple pending replies stay separate follow-ups and reload preserves the queue", async (t) => {
+  const documentPath = await fixture(t);
+  const { pi, ctx, sent, handlers } = harness();
+  const inbox = createFeedbackInbox(pi);
+  await inbox.accept(reply, documentPath);
+  await inbox.accept({ ...reply, requestId: "second-reply" }, documentPath);
+  assert.equal(sent.length, 2);
+  assert.equal(handlers.has("before_agent_start"), false);
+  inbox.clear();
+  await inbox.restore(ctx(), false);
+  await inbox.restore(ctx());
+  assert.equal(
+    sent.length,
+    2,
+    "reload does not duplicate Pi's preserved queue",
+  );
+  inbox.clear();
+  await inbox.restore(ctx());
+  assert.equal(
+    sent.length,
+    4,
+    "fresh restore re-enqueues each pending reply once",
+  );
+  assert.deepEqual(sent.slice(2), sent.slice(0, 2));
+  await inbox.restore(ctx());
+  assert.equal(sent.length, 4);
 });

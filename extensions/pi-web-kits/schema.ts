@@ -1,4 +1,3 @@
-import { StringEnum } from "@earendil-works/pi-ai";
 import { type Static, Type } from "typebox";
 import { WEB_SEARCH_PROVIDER_NAMES } from "./core/types.ts";
 
@@ -11,7 +10,7 @@ export const SearchResultSchema = Type.Object({
 
 export const SearchDetailsSchema = Type.Object({
   query: Type.String(),
-  backend: StringEnum(WEB_SEARCH_PROVIDER_NAMES),
+  backend: Type.Enum(WEB_SEARCH_PROVIDER_NAMES, { type: "string" }),
   resultCount: Type.Integer({ minimum: 0 }),
   results: Type.Array(SearchResultSchema),
   hasSummary: Type.Boolean(),
@@ -27,11 +26,10 @@ export const SearchOutputSchema = Type.Object({
 
 export type SearchMachineOutput = Static<typeof SearchOutputSchema>;
 
-export const FetchSourceSchema = StringEnum([
-  "native-http",
-  "github-gh",
-  "github-clone",
-] as const);
+export const FetchSourceSchema = Type.Enum(
+  ["native-http", "github-gh", "github-clone"] as const,
+  { type: "string" },
+);
 
 export const FetchTruncationSchema = Type.Object({
   totalBytes: Type.Integer({ minimum: 0 }),

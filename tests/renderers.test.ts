@@ -1,11 +1,13 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import type {
-  ExtensionAPI,
-  ExtensionToolContext,
-  MessageRenderer,
-  Theme,
-  ToolDefinition,
+import {
+  type ExtensionAPI,
+  type ExtensionToolContext,
+  keyHint,
+  keyText,
+  type MessageRenderer,
+  type Theme,
+  type ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
 import askExtension from "../extensions/pi-ask-user-question/index.ts";
 import openExtension from "../extensions/pi-open/index.ts";
@@ -83,7 +85,11 @@ test("all ten public tools and the completion message register shared-style rend
     details: Object.freeze(details),
   });
   const compact =
-    notification(message, { expanded: false, outputPad: 0 }, theme)
+    notification(
+      message,
+      { expanded: false, outputPad: 0, keyText, keyHint },
+      theme,
+    )
       ?.render(200)
       .join("\n") ?? "";
   assert.equal(
@@ -96,7 +102,11 @@ test("all ten public tools and the completion message register shared-style rend
   );
   assert.ok(!compact.includes("private-id"));
   const full =
-    notification(message, { expanded: true, outputPad: 0 }, theme)
+    notification(
+      message,
+      { expanded: true, outputPad: 0, keyText, keyHint },
+      theme,
+    )
       ?.render(200)
       .join("\n") ?? "";
   assert.match(full, /private-id/);

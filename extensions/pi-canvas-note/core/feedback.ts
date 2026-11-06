@@ -49,24 +49,6 @@ function matchesFeedbackText(
   return false;
 }
 
-function pendingMessage(
-  pending: ReadonlyMap<string, FeedbackReference>,
-  prompt: string | undefined,
-) {
-  const awaiting = [...pending.values()].filter(
-    (feedback) => !matchesFeedbackText(feedback, prompt),
-  );
-  if (!awaiting.length) return;
-  return {
-    message: {
-      customType: "canvas-note-feedback-pending",
-      content: `Canvas Note pending user feedback:\n${awaiting.map(feedbackText).join("\n\n")}`,
-      display: true,
-      details: { ids: awaiting.map((feedback) => feedback.requestId) },
-    },
-  };
-}
-
 async function saveFeedback(
   feedback: Feedback,
   documentPath: string,
@@ -168,19 +150,25 @@ function restoredState(entries: BranchEntries) {
 /** A browser ACK means the snapshot and session reference are durable, not that inference succeeded. */
 export function createFeedbackInbox(pi: ExtensionAPI) {
   let state = emptyState();
+  const queued = new Set<string>();
+  function enqueue(reference: FeedbackReference) {
+    if (queued.has(reference.requestId)) return;
+    pi.sendUserMessage(feedbackText(reference), {
+      deliverAs: "followUp",
+      expandPromptTemplates: false,
+    });
+    queued.add(reference.requestId);
+  }
   function delivered(ids: string[]) {
     if (!ids.length) return;
     pi.appendEntry("canvas-note-feedback-delivered", { ids });
     for (const id of ids) state.pending.delete(id);
   }
-  pi.on("before_agent_start", (event) =>
-    pendingMessage(state.pending, event.prompt),
-  );
   pi.on("message_end", (event) =>
     delivered(deliveredIds(event.message, state.pending)),
   );
   return {
-    async restore(ctx: ExtensionContext) {
+    async restore(ctx: ExtensionContext, requeue = true) {
       const entries = ctx.sessionManager.getBranch();
       const restored = restoredState(entries);
       const pending = new Map<string, FeedbackReference>();
@@ -202,6 +190,11 @@ export function createFeedbackInbox(pi: ExtensionAPI) {
         pending.set(id, reference);
       }
       state = { received: restored.received, pending };
+      for (const reference of pending.values()) {
+        // Reload preserves Pi's queue; only a fresh session restore re-enqueues.
+        if (requeue) enqueue(reference);
+        else queued.add(reference.requestId);
+      }
     },
     async accept(feedback: Feedback, documentPath: string) {
       // Serialize persistence and deduplication, including simultaneous retries.
@@ -213,15 +206,13 @@ export function createFeedbackInbox(pi: ExtensionAPI) {
           pi.appendEntry("canvas-note-feedback", reference);
           state.received.add(feedback.requestId);
           state.pending.set(feedback.requestId, reference);
-          pi.sendUserMessage(feedbackText(reference), {
-            deliverAs: "followUp",
-            expandPromptTemplates: false,
-          });
+          enqueue(reference);
         },
       );
     },
     clear() {
       state = emptyState();
+      queued.clear();
     },
   };
 }

@@ -1,4 +1,3 @@
-import { StringEnum } from "@earendil-works/pi-ai";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { registerWebToolsCommand } from "./commands.ts";
@@ -12,7 +11,6 @@ import {
   resolveConfig,
 } from "./config.ts";
 import { toWebSearchError } from "./core/errors.ts";
-import { WEB_SEARCH_PROVIDER_NAMES } from "./core/types.ts";
 import { toWebFetchError } from "./fetch/errors.ts";
 import { buildFetchOutput } from "./fetch/format.ts";
 import { createFetchRuntime } from "./fetch/router.ts";
@@ -50,12 +48,6 @@ function searchParameters(maxResults: number) {
       pattern: "\\S",
       description: "The search query.",
     }),
-    provider: Type.Optional(
-      StringEnum(WEB_SEARCH_PROVIDER_NAMES, {
-        description:
-          "Primary provider for this call only. Omit to use the configured primary provider; configured fallback still applies after eligible failures.",
-      }),
-    ),
     max_results: Type.Optional(
       Type.Integer({
         minimum: MIN_MAX_RESULTS,
@@ -133,7 +125,6 @@ export function registerWebSearchTool(
     async execute(_toolCallId, params, signal, onUpdate, ctx) {
       try {
         const searchConfig = { ...dependencies.searchConfig };
-        if (params.provider) searchConfig.provider = params.provider;
         onUpdate?.({
           content: [
             { type: "text", text: `Searching ${searchConfig.provider}...` },

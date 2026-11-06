@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import type { Theme } from "@earendil-works/pi-coding-agent";
+import { keyHint, keyText, type Theme } from "@earendil-works/pi-coding-agent";
 import { visibleWidth } from "@earendil-works/pi-tui";
 import {
   compactCall,
@@ -95,7 +95,7 @@ test("shared messages apply full-width background in both modes", () => {
           details: { value: "metadata" },
           display: true,
         },
-        { expanded, outputPad: 0 },
+        { expanded, outputPad: 0, keyText, keyHint },
         backgroundTheme,
       )?.render(width);
       assert.ok(lines && lines.length > 0);
@@ -125,7 +125,7 @@ test("message backgrounds survive resets and repeated terminal resizing", () => 
         details: { value: "metadata" },
         display: true,
       },
-      { expanded, outputPad: 0 },
+      { expanded, outputPad: 0, keyText, keyHint },
       coloredTheme,
     );
     assert.ok(component);
@@ -184,7 +184,7 @@ test("shared calls and messages escape terminal controls in both modes", () => {
           details: args,
           display: true,
         },
-        { expanded, outputPad: 0 },
+        { expanded, outputPad: 0, keyText, keyHint },
         theme,
       )?.render(80) ?? []),
     ].join("\n");

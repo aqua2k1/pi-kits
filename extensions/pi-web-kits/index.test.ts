@@ -199,9 +199,11 @@ test("web_search registers the public parameter schema", () => {
   assert.equal(tool.name, "web_search");
   const schema = JSON.parse(JSON.stringify(tool.parameters));
   assert.deepEqual(schema.required, ["query"]);
-  assert.deepEqual(schema.properties.provider.enum, [
-    "searxng",
-    "codex-alpha-search",
+  assert.deepEqual(Object.keys(schema.properties), [
+    "query",
+    "max_results",
+    "domains",
+    "recency_days",
   ]);
   assert.equal(schema.properties.query.maxLength, 2_000);
   assert.equal(schema.properties.max_results.maximum, 10);
@@ -243,6 +245,37 @@ test("registered search tool uses its resolved config", async () => {
   );
 });
 
+test("tool arguments cannot override configured search routing", async () => {
+  const searchConfig = resolveSearchConfig(
+    {
+      routing: {
+        provider: "codex-alpha-search",
+        fallback: true,
+        fallbackProvider: "searxng",
+      },
+    },
+    {},
+  );
+  const tool = captureSearch({
+    searchConfig,
+    search: async (request, config) => {
+      assert.deepEqual(config, searchConfig);
+      return { provider: config.provider, query: request.query, results: [] };
+    },
+  });
+  const output = await tool.execute(
+    "configured-provider",
+    { query: "test", provider: "searxng" },
+    undefined,
+    undefined,
+    context,
+  );
+  assert.equal(
+    (output.structuredContent as { backend: string }).backend,
+    "codex-alpha-search",
+  );
+});
+
 test("registered fetch tool uses its resolved config", async () => {
   const tool = captureFetch({
     fetchConfig: resolveFetchConfig({ timeoutMs: 1_000 }),
@@ -277,7 +310,7 @@ for (const provider of ["searxng", "codex-alpha-search"] as const) {
           }
         : {};
     const tool = captureSearch({
-      searchConfig: resolveSearchConfig({}, env),
+      searchConfig: resolveSearchConfig({ routing: { provider } }, env),
       search: (request, config, runtime, signal) =>
         searchWeb(
           request,
@@ -310,7 +343,7 @@ for (const provider of ["searxng", "codex-alpha-search"] as const) {
     const updates: unknown[] = [];
     const output = await tool.execute(
       "test-call",
-      { query: credential, provider, max_results: 1 },
+      { query: credential, max_results: 1 },
       undefined,
       (update) => updates.push(update),
       context,
@@ -602,10 +635,6 @@ test("guidance keeps routing and security, while descriptions carry provider and
   assert.match(fetchGuidance, /Use the read tool on savedContent\.path/);
   assert.match(fetch.description, /Returns metadata only, not inline content/);
   const schema = JSON.parse(JSON.stringify(search.parameters));
-  assert.match(
-    schema.properties.provider.description,
-    /Primary provider.*configured fallback/,
-  );
   assert.match(
     schema.properties.recency_days.description,
     /Provider-dependent, best-effort/,
