@@ -4,16 +4,16 @@
 
 | 键 | 类型 | 默认值 | 说明 |
 |---|---|---|---|
-| `subagent.enabled` | boolean | `true` | 控制工具、命令和会话事件的注册 |
-| `subagent.mux` | string | 未设置 | 唯一取值 `herdr`；显式设置后通过 Herdr 环境检查才注册 |
+| `subagent.enabled` | boolean | `true` | 控制工具、命令和会话事件的注册；启用时自动选择首个匹配的终端环境，无匹配时不注册 |
 | `subagent.maxConcurrent` | integer | `4` | 1–32；限制执行中的受管任务，空闲保留会话不占执行槽 |
 | `subagent.extensionAllowlist` | array | `["builtin:codemode", "builtin:tool-search"]` | Pi 子会话显式加载的扩展；整体替换，空数组只保留任务通信扩展；条目唯一 |
 | `subagent.extensionAllowlist[]` | string 或 object | 未设置 | 字符串为扩展源；对象同时包含 `source`、`extensions` |
 | `subagent.extensionAllowlist[].source` | string | 未设置 | 非空白、无控制字符；相对路径基于 agent 目录；Pi 解析本地路径、内置源及包源 |
 | `subagent.extensionAllowlist[].extensions` | string[] | 未设置 | 唯一的非空白、无控制字符资源名；按包声明的 `extensionResources` 选择，空数组跳过该源 |
-| `HERDR_ENV` | 环境变量 | 未设置 | Herdr 提供；值为 `1` 时通过环境检查 |
-| `HERDR_PANE_ID` | 环境变量 | 未设置 | Herdr 提供的父窗格标识；打开视图时使用 |
-| `HERDR_BIN_PATH` | 环境变量 | `herdr` | Herdr CLI 路径 |
+| `HC_TERMINAL_ID` | 环境变量 | 未设置 | 新版 Herdr app 提供；非空时优先选择新版适配器，通过 PATH 中的 `hc` 管理终端，相对视图操作仅警告 |
+| `HERDR_ENV` | 环境变量 | 未设置 | 旧版 Herdr 提供；新版环境未匹配且值为 `1` 时选择旧版适配器 |
+| `HERDR_PANE_ID` | 环境变量 | 未设置 | 旧版 Herdr 提供的父窗格标识；打开视图时使用 |
+| `HERDR_BIN_PATH` | 环境变量 | `herdr` | 旧版 Herdr CLI 路径 |
 | Agent 文件位置 | 路径 | — | `<父工作目录>/.pi/agent/agents/*.md` 和 `<agent-dir>/agents/*.md`；项目同名文件整体覆盖全局文件，名称忽略大小写；每次列举和创建命名任务重新读取；单文件上限 64 KiB |
 | Agent `description` | string | 类型名 | 非空白；类型列表中的说明；类型名取文件名去掉 `.md` |
 | Agent `display_name` | string | 类型名 | 非空白；界面显示名，匿名任务显示 `Subagent` |
@@ -44,7 +44,6 @@
 {
   "subagent": {
     "enabled": true,
-    "mux": "herdr",
     "maxConcurrent": 4,
     "extensionAllowlist": [
       "builtin:codemode",

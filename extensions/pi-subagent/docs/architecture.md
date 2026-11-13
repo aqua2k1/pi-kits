@@ -40,7 +40,10 @@ flowchart LR
 | `runtime/codex/index.ts` | 私有 app-server、线程控制、事件转换与回复补读 |
 | `runtime/codex/transport.ts` | Bearer 认证 WebSocket JSON-RPC、请求边界和服务端请求处理 |
 | `runtime/codex/guardian.ts`、`runtime/codex/guardian.mjs` | POSIX 进程组、父进程 IPC 与后端清理 |
-| `mux/index.ts`、`mux/herdr.ts` | 终端和视图接口、Herdr CLI、资源身份核对 |
+| `mux/index.ts` | `MuxAdapter` 终端和视图契约 |
+| `mux/registry.ts` | `registerMux` 内部注册列表与首个环境匹配 |
+| `mux/providers.ts` | 按优先级先导入 `herdr-app`，再导入 `herdr` |
+| `mux/herdr-app.ts`、`mux/herdr.ts` | 模块自行注册适配器；新版使用 `hc` 和 `herdr-app`，旧版使用 Herdr CLI |
 | `ui/presentation.ts`、`ui/renderers.ts` | 统一身份标题、统计、工具结果和通知展示 |
 | `ui/status-widget.ts`、`ui/views.ts` | 状态刷新、点击和视图面板 |
 
@@ -76,6 +79,10 @@ sequenceDiagram
 
 - 六个工具共享 `subagent` namespace 元数据，保持 Codemode 分组与发现入口一致；工具名称、参数和默认 direct 暴露保持不变。
 - `index.ts` 在 worker 标记为 `1` 时直接返回；Pi 后端显式加载通信桥，防止子 Pi 递归注册父协调工具。
+- 各 mux 模块自行调用 `registerMux` 加入内部列表；`providers.ts` 先导入 `herdr-app` 再导入 `herdr`，启动时按注册顺序取首个环境匹配项，防止双环境标记改变选择优先级。
+- 新版 `herdr-app` 以 `HC_TERMINAL_ID` 非空为匹配条件，通过 `hc connect` 的 JSONL RPC 管理终端，完整传递 argv、目录和环境；旧版 `herdr` 以 `HERDR_ENV === "1"` 为条件。`subagent.enabled` 默认 `true`，均未匹配时不注册扩展，配置不参与适配器选择。
+- `manager.ts` 和 `MuxAdapter` 契约保持不变；新版 app 的相对视图操作只警告且不改变窗口，返回的本地句柄探测为非存活，管理器不增加能力判断，防止终端差异渗入任务编排。
+- 新版终端以随机所有权标签和父终端核对身份；启动响应丢失时保留唯一名称及清理句柄，销毁确认退出后再移除记录，防止误杀外部终端或丢失清理责任。
 - `agents.ts` 只解析通用字段，保留原始 `runtime_config`；后端划分会话键和每轮键，防止通用层误解释另一后端的选项。
 - 管理器在创建资源前完成配置、任务和大小预检；任务解析在验收与发送时保持幂等，防止自定义审阅要求重复追加。
 - 绝对 `cwd` 沿入口、管理器、后端和终端传递，Agent 查找仍取父目录，防止任务目录切换改变定义来源。
@@ -108,7 +115,9 @@ npm test --workspace=pi-subagent
 | `index.test.ts` | 注册条件、工具参数、目录、通知与命令 |
 | `manager.test.ts`、`manager-runtime.test.ts`、`lifecycle.test.ts` | 队列、轮次、等待、结果、视图、释放、竞态与清理重试 |
 | `policy.test.ts` | 状态组合、操作资格与展示提示 |
-| `mux/herdr.test.ts` | CLI 边界、布局、身份核对、回滚与停止确认 |
+| `mux/registry.test.ts` | 自注册、顺序匹配、环境选择与工厂隔离 |
+| `mux/herdr-app.test.ts` | 新版 RPC、终端所有权、清理和视图警告 |
+| `mux/herdr.test.ts` | 旧版 CLI 边界、布局、身份核对、回滚与停止确认 |
 | `runtime/pi/config.test.ts`、`runtime/pi/index.test.ts`、`runtime/pi/extensions.test.ts` | 配置、启动参数与扩展资源解析 |
 | `runtime/pi/clone.test.ts`、`runtime/pi/inheritance.test.ts`、`runtime/pi/worker.test.ts` | 快照、上下文投影、协议、批次、原生交互 |
 | `runtime/codex/config.test.ts`、`runtime/codex/call-config.test.ts`、`runtime/codex/schema.test.ts` | 开关、每轮审阅目标和参数结构 |

@@ -144,10 +144,6 @@
           "type": "boolean",
           "default": true
         },
-        "mux": {
-          "type": "string",
-          "const": "herdr"
-        },
         "maxConcurrent": {
           "type": "integer",
           "minimum": 1,
@@ -381,10 +377,6 @@
             "enabled": {
               "type": "boolean",
               "default": true
-            },
-            "mux": {
-              "type": "string",
-              "const": "herdr"
             },
             "maxConcurrent": {
               "type": "integer",

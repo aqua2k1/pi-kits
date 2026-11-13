@@ -10,19 +10,11 @@
 pi install ./extensions/pi-subagent
 ```
 
-运行需要 Herdr；Pi 任务使用 PATH 中的 `pi`，Codex 任务使用 `codex`。Codex 的进程清理使用 POSIX 进程组。
+运行需要新版 Herdr app 或旧版 Herdr；Pi 任务使用 PATH 中的 `pi`，Codex 任务使用 `codex`。Codex 的进程清理使用 POSIX 进程组。
 
 ## 快速开始
 
-在 `<agent-dir>/pi-kits.json` 中启用 Herdr：
-
-```json
-{
-  "subagent": { "mux": "herdr" }
-}
-```
-
-在 Herdr 终端内启动 Pi，让父 Agent 调用 `subagent` 工具：
+扩展默认启用，无需配置终端适配器。在 Herdr 终端内启动 Pi，让父 Agent 调用 `subagent` 工具：
 
 ```json
 {
@@ -33,13 +25,15 @@ pi install ./extensions/pi-subagent
 
 工具默认创建 Pi 任务并立即返回完整任务 ID；未被等待调用接收的完成结果向父会话发送后续消息。把 `keep_alive` 设为 `true` 可保留会话供续跑。
 
-在 Pi 交互界面输入以下命令查看任务并打开原生终端：
+在 Pi 交互界面输入以下命令管理任务和视图：
 
 ```text
 /subagent:views
 ```
 
-扩展在 `subagent.enabled` 为 `true`、`subagent.mux` 为 `herdr` 且 Herdr 环境标记为 `1` 时注册；修改配置后重新加载扩展。
+旧版 Herdr 可打开相对布局视图；新版 Herdr app 的相对视图操作仅发出警告，不改变窗口。
+
+启动时自动选择首个匹配环境：`HC_TERMINAL_ID` 非空时优先使用新版 Herdr app，否则在 `HERDR_ENV=1` 时使用旧版 Herdr；均未匹配时不注册。`subagent.enabled` 默认为 `true`，设为 `false` 可关闭扩展；修改配置后重新加载扩展。
 
 ## 文档
 

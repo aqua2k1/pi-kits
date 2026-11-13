@@ -23,7 +23,7 @@ pi install https://github.com/aqua2k1/pi-kits.git
 | [handoff](extensions/pi-handoff/README.md) | 克隆会话并生成交接摘要 |
 | [notify](extensions/pi-notify/README.md) | 任务完成桌面通知 |
 | [ask-user-question](extensions/pi-ask-user-question/README.md) | 单选、多选和自定义回答 |
-| [subagent](extensions/pi-subagent/README.md) | Pi/Codex 独立任务与原生终端视图；须配置 Herdr mux 并在 Herdr 内运行 |
+| [subagent](extensions/pi-subagent/README.md) | Pi/Codex 独立任务与原生终端视图；在 Herdr 内按环境自动启用 |
 | [web-kits](extensions/pi-web-kits/README.md) | Web 搜索、网页与 GitHub 内容获取 |
 
 `terminal` 扩展已从主线移除，原实现保留在 `archive/terminal` 分支；`/vim`、`/lg`、`/fm` 不再注册，建议通过 mux 启动相应程序。

@@ -2,6 +2,8 @@
 
 配置由 `@pi-kits/config` 统一校验及默认化。扩展加载时读取快照，修改后通过 `/reload` 生效。缺失文件或字段使用默认值；格式错误、字段不合法或文件不可读均报错，不静默回退。
 
+`subagent.enabled` 默认为 `true`，终端适配器由扩展按环境自动选择，不再配置 `subagent.mux`。未知字段仍按现有 schema 拒绝；旧配置中的该字段需删除，顶层和旧 `workflow.subagent` 分组均适用。
+
 ## 旧分组兼容
 
 旧 `workspace`、`usage`、`workflow` 分组仍可读取，推荐使用顶层扩展设置：

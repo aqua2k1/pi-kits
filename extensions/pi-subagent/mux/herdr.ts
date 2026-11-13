@@ -9,6 +9,13 @@ import {
   TerminalStartError,
   type ViewHandle,
 } from "./index.ts";
+import { registerMux } from "./registry.ts";
+
+registerMux({
+  id: "herdr",
+  matches: (env) => env.HERDR_ENV === "1",
+  create: () => new HerdrAdapter(),
+});
 
 export interface RunOptions {
   timeoutMs: number;

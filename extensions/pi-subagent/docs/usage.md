@@ -1,6 +1,6 @@
 # 使用
 
-在 Herdr 内运行 Pi，并在 `<agent-dir>/pi-kits.json` 设置 `{"subagent":{"enabled":true,"mux":"herdr"}}` 后加载扩展。工具由父 Agent 调用；以下 JSON 是工具参数。
+在新版 Herdr app 或旧版 Herdr 内运行 Pi 后加载扩展；`subagent.enabled` 默认为 `true`，无需配置终端适配器。启动时优先匹配非空的 `HC_TERMINAL_ID`，其次匹配 `HERDR_ENV=1`；均未匹配时不注册。工具由父 Agent 调用；以下 JSON 是工具参数。
 
 ## subagent
 
@@ -123,7 +123,6 @@ runtime_config: { tools: [read], disallowed_tools: [write, edit],
 返回后可调用结果工具等待结束；资源清理失败时再次调用可重试。
 
 ## list_subagent_types
-
 工具调用示例：`{}`。工具列出命名类型及来源、配置和启用状态；`enabled: false` 的类型仍出现在列表中。
 
 ## /subagent:views
@@ -148,4 +147,4 @@ runtime_config: { tools: [read], disallowed_tools: [write, edit],
 | `delete`；`d` | 确认后清理资源并删除记录，保留会话文件 |
 | ↑↓、滚轮、PageUp、PageDown；Esc | 移动选择；关闭面板，删除确认期间 Esc 或 `n` 取消确认 |
 
-编辑器上方状态区显示任务活动和统计，单击可用标题打开视图；完成行保留 5 秒。管理面板本身不保留执行会话。
+新版 Herdr app 的相对视图打开、聚焦和关闭操作仅发出警告，不改变窗口；任务通过 `hc` 终端执行。旧版 Herdr 执行表中的视图布局。编辑器上方状态区显示任务活动和统计，单击可用标题打开视图；完成行保留 5 秒。管理面板本身不保留执行会话。

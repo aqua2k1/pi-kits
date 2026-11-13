@@ -71,7 +71,6 @@ const workflowFeatures = {
   askUserQuestion: feature(),
   subagent: section({
     enabled,
-    mux: Type.Optional(Type.Literal("herdr")),
     maxConcurrent: integer(1, 32, 4),
     extensionAllowlist: Type.Optional(
       Type.Array(WORKER_EXTENSION_SOURCE_SCHEMA, {

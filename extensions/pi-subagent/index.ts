@@ -20,8 +20,9 @@ import {
 } from "../../shared/ui/docked-panel/index.ts";
 import { loadAgentDefinitions, resolveAgentDefinition } from "./agents.ts";
 import { type AgentSnapshot, SubagentManager } from "./manager.ts";
-import { HerdrAdapter } from "./mux/herdr.ts";
+import "./mux/providers.ts";
 import type { MuxAdapter } from "./mux/index.ts";
+import { resolveMux } from "./mux/registry.ts";
 import { codexReviewTargetSchema } from "./runtime/codex/schema.ts";
 import {
   renderSubagentNotification,
@@ -549,11 +550,31 @@ export default function subagentExtension(pi: ExtensionAPI): void {
   // Workers inherit the mux environment but must not become coordinators.
   if (process.env.PI_KITS_SUBAGENT_WORKER === "1") return;
   const { subagent } = readPiKitsConfig();
-  if (!subagent.enabled || subagent.mux !== "herdr") {
-    return;
-  }
-  const adapter = new HerdrAdapter();
-  if (!adapter.check_env()) return;
+  if (!subagent.enabled) return;
+
+  let context: ExtensionContext | undefined;
+  const warnings: string[] = [];
+  const warn = (message: string) => {
+    if (!context) {
+      warnings.push(message);
+      return;
+    }
+    try {
+      context.ui.notify(message, "warning");
+    } catch {
+      // Notification failures must not interrupt adapter operations.
+    }
+  };
+  const adapter = resolveMux(process.env, { warn });
+  if (!adapter) return;
+  pi.on("session_start", (_event, ctx) => {
+    context = ctx;
+    for (const message of warnings.splice(0)) warn(message);
+  });
+  pi.on("session_shutdown", () => {
+    context = undefined;
+    warnings.length = 0;
+  });
   registerSubagents(
     pi,
     adapter,

@@ -37,7 +37,6 @@ test("absent config uses defaults without creating a file", (t) => {
   assert.equal(config.notify.quietPeriodMs, 1_000);
   assert.deepEqual(config.subagent, {
     enabled: true,
-    mux: undefined,
     maxConcurrent: 4,
     extensionAllowlist: [...SUBAGENT_DEFAULT_EXTENSIONS],
   });
@@ -101,7 +100,7 @@ test("flat configuration independently controls extensions", () => {
       providerUsage: { intervalMs: 2_000 },
       stats: { enabled: false },
       askUserQuestion: { enabled: false },
-      subagent: { mux: "herdr", maxConcurrent: 2, extensionAllowlist: [] },
+      subagent: { maxConcurrent: 2, extensionAllowlist: [] },
       commit: { timeoutMs: 5_000, rememberModel: false },
       notify: { quietPeriodMs: 0 },
     }),
@@ -113,7 +112,7 @@ test("flat configuration independently controls extensions", () => {
   assert.equal(config.providerUsage.intervalMs, 2_000);
   assert.equal(config.stats.enabled, false);
   assert.equal(config.askUserQuestion.enabled, false);
-  assert.equal(config.subagent.mux, "herdr");
+  assert.equal(config.subagent.enabled, true);
   assert.equal(config.subagent.maxConcurrent, 2);
   assert.deepEqual(config.subagent.extensionAllowlist, []);
   assert.equal(config.commit.timeoutMs, 5_000);
@@ -136,7 +135,7 @@ test("flat fields override legacy fields without losing group disable semantics"
       providerUsage: { timeoutMs: 500 },
       workflow: {
         enabled: false,
-        subagent: { mux: "herdr" },
+        subagent: { maxConcurrent: 2 },
         commit: { model: "p/old", rememberModel: false },
       },
       subagent: { enabled: true },
@@ -152,7 +151,7 @@ test("flat fields override legacy fields without losing group disable semantics"
   assert.equal(config.providerUsage.timeoutMs, 500);
   assert.equal(config.stats.enabled, false);
   assert.equal(config.subagent.enabled, true);
-  assert.equal(config.subagent.mux, "herdr");
+  assert.equal(config.subagent.maxConcurrent, 2);
   assert.equal(config.commit.enabled, false);
   assert.equal(config.commit.model, "p/old");
   assert.equal(config.commit.lastModel, "p/new");
@@ -164,7 +163,6 @@ for (const value of [
   '{"terminal":{"editor":" "}}',
   '{"stats":{"enabled":"false"}}',
   '{"providerUsage":{"intervalMs":0}}',
-  '{"subagent":{"mux":"tmux"}}',
   '{"commit":{"timeoutMs":0}}',
   '{"notify":{"unknown":true}}',
 ]) {
@@ -198,41 +196,31 @@ test("partial config preserves explicit false and zero", () => {
   assert.equal(config["web-kits"].fetch.enabled, true);
 });
 
-test("subagent settings require explicit mux and preserve defaults", () => {
-  for (const subagent of [{}, { enabled: true }]) {
-    assert.deepEqual(
-      parsePiKitsConfig(JSON.stringify({ workflow: { subagent } })).subagent,
-      {
-        enabled: true,
-        mux: undefined,
-        maxConcurrent: 4,
-        extensionAllowlist: [...SUBAGENT_DEFAULT_EXTENSIONS],
-      },
-    );
-  }
-  assert.deepEqual(
-    parsePiKitsConfig('{"workflow":{"subagent":{"mux":"herdr"}}}').subagent,
-    {
+test("subagent settings default to enabled without mux configuration", () => {
+  for (const raw of [
+    {},
+    { subagent: {} },
+    { subagent: { enabled: true } },
+    { workflow: { subagent: {} } },
+    { workflow: { subagent: { enabled: true } } },
+  ]) {
+    assert.deepEqual(parsePiKitsConfig(JSON.stringify(raw)).subagent, {
       enabled: true,
-      mux: "herdr",
       maxConcurrent: 4,
       extensionAllowlist: [...SUBAGENT_DEFAULT_EXTENSIONS],
-    },
-  );
-  for (const maxConcurrent of [1, 32]) {
-    const config = parsePiKitsConfig(
-      JSON.stringify({
-        workflow: {
-          subagent: { enabled: false, mux: "herdr", maxConcurrent },
-        },
-      }),
-    );
-    assert.deepEqual(config.subagent, {
-      enabled: false,
-      mux: "herdr",
-      maxConcurrent,
-      extensionAllowlist: [...SUBAGENT_DEFAULT_EXTENSIONS],
     });
+  }
+  for (const maxConcurrent of [1, 32]) {
+    for (const raw of [
+      { subagent: { enabled: false, maxConcurrent } },
+      { workflow: { subagent: { enabled: false, maxConcurrent } } },
+    ]) {
+      assert.deepEqual(parsePiKitsConfig(JSON.stringify(raw)).subagent, {
+        enabled: false,
+        maxConcurrent,
+        extensionAllowlist: [...SUBAGENT_DEFAULT_EXTENSIONS],
+      });
+    }
   }
 });
 
@@ -326,8 +314,6 @@ for (const [name, value] of [
   ],
   ["invalid timeout", '{"workflow":{"commit":{"timeoutMs":0}}}'],
   ["invalid thinking type", '{"workflow":{"commit":{"thinking":false}}}'],
-  ["unsupported mux", '{"workflow":{"subagent":{"mux":"tmux"}}}'],
-  ["null mux", '{"workflow":{"subagent":{"mux":null}}}'],
   ["invalid subagent enabled", '{"workflow":{"subagent":{"enabled":"true"}}}'],
   ["zero concurrency", '{"workflow":{"subagent":{"maxConcurrent":0}}}'],
   ["overflow concurrency", '{"workflow":{"subagent":{"maxConcurrent":33}}}'],
@@ -429,7 +415,6 @@ test("published JSON schema and example match runtime validation", () => {
   );
   assert.deepEqual(example.subagent, {
     enabled: true,
-    mux: "herdr",
     maxConcurrent: 4,
     extensionAllowlist: [
       ...SUBAGENT_DEFAULT_EXTENSIONS,

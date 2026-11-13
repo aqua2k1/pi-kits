@@ -214,7 +214,6 @@ export function resolvePiKitsConfig(raw: PiKitsFileConfig = {}) {
     },
     subagent: {
       enabled: raw.subagent?.enabled ?? true,
-      mux: raw.subagent?.mux,
       maxConcurrent: raw.subagent?.maxConcurrent ?? 4,
       extensionAllowlist: structuredClone(
         raw.subagent?.extensionAllowlist ?? [...SUBAGENT_DEFAULT_EXTENSIONS],

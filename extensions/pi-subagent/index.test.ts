@@ -5,6 +5,7 @@ import { type TestContext, test } from "node:test";
 import {
   type ExtensionAPI,
   type ExtensionCommandContext,
+  type ExtensionContext,
   type ExtensionToolContext,
   SessionManager,
   type ToolDefinition,
@@ -19,7 +20,13 @@ import {
   type SpawnOptions,
   SubagentManager,
 } from "./manager.ts";
+import { HerdrAdapter } from "./mux/herdr.ts";
 import type { MuxAdapter } from "./mux/index.ts";
+import {
+  type MuxFactoryOptions,
+  registerMux,
+  resolveMux,
+} from "./mux/registry.ts";
 
 function environment(t: TestContext, env: Record<string, string | undefined>) {
   for (const [key, value] of Object.entries(env)) {
@@ -37,7 +44,8 @@ function registrations() {
   const tools: string[] = [];
   const commands: string[] = [];
   const hooks: string[] = [];
-  const hookHandlers = new Map<string, () => void | Promise<void>>();
+  type Hook = (event?: unknown, ctx?: ExtensionContext) => void | Promise<void>;
+  const hookHandlers = new Map<string, Hook>();
   const definitions = new Map<string, ToolDefinition>();
   const commandHandlers = new Map<
     string,
@@ -56,9 +64,18 @@ function registrations() {
       commands.push(name);
       commandHandlers.set(name, definition);
     },
-    on(event: string, handler: () => void | Promise<void>) {
+    on(event: string, handler: Hook) {
       hooks.push(event);
-      hookHandlers.set(event, handler);
+      const previous = hookHandlers.get(event);
+      hookHandlers.set(
+        event,
+        previous
+          ? async (...args) => {
+              await previous(...args);
+              await handler(...args);
+            }
+          : handler,
+      );
     },
   } as unknown as ExtensionAPI;
   return {
@@ -73,51 +90,47 @@ function registrations() {
 }
 
 for (const [name, config, env] of [
-  ["unconfigured mux", {}, { HERDR_ENV: "1" }],
+  ["no mux markers", {}, { HERDR_ENV: undefined }],
   [
     "disabled workflow",
-    { workflow: { enabled: false, subagent: { mux: "herdr" } } },
+    { workflow: { enabled: false, subagent: {} } },
     { HERDR_ENV: "1" },
   ],
   [
     "disabled subagent",
-    { workflow: { subagent: { enabled: false, mux: "herdr" } } },
+    { workflow: { subagent: { enabled: false } } },
     { HERDR_ENV: "1" },
   ],
   [
     "disabled top-level subagent",
-    { subagent: { enabled: false, mux: "herdr" } },
+    { subagent: { enabled: false } },
     { HERDR_ENV: "1" },
   ],
-  [
-    "top-level missing HERDR_ENV",
-    { subagent: { mux: "herdr" } },
-    { HERDR_ENV: undefined },
-  ],
+  ["top-level missing HERDR_ENV", { subagent: {} }, { HERDR_ENV: undefined }],
   [
     "top-level worker recursion guard",
-    { subagent: { mux: "herdr" } },
+    { subagent: {} },
     { HERDR_ENV: "1", PI_KITS_SUBAGENT_WORKER: "1" },
   ],
   [
     "missing HERDR_ENV",
-    { workflow: { subagent: { mux: "herdr" } } },
+    { workflow: { subagent: {} } },
     { HERDR_ENV: undefined, HERDR_PANE_ID: "w1:p1", TMUX: "tmux" },
   ],
-  [
-    "invalid HERDR_ENV",
-    { workflow: { subagent: { mux: "herdr" } } },
-    { HERDR_ENV: "0" },
-  ],
+  ["invalid HERDR_ENV", { workflow: { subagent: {} } }, { HERDR_ENV: "0" }],
   [
     "worker recursion guard",
-    { workflow: { subagent: { mux: "herdr" } } },
+    { workflow: { subagent: {} } },
     { HERDR_ENV: "1", PI_KITS_SUBAGENT_WORKER: "1" },
   ],
 ] as const) {
   test(`subagent does not register capabilities: ${name}`, (t) => {
     useAgentDir(t, config);
-    environment(t, { PI_KITS_SUBAGENT_WORKER: undefined, ...env });
+    environment(t, {
+      HC_TERMINAL_ID: undefined,
+      PI_KITS_SUBAGENT_WORKER: undefined,
+      ...env,
+    });
     t.mock.method(globalThis, "setTimeout", () => {
       assert.fail("Disabled extensions must not start timers");
     });
@@ -129,14 +142,12 @@ for (const [name, config, env] of [
   });
 }
 
-for (const config of [
-  { workflow: { subagent: { mux: "herdr" } } },
-  { subagent: { mux: "herdr" } },
-]) {
-  test(`configured Herdr enables tools with HERDR_ENV alone, without backend probing ${JSON.stringify(config)}`, (t) => {
+for (const config of [{}, { workflow: { subagent: {} } }, { subagent: {} }]) {
+  test(`Herdr auto-registers with HERDR_ENV alone, without mux config or backend probing ${JSON.stringify(config)}`, (t) => {
     useAgentDir(t, config);
     environment(t, {
       HERDR_ENV: "1",
+      HC_TERMINAL_ID: undefined,
       HERDR_PANE_ID: undefined,
       HERDR_BIN_PATH: "/missing/herdr",
       PI_KITS_SUBAGENT_WORKER: undefined,
@@ -155,9 +166,128 @@ for (const config of [
       "stop_subagent",
     ]);
     assert.deepEqual(capture.commands, ["subagent:views"]);
-    assert.deepEqual(capture.hooks, ["session_start", "session_shutdown"]);
+    assert.deepEqual(capture.hooks, [
+      "session_start",
+      "session_shutdown",
+      "session_start",
+      "session_shutdown",
+    ]);
   });
 }
+
+for (const [name, env, expected] of [
+  ["legacy only", { HERDR_ENV: "1" }, "legacy"],
+  ["app only", { HC_TERMINAL_ID: "terminal" }, "app"],
+  [
+    "app wins when both match",
+    { HERDR_ENV: "1", HC_TERMINAL_ID: "terminal" },
+    "app",
+  ],
+  ["blank app marker", { HC_TERMINAL_ID: "  " }, "none"],
+  ["no markers", {}, "none"],
+] as const) {
+  test(`built-in muxes self-register in priority order: ${name}`, (t) => {
+    useAgentDir(t, {});
+    environment(t, {
+      HERDR_ENV: undefined,
+      HC_TERMINAL_ID: undefined,
+      PI_KITS_SUBAGENT_WORKER: undefined,
+      ...env,
+    });
+    t.mock.method(globalThis, "setTimeout", () => {
+      assert.fail("Routing must not start timers or probe CLI backends");
+    });
+    const adapter = resolveMux(process.env);
+    if (expected === "none") assert.equal(adapter, undefined);
+    else {
+      assert.ok(adapter);
+      assert.equal(adapter instanceof HerdrAdapter, expected === "legacy");
+    }
+    const capture = registrations();
+    subagentExtension(capture.pi);
+    assert.equal(capture.tools.length, expected === "none" ? 0 : 6);
+    assert.equal(capture.commands.length, expected === "none" ? 0 : 1);
+  });
+}
+
+for (const [name, config, worker] of [
+  ["worker", {}, "1"],
+  ["disabled", { subagent: { enabled: false } }, undefined],
+] as const) {
+  test(`automatic app routing respects ${name} guard`, (t) => {
+    useAgentDir(t, config);
+    environment(t, {
+      HERDR_ENV: "1",
+      HC_TERMINAL_ID: "terminal",
+      PI_KITS_SUBAGENT_WORKER: worker,
+    });
+    const capture = registrations();
+    subagentExtension(capture.pi);
+    assert.deepEqual(capture.tools, []);
+    assert.deepEqual(capture.commands, []);
+    assert.deepEqual(capture.hooks, []);
+  });
+}
+
+let warningFactory: ((options?: MuxFactoryOptions) => MuxAdapter) | undefined;
+registerMux({
+  id: "entry-warning-test",
+  matches: (env) => env.PI_KITS_MUX_WARNING_TEST === "1",
+  create: (options) => {
+    assert.ok(warningFactory);
+    return warningFactory(options);
+  },
+});
+
+test("entry queues factory warnings and notifies through lifecycle context", async (t) => {
+  useAgentDir(t, {});
+  environment(t, {
+    HERDR_ENV: undefined,
+    HC_TERMINAL_ID: undefined,
+    PI_KITS_SUBAGENT_WORKER: undefined,
+    PI_KITS_MUX_WARNING_TEST: "1",
+  });
+  let warn: MuxFactoryOptions["warn"];
+  warningFactory = (options) => {
+    assert.equal(options?.env, process.env);
+    warn = options?.warn;
+    warn?.("factory warning");
+    return {} as MuxAdapter;
+  };
+  t.after(() => {
+    warningFactory = undefined;
+  });
+  const capture = registrations();
+  subagentExtension(capture.pi);
+  const notifications: unknown[][] = [];
+  const ctx = {
+    mode: "print",
+    ui: { notify: (...args: unknown[]) => notifications.push(args) },
+  } as unknown as ExtensionContext;
+  assert.deepEqual(notifications, []);
+  await capture.hookHandlers.get("session_start")?.({}, ctx);
+  assert.deepEqual(notifications, [["factory warning", "warning"]]);
+  warn?.("runtime warning");
+  assert.deepEqual(notifications.at(-1), ["runtime warning", "warning"]);
+  await capture.hookHandlers.get("session_start")?.({}, ctx);
+  assert.equal(notifications.length, 2, "queued warnings are delivered once");
+
+  const failingContext = {
+    mode: "print",
+    ui: {
+      notify() {
+        throw new Error("UI unavailable");
+      },
+    },
+  } as unknown as ExtensionContext;
+  await capture.hookHandlers.get("session_start")?.({}, failingContext);
+  assert.doesNotThrow(() => warn?.("notification failure is isolated"));
+  await capture.hookHandlers.get("session_shutdown")?.();
+  warn?.("pending warning");
+  await capture.hookHandlers.get("session_shutdown")?.();
+  await capture.hookHandlers.get("session_start")?.({}, ctx);
+  assert.equal(notifications.length, 2, "shutdown clears pending warnings");
+});
 
 for (const failures of [1, 3]) {
   test(`shutdown retains its manager through ${failures} cleanup failures`, async (t) => {
