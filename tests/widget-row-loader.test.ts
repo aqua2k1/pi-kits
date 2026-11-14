@@ -20,16 +20,12 @@ test("independently loaded extensions preserve both widget contributors across r
       import { resolve } from "node:path";
       import { loadExtensions } from "./node_modules/@earendil-works/pi-coding-agent/dist/core/extensions/loader.js";
 
-      globalThis.fetch = async () => Response.json({
-        is_available: true,
-        balance_infos: [{ currency: "CNY", total_balance: "110.00" }],
-      });
       let widget;
       let mounts = 0;
       let invalidations = 0;
       const ctx = {
         mode: "tui",
-        model: { provider: "deepseek" },
+        model: { provider: "fixture" },
         ui: {
           setWidget(_id, content) {
             if (content === undefined) { widget = undefined; return; }
@@ -41,10 +37,9 @@ test("independently loaded extensions preserve both widget contributors across r
           },
           notify() {},
         },
-        modelRegistry: { getApiKeyForProvider: async () => "fixture-token" },
       };
       const paths = [
-        resolve("extensions/pi-provider-usage/index.ts"),
+        resolve("tests/helpers/status-widget.ts"),
         resolve("extensions/pi-token-meter/index.ts"),
       ];
       async function emit(extensions, name, event = {}) {
@@ -64,7 +59,7 @@ test("independently loaded extensions preserve both widget contributors across r
         assert.deepEqual(loaded.errors, []);
         try {
           await emit(loaded.extensions, "session_start");
-          assert.ok(text().startsWith("DeepSeek"), text());
+          assert.ok(text().startsWith("Fixture status"), text());
           assert.ok(text().endsWith("TTFT — · TPS —"), text());
           const parent = widget;
           const mountCount = mounts;
@@ -75,10 +70,10 @@ test("independently loaded extensions preserve both widget contributors across r
             await emit(loaded.extensions, "message_end", {
               message: { role: "assistant", stopReason: "stop", usage: { output: 315 }, durationMs: 5000 },
             });
-            assert.ok(text().startsWith("DeepSeek"), text());
+            assert.ok(text().startsWith("Fixture status"), text());
             assert.ok(text().endsWith("TTFT — · TPS 63 token/s"), text());
-            await emit(loaded.extensions, "model_select", { model: { provider: "deepseek" } });
-            assert.ok(text().startsWith("DeepSeek"), text());
+            await emit(loaded.extensions, "model_select", { model: { provider: "fixture" } });
+            assert.ok(text().startsWith("Fixture status"), text());
             assert.ok(text().endsWith("TTFT — · TPS 63 token/s"), text());
           }
           assert.equal(widget, parent);

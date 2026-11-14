@@ -54,15 +54,14 @@ exports only, never Pi extension manifest entries.
 
 ## 共享信息行
 
-共享 UI 管理编辑器下方的自动排版 widget。当前两个组件在宽度充足时显示为：
+共享 UI 管理编辑器下方的自动排版 widget。当前由 token-meter 展示请求指标：
 
 ```text
-[provider-usage：余额或套餐用量]       [token-meter：TTFT 与 TPS]
+[token-meter：TTFT 与 TPS]
 ```
 
 | 内容标识 | 优先级 | 空串行为 |
 | --- | --- | --- |
-| `provider-usage` | 10 | 隐藏用量内容 |
 | `token-meter` | 20 | 隐藏指标内容 |
 
 扩展声明唯一标识与有限数值优先级，数值越小越靠前。共享组件接受任意字符串标识，不保存扩展位置表。扩展获取自身子组件的写入句柄：
@@ -91,7 +90,7 @@ component.dispose(); // 释放组件
 
 父组件注册表通过进程级版本化 Symbol 共享，确保 Pi 独立加载各扩展时连接同一个父组件；注册表内部使用 WeakMap，按 Pi UI 对象隔离。扩展在会话关闭时释放自己的句柄。共享 helper 负责完整布局和重绘，扩展负责生命周期事件。
 
-`ui/widget-layout.test.ts` 覆盖纯函数排序、空输出过滤、多行配对、换行边界和 Unicode 裁剪；`ui/widget-row.test.ts` 覆盖独立子组件、父组件单次挂载、更新通知、失效句柄、动态排版、主题变化和 UI 隔离。根目录的 `tests/widget-row-loader.test.ts` 在独立 Node 进程中通过 Pi 加载器验证两种加载顺序、交替刷新、父组件身份、单项清理与重新加载。
+`ui/widget-layout.test.ts` 覆盖纯函数排序、空输出过滤、多行配对、换行边界和 Unicode 裁剪；`ui/widget-row.test.ts` 覆盖独立子组件、父组件单次挂载、更新通知、失效句柄、动态排版、主题变化和 UI 隔离。根目录的 `tests/widget-row-loader.test.ts` 在独立 Node 进程中通过 Pi 加载器加载状态测试夹具与 token-meter，验证两种加载顺序、交替刷新、父组件身份、单项清理与重新加载。
 
 ## 工具结果渲染
 

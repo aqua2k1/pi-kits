@@ -18,7 +18,6 @@ pi install https://github.com/aqua2k1/pi-kits.git
 | [open](extensions/pi-open/README.md) | 用默认应用打开文件、URL 和目录 |
 | [output-viewer](extensions/pi-output-viewer/README.md) | 只读预览会话回复 |
 | [request-viewer](extensions/pi-request-viewer/README.md) | 查看模型请求 payload |
-| [provider-usage](extensions/pi-provider-usage/README.md) | 显示服务商余额与额度 |
 | [token-meter](extensions/pi-token-meter/README.md) | 编辑器下方信息行显示最近请求的 TTFT 和 TPS |
 | [handoff](extensions/pi-handoff/README.md) | 克隆会话并生成交接摘要 |
 | [notify](extensions/pi-notify/README.md) | 任务完成桌面通知 |
@@ -31,6 +30,8 @@ pi install https://github.com/aqua2k1/pi-kits.git
 `commit` 扩展原实现保留在 `archive/commit` 分支；主线保留旧 `commit` 配置兼容，提交由编码 Agent 执行。
 
 `stats` 扩展原实现保留在 `archive/stats` 分支；主线保留旧 `stats` 配置兼容，`/stats` 不再注册。
+
+`provider-usage` 扩展原实现保留在 `archive/provider-usage` 分支；主线保留旧 `providerUsage` 配置兼容，`/usage` 不再注册。
 
 ## 配置
 
