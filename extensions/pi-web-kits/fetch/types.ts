@@ -1,5 +1,6 @@
 import type { Static } from "typebox";
 import type { FetchSourceSchema, FetchTruncationSchema } from "../schema.ts";
+import type { ghRequest } from "../shared/gh-request.ts";
 import type { FetchLike } from "../shared/request.ts";
 
 export type FetchSource = Static<typeof FetchSourceSchema>;
@@ -29,36 +30,9 @@ export interface FetchHandler {
   ): Promise<FetchResponse | null>;
 }
 
-export interface CommandResult {
-  code: number | null;
-  signal: NodeJS.Signals | null;
-  stdout: string;
-  stderr: string;
-  notFound: boolean;
-  timedOut: boolean;
-  aborted: boolean;
-  stdoutTruncated: boolean;
-  stderrTruncated: boolean;
-}
-
-export interface CommandRunner {
-  run(
-    command: string,
-    args: readonly string[],
-    options: {
-      cwd?: string;
-      env?: NodeJS.ProcessEnv;
-      signal?: AbortSignal;
-      timeoutMs: number;
-      maxStdoutBytes: number;
-      maxStderrBytes: number;
-    },
-  ): Promise<CommandResult>;
-}
-
 export interface FetchRuntime {
   readonly fetch?: FetchLike;
-  readonly command?: CommandRunner;
+  readonly ghRequest?: typeof ghRequest;
   readonly github?: import("./github.ts").GitHubHandler;
   /** Effect capabilities supplied by the composition boundary. */
   readonly now?: () => number;

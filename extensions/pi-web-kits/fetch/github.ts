@@ -1,12 +1,16 @@
 import type { ResolvedGitHubFetchConfig } from "../config.ts";
+import { GhRequestError, ghRequest } from "../shared/gh-request.ts";
 import {
   MAX_GITHUB_TREE_ENTRIES,
   TEMP_SPOOL_TTL_MS,
 } from "../shared/limits.ts";
 import { isBinaryFileName } from "./content.ts";
-import { assertNotCancelled, WebFetchError } from "./errors.ts";
+import {
+  assertNotCancelled,
+  toWebFetchError,
+  WebFetchError,
+} from "./errors.ts";
 import { formatDocument } from "./formatters/index.ts";
-import { GhClient } from "./gh-client.ts";
 import { resolveGitHubRef } from "./github-refs.ts";
 import {
   encodeGitHubPath,
@@ -67,16 +71,27 @@ export interface GitHubHandlerOptions {
 
 export class GitHubHandler implements FetchHandler {
   private readonly enabled: boolean;
-  private readonly gh: GhClient;
+  private readonly request: (
+    endpoint: string,
+    signal?: AbortSignal,
+  ) => Promise<unknown>;
   private readonly now: () => number;
 
   constructor(options: GitHubHandlerOptions) {
     this.enabled = options.config.enabled;
     this.now = options.runtime?.now ?? Date.now;
-    this.gh = new GhClient({
-      command: options.runtime?.command,
-      timeoutMs: options.apiTimeoutMs,
-    });
+    this.request = async (endpoint, signal) => {
+      try {
+        return await (options.runtime?.ghRequest ?? ghRequest)(endpoint, {
+          timeoutMs: options.apiTimeoutMs,
+          signal,
+        });
+      } catch (error) {
+        if (error instanceof GhRequestError && error.status === 404)
+          throw error;
+        throw toWebFetchError(error);
+      }
+    };
   }
 
   async fetch(
@@ -88,27 +103,32 @@ export class GitHubHandler implements FetchHandler {
     const parsed = parseGitHubUrl(stableRequest.url);
     if (!parsed) return null;
     assertNotCancelled(signal);
-    const info = await resolveGitHubRef(parsed, this.gh, signal);
+    const info = await resolveGitHubRef(parsed, this.request, signal);
     if (!info) unsupported();
     const base = `repos/${info.owner}/${info.repo}`;
     if (info.type === "root") {
-      const metadata = await this.gh.repoMetadata(
-        info.owner,
-        info.repo,
-        signal,
-      );
-      if (!metadata) unsupported();
+      const value = await this.apiJson(base, signal);
+      if (!record(value)) invalidResponse();
+      const metadata = {
+        description:
+          typeof value.description === "string" ? value.description : undefined,
+        defaultBranch:
+          typeof value.default_branch === "string"
+            ? value.default_branch
+            : undefined,
+      };
       const lines = [`Repository: ${info.owner}/${info.repo}`];
       if (metadata.description) lines.push("", metadata.description);
       if (metadata.defaultBranch) {
         lines.push("", `Default branch: ${metadata.defaultBranch}`);
-        const readme = await this.gh.apiJson(
+        const readme = await this.apiJson(
           `${base}/readme?ref=${encodeURIComponent(metadata.defaultBranch)}`,
           signal,
+          true,
         );
-        if (readme) {
-          if (!record(readme.value)) invalidResponse();
-          const value = readme.value;
+        if (readme !== undefined) {
+          if (!record(readme)) invalidResponse();
+          const value = readme;
           const path =
             typeof value.path === "string"
               ? value.path
@@ -132,20 +152,18 @@ export class GitHubHandler implements FetchHandler {
     }
 
     if (!info.ref) unsupported();
-    const result = await this.gh.apiJson(
+    const result = await this.apiJson(
       `${base}/contents/${encodeGitHubPath(info.path ?? "")}?ref=${encodeURIComponent(info.ref)}`,
       signal,
     );
-    if (!result) unsupported();
     if (info.type === "blob") {
-      if (!record(result.value) || result.value.type !== "file")
-        invalidResponse();
-      const text = await this.formatFile(result.value, info.path, signal);
+      if (!record(result) || result.type !== "file") invalidResponse();
+      const text = await this.formatFile(result, info.path, signal);
       return this.storeResponse(stableRequest, text, titleFor(info), signal);
     }
 
-    if (!Array.isArray(result.value)) invalidResponse();
-    const entries = result.value;
+    if (!Array.isArray(result)) invalidResponse();
+    const entries = result;
     const lines = [
       `Directory: ${info.owner}/${info.repo}@${info.ref}/${info.path ?? ""}`,
       "",
@@ -172,6 +190,22 @@ export class GitHubHandler implements FetchHandler {
       signal,
       truncated,
     );
+  }
+
+  private async apiJson(
+    endpoint: string,
+    signal?: AbortSignal,
+    optional = false,
+  ): Promise<unknown> {
+    try {
+      return await this.request(endpoint, signal);
+    } catch (error) {
+      if (error instanceof GhRequestError && error.status === 404) {
+        if (optional) return undefined;
+        unsupported();
+      }
+      throw error;
+    }
   }
 
   private async formatFile(

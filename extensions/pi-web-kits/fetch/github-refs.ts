@@ -1,23 +1,29 @@
+import { GhRequestError } from "../shared/gh-request.ts";
 import { assertNotCancelled } from "./errors.ts";
-import type { GhClient } from "./gh-client.ts";
 import type { GitHubUrlInfo } from "./github-url.ts";
 
 /** Resolve only a unique ref/path split; never silently choose a shorter ref. */
 export async function resolveGitHubRef(
   info: GitHubUrlInfo,
-  gh: Pick<GhClient, "apiJson">,
+  request: (endpoint: string, signal?: AbortSignal) => Promise<unknown>,
   signal?: AbortSignal,
 ): Promise<GitHubUrlInfo | null> {
   const segments = info.unresolvedSegments;
   if (!segments) return info;
   const names = new Set<string>();
   for (const namespace of ["heads", "tags"]) {
-    const result = await gh.apiJson(
-      `repos/${info.owner}/${info.repo}/git/matching-refs/${namespace}/${encodeURIComponent(segments[0] as string)}`,
-      signal,
-    );
-    if (!result || !Array.isArray(result.value)) return null;
-    for (const entry of result.value) {
+    let result: unknown;
+    try {
+      result = await request(
+        `repos/${info.owner}/${info.repo}/git/matching-refs/${namespace}/${encodeURIComponent(segments[0] as string)}`,
+        signal,
+      );
+    } catch (error) {
+      if (error instanceof GhRequestError && error.status === 404) return null;
+      throw error;
+    }
+    if (!Array.isArray(result)) return null;
+    for (const entry of result) {
       if (
         !entry ||
         typeof entry !== "object" ||

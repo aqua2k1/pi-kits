@@ -2,55 +2,32 @@ import assert from "node:assert/strict";
 import { readFile, rm } from "node:fs/promises";
 import { dirname } from "node:path";
 import { test } from "node:test";
+import { GhRequestError, type ghRequest } from "../shared/gh-request.ts";
 import { MAX_FETCH_CONTENT_BYTES } from "../shared/limits.ts";
 import { WebFetchError } from "./errors.ts";
 import { buildFetchOutput } from "./format.ts";
 import { GitHubHandler } from "./github.ts";
-import type { CommandResult, CommandRunner } from "./types.ts";
-
-function result(stdout = ""): CommandResult {
-  return {
-    code: 0,
-    signal: null,
-    stdout,
-    stderr: "",
-    notFound: false,
-    timedOut: false,
-    aborted: false,
-    stdoutTruncated: false,
-    stderrTruncated: false,
-  };
-}
 
 function readmeHandler(readme: string, stdoutTruncated = false) {
   const endpoints: string[] = [];
-  const command: CommandRunner = {
-    async run(name, args) {
-      assert.equal(name, "gh");
-      assert.equal(args[0], "api");
-      const endpoint = String(args.at(-1));
-      endpoints.push(endpoint);
-      if (endpoint === "repos/acme/project") {
-        return result(JSON.stringify({ default_branch: "main" }));
-      }
-      assert.equal(endpoint, "repos/acme/project/readme?ref=main");
-      return {
-        ...result(
-          JSON.stringify({
-            path: "README.txt",
-            encoding: "base64",
-            content: Buffer.from(readme).toString("base64"),
-          }),
-        ),
-        stdoutTruncated,
-      };
-    },
+  const request: typeof ghRequest = async (endpoint) => {
+    endpoints.push(endpoint);
+    if (endpoint === "repos/acme/project") {
+      return { default_branch: "main" };
+    }
+    assert.equal(endpoint, "repos/acme/project/readme?ref=main");
+    if (stdoutTruncated) throw new GhRequestError("invalid-response");
+    return {
+      path: "README.txt",
+      encoding: "base64",
+      content: Buffer.from(readme).toString("base64"),
+    };
   };
   return {
     handler: new GitHubHandler({
       config: { enabled: true },
       apiTimeoutMs: 1_000,
-      runtime: { command },
+      runtime: { ghRequest: request },
     }),
     endpoints,
   };
@@ -84,8 +61,8 @@ test("API root README is not independently limited to 8 KiB and never requests a
 });
 
 test("API root README uses the overall saved-content limit and reports truncation", async () => {
-  // The injected runner bypasses the smaller command-output budget to isolate
-  // the saved-content boundary. Real oversized API responses are rejected below.
+  // The injected request bypasses the smaller command-output budget to isolate
+  // the saved-content boundary. Transport tests cover oversized API responses.
   const readme = `${"x".repeat(MAX_FETCH_CONTENT_BYTES)}OMITTED-END-MARKER`;
   const { handler } = readmeHandler(readme);
   const response = await handler.fetch(request);

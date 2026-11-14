@@ -1,3 +1,4 @@
+import { GhRequestError } from "../shared/gh-request.ts";
 import { RequestError } from "../shared/request.ts";
 
 export const WEB_FETCH_ERROR_CODES = [
@@ -98,6 +99,14 @@ export function assertNotCancelled(signal?: AbortSignal): void {
 }
 
 export function toWebFetchError(error: unknown): WebFetchError {
+  if (error instanceof GhRequestError) {
+    if (error.code === "status")
+      return errorFromStatus(error.status ?? 0, "github-gh");
+    return new WebFetchError(error.code, errorMessageForCode(error.code), {
+      source: "github-gh",
+      status: error.status,
+    });
+  }
   if (error instanceof RequestError) {
     if (error.code === "status")
       return errorFromStatus(error.status ?? 0, "native-http");

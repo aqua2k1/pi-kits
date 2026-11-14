@@ -41,7 +41,7 @@ flowchart LR
 | `fetch/formatters/index.ts`、`fetch/formatters/prettier-worker.mjs` | 按 MIME（媒体类型）／文件名选择格式化器及独立工作线程 |
 | `fetch/github-url.ts`、`fetch/github-refs.ts` | GitHub URL 和引用／路径边界解析 |
 | `fetch/github.ts` | 只读 API 编排与仓库内容生成 |
-| `fetch/gh-client.ts`、`fetch/command.ts` | GitHub 命令参数与有界子进程执行 |
+| `shared/gh-request.ts` | 只读 gh API 请求、有界子进程执行与传输错误 |
 | `fetch/spool.ts`、`fetch/format.ts`、`fetch/errors.ts` | 临时存储、公开元数据与抓取分类错误 |
 
 ## 数据流
@@ -122,7 +122,8 @@ sequenceDiagram
 - `fetch/spool.ts` 串行写入并在写前预留容量，最终化后拒绝重复保存，保证并发写入与短写处理仍满足存储边界；`fetch/spool.test.ts` 覆盖状态和容量竞争。
 - GitHub 引用解析只接受唯一分支／标签划分，避免把含 `/` 的引用误当目录；`fetch/github-refs.test.ts` 和 `fetch/github-url.test.ts` 覆盖歧义与显式编码。
 - GitHub 处理器无状态且不使用处理器缓存，直接调用 `gh api`，不进行 `--version` 探测或自动克隆；根仅获取描述、默认分支和 README，目录通过 contents API 非递归读取，避免隐式仓库副本及多余请求。
-- `fetch/gh-client.ts` 固定 GitHub 主机并以参数数组调用 `gh api`，`fetch/command.ts` 关闭 shell，避免命令解析改变主机或参数含义；相关客户端与进程测试覆盖参数和终止流程。
+- `shared/gh-request.ts` 校验相对端点、固定 GET 与 github.com 并关闭 shell，避免绝对 URL 或命令参数绕过只读主机边界；`shared/gh-request.test.ts` 覆盖参数、有界输出、取消、超时与进程组 TERM→KILL 清理。
+- gh 传输只返回 JSON 值并抛出脱敏的 `GhRequestError`；`fetch/github.ts` 提取仓库元数据，根 README 的 404 保留概览，其余资源的 404 拒绝抓取，引用发现的 404 返回未解析，避免传输层依赖抓取策略。
 - 工具与诊断边界重建分类错误消息，避免上游正文、凭据和原始子进程诊断进入返回值；依据见两份 `errors.ts` 及 `commands.test.ts`、`index.test.ts`。
 
 ## 测试
@@ -142,10 +143,10 @@ npm run typecheck --workspace=pi-web-kits
 | `shared/{request,url}.test.ts`、`search/results.test.ts` | HTTP JSON／文件流边界、截止时间、取消、重定向、清理、过滤和脱敏 |
 | `search/providers/codex/{auth,provider}.test.ts` | OAuth、固定端点、请求结构与取消 |
 | `search/providers/searxng/{provider,redirect}.test.ts` | 地址配置、搜索参数及真实 HTTP 重定向 |
-| `fetch/{command,content,document,errors,router,spool}.test.ts` | 进程、解码、抓取分类、传输、处理器隔离及存储状态 |
+| `fetch/{content,document,errors,router,spool}.test.ts` | 解码、抓取分类、传输、处理器隔离及存储状态 |
 | `fetch/formatters.test.ts`、`fetch/github-formatters.test.ts` | 格式选择、工作线程、取消与 GitHub 保存视图 |
 | `fetch/github.test.ts` | 只读 API、取消与错误映射 |
-| `fetch/{gh-client,github-readme,github-refs,github-url}.test.ts` | 命令、README 边界及引用解析 |
+| `shared/gh-request.test.ts`、`fetch/{github-readme,github-refs,github-url}.test.ts` | gh 传输、进程清理、README 边界及引用解析 |
 | `fetch/read-integration.test.ts` | 本地 HTTP 与 Pi `read` 的实际分页；`PI_KITS_LIVE_FETCH=1` 启用外网用例 |
 | `fetch/model-read.test.ts` | `PI_KITS_MODEL_READ=1` 启用真实模型会话，检查完整审查与定点查询 |
 

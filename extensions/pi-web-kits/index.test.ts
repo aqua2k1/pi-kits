@@ -14,7 +14,7 @@ import { searchWeb } from "./composition.ts";
 import { resolveFetchConfig, resolveSearchConfig } from "./config.ts";
 import { WebFetchError } from "./fetch/errors.ts";
 import { normalizeFetchRequest } from "./fetch/router.ts";
-import type { CommandResult, FetchResponse } from "./fetch/types.ts";
+import type { FetchResponse } from "./fetch/types.ts";
 import webToolsExtension, {
   registerWebFetchTool,
   registerWebSearchTool,
@@ -695,35 +695,19 @@ for (const contentType of ["text/html", "application/xhtml+xml"]) {
 }
 
 test("registered fetch machine data matches real GitHub API formatted output", async () => {
-  const commandResult = (stdout = ""): CommandResult => ({
-    code: 0,
-    signal: null,
-    stdout,
-    stderr: "",
-    notFound: false,
-    timedOut: false,
-    aborted: false,
-    stdoutTruncated: false,
-    stderrTruncated: false,
-  });
   const tool = captureFetch({
     fetchConfig: resolveFetchConfig({ github: { enabled: true } }),
     fetchRuntime: {
-      command: {
-        async run(_commandName, args) {
-          assert.equal(args[0], "api");
-          assert.equal(
-            args.at(-1),
-            "repos/acme/project/contents/README.md?ref=main",
-          );
-          return commandResult(
-            JSON.stringify({
-              type: "file",
-              encoding: "base64",
-              content: Buffer.from("repository text").toString("base64"),
-            }),
-          );
-        },
+      async ghRequest(endpoint) {
+        assert.equal(
+          endpoint,
+          "repos/acme/project/contents/README.md?ref=main",
+        );
+        return {
+          type: "file",
+          encoding: "base64",
+          content: Buffer.from("repository text").toString("base64"),
+        };
       },
       fetch: async () => assert.fail("GitHub must not use HTTP here"),
     },

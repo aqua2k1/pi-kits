@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { readFile, rm, stat } from "node:fs/promises";
 import { test } from "node:test";
 import { resolveConfig } from "../config.ts";
+import { GhRequestError } from "../shared/gh-request.ts";
 import { TEMP_SPOOL_TTL_MS } from "../shared/limits.ts";
 import { WebFetchError } from "./errors.ts";
 import { fetchWeb, normalizeFetchRequest } from "./router.ts";
@@ -60,20 +61,8 @@ test("GitHub API failures never fall back to native HTTP", async () => {
       { url: "https://github.com/acme/project" },
       resolveConfig({}, {}).fetch,
       {
-        command: {
-          async run() {
-            return {
-              code: null,
-              signal: null,
-              stdout: "",
-              stderr: "",
-              notFound: true,
-              timedOut: false,
-              aborted: false,
-              stdoutTruncated: false,
-              stderrTruncated: false,
-            };
-          },
+        async ghRequest() {
+          throw new GhRequestError("tool-unavailable");
         },
         fetch: async () => {
           httpCalls++;

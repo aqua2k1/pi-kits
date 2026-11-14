@@ -3,23 +3,9 @@ import { readFile, rm } from "node:fs/promises";
 import { dirname } from "node:path";
 import { test } from "node:test";
 import { resolveFetchConfig } from "../config.ts";
+import { GhRequestError } from "../shared/gh-request.ts";
 import { MAX_GITHUB_TREE_ENTRIES } from "../shared/limits.ts";
 import { GitHubHandler } from "./github.ts";
-import type { CommandResult } from "./types.ts";
-
-function result(value: unknown): CommandResult {
-  return {
-    code: 0,
-    signal: null,
-    stdout: JSON.stringify(value),
-    stderr: "",
-    notFound: false,
-    timedOut: false,
-    aborted: false,
-    stdoutTruncated: false,
-    stderrTruncated: false,
-  };
-}
 
 function setup(respond: (endpoint: string) => unknown, enabled = true) {
   const calls: string[] = [];
@@ -28,26 +14,70 @@ function setup(respond: (endpoint: string) => unknown, enabled = true) {
     apiTimeoutMs: 5000,
     runtime: {
       now: () => 0,
-      command: {
-        async run(name, args) {
-          assert.equal(name, "gh");
-          assert.deepEqual(args.slice(0, 3), [
-            "api",
-            "--hostname",
-            "github.com",
-          ]);
-          const endpoint = args[3] as string;
-          calls.push(endpoint);
-          if (endpoint.includes("matching-refs/heads/"))
-            return result([{ ref: "refs/heads/main" }]);
-          if (endpoint.includes("matching-refs/tags/")) return result([]);
-          return result(respond(endpoint));
-        },
+      async ghRequest(endpoint) {
+        calls.push(endpoint);
+        if (endpoint.includes("matching-refs/heads/"))
+          return [{ ref: "refs/heads/main" }];
+        if (endpoint.includes("matching-refs/tags/")) return [];
+        return respond(endpoint);
       },
     },
   });
   return { handler, calls };
 }
+
+for (const value of [null, [], false, "metadata"]) {
+  test(`malformed repository metadata is rejected: ${JSON.stringify(value)}`, async () => {
+    const { handler } = setup(() => value);
+    await assert.rejects(
+      handler.fetch({ url: new URL("https://github.com/acme/project") }),
+      { code: "invalid-response" },
+    );
+  });
+}
+
+for (const suffix of ["", "/blob/main/file.txt", "/tree/main/src"]) {
+  test(`missing GitHub resource rejects without fallback: ${suffix}`, async () => {
+    const { handler } = setup(() => {
+      throw new GhRequestError("status", 404);
+    });
+    await assert.rejects(
+      handler.fetch({
+        url: new URL(`https://github.com/acme/project${suffix}`),
+      }),
+      { code: "unsupported" },
+    );
+  });
+}
+
+for (const [error, code] of [
+  [new GhRequestError("status", 403), "auth"],
+  [new GhRequestError("status", 500), "network"],
+  [new GhRequestError("timeout"), "timeout"],
+  [new GhRequestError("cancelled"), "cancelled"],
+  [new GhRequestError("rate-limit", 403), "rate-limit"],
+] as const) {
+  test(`root README operational ${code} failure is not ignored`, async () => {
+    const { handler } = setup((endpoint) => {
+      if (endpoint === "repos/acme/project") return { default_branch: "main" };
+      throw error;
+    });
+    await assert.rejects(
+      handler.fetch({ url: new URL("https://github.com/acme/project") }),
+      { code },
+    );
+  });
+}
+
+test("null README JSON is invalid content, not a missing resource", async () => {
+  const { handler } = setup((endpoint) =>
+    endpoint === "repos/acme/project" ? { default_branch: "main" } : null,
+  );
+  await assert.rejects(
+    handler.fetch({ url: new URL("https://github.com/acme/project") }),
+    { code: "invalid-response" },
+  );
+});
 
 async function fetched(handler: GitHubHandler, suffix: string) {
   const response = await handler.fetch({
@@ -122,12 +152,10 @@ test("missing README preserves the repository overview", async () => {
     config: { enabled: true },
     apiTimeoutMs: 5000,
     runtime: {
-      command: {
-        async run(_name, args) {
-          if (args.at(-1) === "repos/acme/project")
-            return result({ default_branch: "main", description: "No README" });
-          return { ...result({}), code: 1, stderr: "gh: Not Found (HTTP 404)" };
-        },
+      async ghRequest(endpoint) {
+        if (endpoint === "repos/acme/project")
+          return { default_branch: "main", description: "No README" };
+        throw new GhRequestError("status", 404);
       },
     },
   });

@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import { GhRequestError } from "../shared/gh-request.ts";
 import { WebFetchError } from "./errors.ts";
 import { resolveGitHubRef } from "./github-refs.ts";
 import { parseGitHubUrl } from "./github-url.ts";
@@ -13,15 +14,11 @@ function info(tail = "feature/topic/src/file.ts", type = "blob") {
 }
 
 function api(heads: string[], tags: string[] = []) {
-  return {
-    async apiJson(endpoint: string) {
-      const namespace = endpoint.includes("/heads/") ? "heads" : "tags";
-      return {
-        value: (namespace === "heads" ? heads : tags).map((name) => ({
-          ref: `refs/${namespace}/${name}`,
-        })),
-      };
-    },
+  return async (endpoint: string) => {
+    const namespace = endpoint.includes("/heads/") ? "heads" : "tags";
+    return (namespace === "heads" ? heads : tags).map((name) => ({
+      ref: `refs/${namespace}/${name}`,
+    }));
   };
 }
 
@@ -47,26 +44,20 @@ test("ambiguous, absent, incomplete or unavailable refs safely decline", async (
   );
   assert.equal(await resolveGitHubRef(info(), api(["feature/other"])), null);
   assert.equal(
-    await resolveGitHubRef(info(), {
-      async apiJson() {
-        return null;
-      },
+    await resolveGitHubRef(info(), async () => {
+      throw new GhRequestError("status", 404);
     }),
     null,
   );
   assert.equal(
-    await resolveGitHubRef(info(), {
-      async apiJson() {
-        return { value: {} };
-      },
+    await resolveGitHubRef(info(), async () => {
+      return {};
     }),
     null,
   );
   await assert.rejects(
-    resolveGitHubRef(info(), {
-      async apiJson() {
-        throw new WebFetchError("timeout", "timeout");
-      },
+    resolveGitHubRef(info(), async () => {
+      throw new WebFetchError("timeout", "timeout");
     }),
     { code: "timeout" },
   );
@@ -79,20 +70,16 @@ test("ambiguous, absent, incomplete or unavailable refs safely decline", async (
 });
 
 test("encoded slash and full SHA bypass discovery, cancellation is preserved", async () => {
-  const gh = {
-    async apiJson(): Promise<never> {
-      throw new Error("must not query");
-    },
+  const gh = async (): Promise<never> => {
+    throw new Error("must not query");
   };
   const encoded = info("feature%2Ftopic/src/file.ts");
   assert.equal(await resolveGitHubRef(encoded, gh), encoded);
   const sha = info(`${"a".repeat(40)}/src/file.ts`);
   assert.equal(await resolveGitHubRef(sha, gh), sha);
   await assert.rejects(
-    resolveGitHubRef(info(), {
-      async apiJson() {
-        throw new WebFetchError("cancelled", "cancelled");
-      },
+    resolveGitHubRef(info(), async () => {
+      throw new WebFetchError("cancelled", "cancelled");
     }),
     { code: "cancelled" },
   );
