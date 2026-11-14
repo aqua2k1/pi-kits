@@ -5,12 +5,10 @@ import { join } from "node:path";
 import { after, before, beforeEach, test } from "node:test";
 import type {
   ExtensionAPI,
-  ExtensionCommandContext,
   ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
 import open from "../extensions/pi-open/index.ts";
 import preview from "../extensions/pi-output-viewer/index.ts";
-import contextPreview from "../extensions/pi-request-viewer/index.ts";
 
 let agentDir: string;
 const originalAgentDir = process.env.PI_CODING_AGENT_DIR;
@@ -46,7 +44,6 @@ test("workspace entries keep public names without implicit sibling registration"
   const expected = [
     [open, ["open"]],
     [preview, ["output-viewer"]],
-    [contextPreview, ["request-viewer"]],
   ] as const;
   for (const [entry, names] of expected) {
     const h = host();
@@ -57,43 +54,12 @@ test("workspace entries keep public names without implicit sibling registration"
   }
 });
 
-test("request caching stays opt-in and resets at session start", async () => {
-  const h = host();
-  contextPreview(h.pi);
-  const notifications: string[] = [];
-  const ctx = {
-    mode: "tui",
-    ui: { notify: (message: string) => notifications.push(message) },
-  } as unknown as ExtensionCommandContext;
-  const command = h.commands.get("request-viewer");
-  assert.ok(command);
-  await command.handler("status", ctx);
-  assert.match(notifications.pop() ?? "", /已禁用/);
-  await command.handler("start", ctx);
-  await command.handler("status", ctx);
-  assert.match(notifications.pop() ?? "", /已启用/);
-  await h.events.get("session_start")?.({}, ctx);
-  await command.handler("status", ctx);
-  assert.match(notifications.pop() ?? "", /已禁用/);
-});
-
-test("context preview rejects RPC before interacting with a terminal", async () => {
-  const h = host();
-  contextPreview(h.pi);
-  const notifications: string[] = [];
-  await h.commands.get("request-viewer")?.handler("", {
-    mode: "rpc",
-    ui: { notify: (message: string) => notifications.push(message) },
-  } as unknown as ExtensionCommandContext);
-  assert.deepEqual(notifications, ["/request-viewer 需要交互式终端"]);
-});
-
 test("disabled workspace registers no commands, tools, shortcuts or hooks", () => {
   writeFileSync(
     join(agentDir, "pi-kits.json"),
     '{"workspace":{"enabled":false}}',
   );
-  for (const entry of [open, preview, contextPreview]) {
+  for (const entry of [open, preview]) {
     const h = host();
     entry(h.pi);
     assert.equal(h.commands.size, 0);
@@ -107,7 +73,6 @@ test("workspace feature switches disable only their own entry", () => {
   const cases = [
     [open, "open"],
     [preview, "preview"],
-    [contextPreview, "contextPreview"],
   ] as const;
   for (const [entry, feature] of cases) {
     writeFileSync(

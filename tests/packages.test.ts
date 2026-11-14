@@ -246,6 +246,7 @@ test("flat resource declarations select web-kits without legacy aliases", async 
     "stats",
     "provider-usage",
     "notify",
+    "context-preview",
     "workspace-kit",
     "usage-kit",
     "workflow-kit",

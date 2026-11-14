@@ -15,6 +15,6 @@
 
 ## 写入
 
-`updatePiKitsConfig` 读取原始配置，对修改结果重新校验，然后以原子替换方式写入，保留未修改字段。旧 `commit`、`stats`、`providerUsage` 和 `notify` 设置作为归档扩展的兼容字段保留。
+`updatePiKitsConfig` 读取原始配置，对修改结果重新校验，然后以原子替换方式写入，保留未修改字段。旧 `commit`、`stats`、`providerUsage`、`notify` 和 `contextPreview` 设置作为归档扩展的兼容字段保留。
 
 [配置示例](../../../pi-kits.example.json)和 [JSON Schema](../../../pi-kits.schema.json)位于仓库根目录。
