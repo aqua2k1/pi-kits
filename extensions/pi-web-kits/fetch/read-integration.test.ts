@@ -5,9 +5,9 @@ import { createServer } from "node:http";
 import { dirname } from "node:path";
 import { test } from "node:test";
 import { createReadTool } from "@earendil-works/pi-coding-agent";
+import { fetchDocument } from "./document.ts";
 import { buildFetchOutput } from "./format.ts";
 import { formatDocument } from "./formatters/index.ts";
-import { fetchDocument } from "./http.ts";
 
 async function verifyFetchAndRead(url: string, expected?: string) {
   const response = await fetchDocument(

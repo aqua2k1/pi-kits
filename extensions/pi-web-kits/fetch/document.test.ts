@@ -2,8 +2,8 @@ import assert from "node:assert/strict";
 import { rm, stat } from "node:fs/promises";
 import { test } from "node:test";
 import { MAX_FETCH_CONTENT_BYTES } from "../shared/limits.ts";
+import { fetchDocument } from "./document.ts";
 import { WebFetchError } from "./errors.ts";
-import { fetchDocument, withFetchDeadline } from "./http.ts";
 
 function responseFromChunks(
   chunks: readonly Uint8Array[],
@@ -35,23 +35,29 @@ async function removeResult(path: string): Promise<void> {
   });
 }
 
-test("withFetchDeadline classifies timeout and parent cancellation", async () => {
+test("fetchDocument classifies timeout and parent cancellation", async () => {
+  const url = new URL("https://example.test/hanging");
   await assert.rejects(
-    withFetchDeadline(10, undefined, async () => {
-      await new Promise<never>(() => {});
-    }),
+    fetchDocument(
+      { url },
+      {
+        timeoutMs: 10,
+        fetch: async () => new Promise<Response>(() => {}),
+      },
+    ),
     (error: unknown) =>
       error instanceof WebFetchError && error.code === "timeout",
   );
 
   const parent = new AbortController();
-  const operation = withFetchDeadline(5_000, parent.signal, async (signal) => {
-    await new Promise<never>((_resolve, reject) => {
-      signal.addEventListener("abort", () => reject(signal.reason), {
-        once: true,
-      });
-    });
-  });
+  const operation = fetchDocument(
+    { url },
+    {
+      timeoutMs: 5_000,
+      fetch: async () => new Promise<Response>(() => {}),
+    },
+    parent.signal,
+  );
   parent.abort();
   await assert.rejects(
     operation,

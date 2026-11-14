@@ -4,13 +4,14 @@ import {
   parsePiKitsFile,
   WEB_DEFAULTS,
 } from "@pi-kits/config";
-import { errorMessageForCode, WebSearchError } from "./core/errors.ts";
+import { errorMessageForCode, WebSearchError } from "./search/errors.ts";
+import { CODEX_DEFAULT_MODEL } from "./search/providers/codex/config.ts";
+import { SEARXNG_DEFAULT_URL } from "./search/providers/searxng/config.ts";
+import { isRecord } from "./search/results.ts";
 import {
   WEB_SEARCH_PROVIDER_NAMES,
   type WebSearchProviderName,
-} from "./core/types.ts";
-import { CODEX_DEFAULT_MODEL } from "./providers/codex/config.ts";
-import { SEARXNG_DEFAULT_URL } from "./providers/searxng/config.ts";
+} from "./search/types.ts";
 import {
   DEFAULT_FETCH_TIMEOUT_MS,
   DEFAULT_GITHUB_CLONE_PATH,
@@ -30,7 +31,6 @@ import {
   MIN_MAX_RESULTS,
   MIN_SEARCH_TIMEOUT_MS,
 } from "./shared/limits.ts";
-import { isRecord } from "./shared/results.ts";
 
 export interface WebSearchRouteConfig {
   provider?: string;

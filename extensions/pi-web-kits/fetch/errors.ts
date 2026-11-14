@@ -1,3 +1,5 @@
+import { RequestError } from "../shared/request.ts";
+
 export const WEB_FETCH_ERROR_CODES = [
   "invalid-config",
   "invalid-url",
@@ -96,6 +98,13 @@ export function assertNotCancelled(signal?: AbortSignal): void {
 }
 
 export function toWebFetchError(error: unknown): WebFetchError {
+  if (error instanceof RequestError) {
+    if (error.code === "status")
+      return errorFromStatus(error.status ?? 0, "native-http");
+    return new WebFetchError(error.code, errorMessageForCode(error.code), {
+      source: "native-http",
+    });
+  }
   if (error instanceof WebFetchError) {
     return new WebFetchError(error.code, errorMessageForCode(error.code), {
       status: error.status,

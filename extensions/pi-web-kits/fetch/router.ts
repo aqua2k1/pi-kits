@@ -1,9 +1,9 @@
 import { randomUUID } from "node:crypto";
 import type { ResolvedWebFetchConfig } from "../config.ts";
 import { MAX_URL_LENGTH } from "../shared/limits.ts";
+import { fetchDocument } from "./document.ts";
 import { assertNotCancelled, WebFetchError } from "./errors.ts";
 import { GitHubHandler } from "./github.ts";
-import { fetchDocument } from "./http.ts";
 import type { FetchRequest, FetchResponse, FetchRuntime } from "./types.ts";
 
 export function createFetchRuntime(): FetchRuntime {

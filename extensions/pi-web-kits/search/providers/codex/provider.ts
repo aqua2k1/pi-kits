@@ -1,22 +1,25 @@
 import { randomUUID } from "node:crypto";
-import { WebSearchError } from "../../core/errors.ts";
-import type {
-  SearchProvider,
-  SearchRequest,
-  SearchResult,
-} from "../../core/types.ts";
+import {
+  DEFAULT_SEARCH_TIMEOUT_MS,
+  MAX_RESPONSE_BYTES,
+} from "../../../shared/limits.ts";
 import {
   type FetchLike,
-  fetchJson,
-  validateTimeout,
-  withSearchDeadline,
-} from "../../shared/http.ts";
-import { DEFAULT_SEARCH_TIMEOUT_MS } from "../../shared/limits.ts";
+  request as httpRequest,
+  withRequestDeadline,
+} from "../../../shared/request.ts";
+import { toWebSearchError, WebSearchError } from "../../errors.ts";
 import {
   isRecord,
   normalizeSearchResponse,
   stringField,
-} from "../../shared/results.ts";
+} from "../../results.ts";
+import type {
+  SearchProvider,
+  SearchRequest,
+  SearchResult,
+} from "../../types.ts";
+import { validateTimeout } from "../../validation.ts";
 import { buildCodexHeaders, type CodexRequestAuth } from "./auth.ts";
 import { normalizeCodexModel } from "./config.ts";
 
@@ -88,46 +91,47 @@ export function createCodexProvider(
   const timeoutMs = validateTimeout(
     options.timeoutMs ?? DEFAULT_SEARCH_TIMEOUT_MS,
   );
-  const fetcher = options.fetch ?? globalThis.fetch;
   const requestId = options.requestId ?? randomUUID;
   return {
     async search(request, signal) {
-      return withSearchDeadline(
-        PROVIDER,
-        timeoutMs,
-        signal,
-        async (deadline) => {
-          const auth = await options.resolveAuth(deadline);
-          // Pi's provider auth facade currently cannot cancel refresh. Never send a late request.
-          deadline.throwIfAborted();
-          const raw = await fetchJson(
-            fetcher,
-            PROVIDER,
-            CODEX_ALPHA_SEARCH_URL,
-            {
+      try {
+        return await withRequestDeadline(
+          timeoutMs,
+          signal,
+          async (deadline) => {
+            const auth = await options.resolveAuth(deadline);
+            // Pi's provider auth facade currently cannot cancel refresh. Never send a late request.
+            deadline.throwIfAborted();
+            const raw = await httpRequest(CODEX_ALPHA_SEARCH_URL, {
               method: "POST",
               headers: buildCodexHeaders(auth),
               body: JSON.stringify(
                 buildCodexSearchPayload(request, model, requestId()),
               ),
+              response: "json",
+              redirect: "error",
+              maxBytes: MAX_RESPONSE_BYTES,
               signal: deadline,
-            },
-          );
-          if (!isRecord(raw) || typeof raw.output !== "string") {
-            throw new WebSearchError(
-              "invalid-response",
-              "Codex search returned an invalid response.",
-              { provider: PROVIDER },
+              fetch: options.fetch,
+            });
+            if (!isRecord(raw) || typeof raw.output !== "string") {
+              throw new WebSearchError(
+                "invalid-response",
+                "Codex search returned an invalid response.",
+                { provider: PROVIDER },
+              );
+            }
+            return normalizeSearchResponse(
+              request,
+              parseResults(raw),
+              raw.output,
+              [auth.accessToken, auth.accountId],
             );
-          }
-          return normalizeSearchResponse(
-            request,
-            parseResults(raw),
-            raw.output,
-            [auth.accessToken, auth.accountId],
-          );
-        },
-      );
+          },
+        );
+      } catch (error) {
+        throw toWebSearchError(error, PROVIDER);
+      }
     },
   };
 }

@@ -1,3 +1,4 @@
+import { RequestError } from "../shared/request.ts";
 import {
   WEB_SEARCH_PROVIDER_NAMES,
   type WebSearchProviderName,
@@ -123,6 +124,11 @@ export function toWebSearchError(
     code =
       WEB_SEARCH_ERROR_CODES.find((code) => code === classified.code) ??
       "network";
+  } else if (error instanceof RequestError) {
+    code =
+      error.code === "status"
+        ? errorCodeForStatus(error.status ?? 0)
+        : error.code;
   } else if (error instanceof Error) {
     if (error.name === "AbortError") code = "cancelled";
     else if (/timeout|timed out/i.test(error.name + error.message))
@@ -144,9 +150,12 @@ export function toWebSearchError(
     errorMessageForCode(code, safeProvider) + tried,
     {
       provider: safeProvider,
-      status: Number.isInteger(classified?.status)
-        ? classified?.status
-        : undefined,
+      status:
+        error instanceof RequestError
+          ? error.status
+          : Number.isInteger(classified?.status)
+            ? classified?.status
+            : undefined,
       attempts,
     },
   );

@@ -1,13 +1,12 @@
 import { stripVTControlCharacters } from "node:util";
-import type {
-  SearchRequest,
-  SearchResponse,
-  SearchResult,
-} from "../core/types.ts";
+import {
+  decodeUrlComponent as decode,
+  isSensitivePathName as isSensitiveName,
+  isSensitiveQueryName,
+} from "../shared/url.ts";
+import type { SearchRequest, SearchResponse, SearchResult } from "./types.ts";
 
 const REDACTED = "[redacted]";
-const SENSITIVE_NAME =
-  /^(?:access[_-]?token|refresh[_-]?token|api[_-]?key|token|key|secret|password|credential|authorization|auth|signature|hmac|sig|policy|x-amz-[\w-]+|x-goog-[\w-]+)$/i;
 const URL_IN_TEXT =
   /https?(?::\/\/|%(?:25)*3a%(?:25)*2f%(?:25)*2f)[^\s<>"'`)\]]+/gi;
 const MAX_ENCODING_DEPTH = 4;
@@ -27,19 +26,6 @@ export function stringField(
       return candidate.trim();
   }
   return "";
-}
-
-function decode(value: string): string {
-  for (let i = 0; i < MAX_ENCODING_DEPTH; i++) {
-    try {
-      const decoded = decodeURIComponent(value);
-      if (decoded === value) break;
-      value = decoded;
-    } catch {
-      break;
-    }
-  }
-  return value;
 }
 
 /** Request-local only: exact credentials first, token patterns as defense in depth. */
@@ -85,22 +71,6 @@ export function createRedactor(
         `$1${REDACTED}`,
       );
   };
-}
-
-/** Shared URL parameter/path classification, including repeatedly encoded names. */
-function isSensitiveName(value: string): boolean {
-  return SENSITIVE_NAME.test(decode(value));
-}
-
-/** Shared query policy; also covers provider-specific credential parameter names. */
-export function isSensitiveQueryName(value: string): boolean {
-  const name = decode(value);
-  return (
-    SENSITIVE_NAME.test(name) ||
-    /(?:token|key|secret|password|credential|authorization|signature)/i.test(
-      name,
-    )
-  );
 }
 
 function safeUrl(

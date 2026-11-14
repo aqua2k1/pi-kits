@@ -1,21 +1,23 @@
-import { WebSearchError } from "../../core/errors.ts";
-import type {
-  SearchProvider,
-  SearchRequest,
-  SearchResult,
-} from "../../core/types.ts";
+import {
+  DEFAULT_SEARCH_TIMEOUT_MS,
+  MAX_RESPONSE_BYTES,
+} from "../../../shared/limits.ts";
 import {
   type FetchLike,
-  fetchJson,
-  validateTimeout,
-  withSearchDeadline,
-} from "../../shared/http.ts";
-import { DEFAULT_SEARCH_TIMEOUT_MS } from "../../shared/limits.ts";
+  request as httpRequest,
+} from "../../../shared/request.ts";
+import { toWebSearchError, WebSearchError } from "../../errors.ts";
 import {
   isRecord,
   normalizeSearchResponse,
   stringField,
-} from "../../shared/results.ts";
+} from "../../results.ts";
+import type {
+  SearchProvider,
+  SearchRequest,
+  SearchResult,
+} from "../../types.ts";
+import { validateTimeout } from "../../validation.ts";
 import { normalizeSearxngBaseUrl, validateSearxngAuth } from "./config.ts";
 
 export interface SearxngProviderOptions {
@@ -74,34 +76,30 @@ export function createSearxngProvider(
   const timeoutMs = validateTimeout(
     options.timeoutMs ?? DEFAULT_SEARCH_TIMEOUT_MS,
   );
-  const fetcher = options.fetch ?? globalThis.fetch;
   return {
     async search(request, signal) {
-      return withSearchDeadline(
-        "searxng",
-        timeoutMs,
-        signal,
-        async (deadline) => {
-          const headers = new Headers({ Accept: "application/json" });
-          if (apiKey) headers.set("Authorization", `Bearer ${apiKey}`);
-          const raw = await fetchJson(
-            fetcher,
-            "searxng",
-            searchUrl(baseUrl, request),
-            {
-              method: "GET",
-              headers,
-              signal: deadline,
-            },
-          );
-          return normalizeSearchResponse(
-            request,
-            parseResults(raw),
-            undefined,
-            apiKey ? [apiKey] : [],
-          );
-        },
-      );
+      try {
+        const headers = new Headers({ Accept: "application/json" });
+        if (apiKey) headers.set("Authorization", `Bearer ${apiKey}`);
+        const raw = await httpRequest(searchUrl(baseUrl, request), {
+          method: "GET",
+          headers,
+          response: "json",
+          redirect: "error",
+          maxBytes: MAX_RESPONSE_BYTES,
+          timeoutMs,
+          signal,
+          fetch: options.fetch,
+        });
+        return normalizeSearchResponse(
+          request,
+          parseResults(raw),
+          undefined,
+          apiKey ? [apiKey] : [],
+        );
+      } catch (error) {
+        throw toWebSearchError(error, "searxng");
+      }
     },
   };
 }

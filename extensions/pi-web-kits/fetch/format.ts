@@ -1,6 +1,6 @@
 import type { FetchDetails, FetchMachineOutput } from "../schema.ts";
 import { MAX_FETCH_OUTPUT_BYTES } from "../shared/limits.ts";
-import { isSensitiveQueryName } from "../shared/results.ts";
+import { isSensitiveQueryName } from "../shared/url.ts";
 import { WebFetchError } from "./errors.ts";
 import type { FetchResponse } from "./types.ts";
 

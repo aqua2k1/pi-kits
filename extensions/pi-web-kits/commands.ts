@@ -13,12 +13,12 @@ import {
   resolveConfig,
   type WebToolsConfigFileSnapshot,
 } from "./config.ts";
-import { errorMessageForCode, toWebSearchError } from "./core/errors.ts";
-import { resolveFallbackProvider } from "./core/routing.ts";
+import { errorMessageForCode, toWebSearchError } from "./search/errors.ts";
+import { resolveFallbackProvider } from "./search/routing.ts";
 import {
   WEB_SEARCH_PROVIDER_NAMES,
   type WebSearchProviderName,
-} from "./core/types.ts";
+} from "./search/types.ts";
 
 const PROVIDER_LABELS: Record<WebSearchProviderName, string> = {
   searxng: "SearXNG",

@@ -1,7 +1,7 @@
 import type { ModelRegistry } from "@earendil-works/pi-coding-agent";
-import { assertNotCancelled, WebSearchError } from "../../core/errors.ts";
-import { isSafeHeaderValue } from "../../shared/http.ts";
-import { isRecord } from "../../shared/results.ts";
+import { assertNotCancelled, WebSearchError } from "../../errors.ts";
+import { isRecord } from "../../results.ts";
+import { isSafeHeaderValue } from "../../validation.ts";
 
 const CODEX_PROVIDER_NAME = "openai-codex";
 const CODEX_ACCOUNT_CLAIM = "https://api.openai.com/auth";

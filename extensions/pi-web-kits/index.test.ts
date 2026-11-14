@@ -13,7 +13,6 @@ import type {
 import { Value } from "typebox/value";
 import { searchWeb } from "./composition.ts";
 import { resolveFetchConfig, resolveSearchConfig } from "./config.ts";
-import { WebSearchError } from "./core/errors.ts";
 import { WebFetchError } from "./fetch/errors.ts";
 import { normalizeFetchRequest } from "./fetch/router.ts";
 import type { CommandResult, FetchResponse } from "./fetch/types.ts";
@@ -21,8 +20,8 @@ import webToolsExtension, {
   registerWebFetchTool,
   registerWebSearchTool,
 } from "./index.ts";
-
 import { FetchOutputSchema, SearchOutputSchema } from "./schema.ts";
+import { WebSearchError } from "./search/errors.ts";
 import { MAX_OUTPUT_BYTES } from "./shared/limits.ts";
 
 const key = "fixture-api-42/Plus+=value!";

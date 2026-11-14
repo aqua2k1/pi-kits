@@ -2,17 +2,17 @@ import type {
   ResolvedWebFetchConfig,
   ResolvedWebSearchConfig,
 } from "./config.ts";
-import { WebSearchRouter } from "./core/router.ts";
-import type { RoutedSearchResponse, SearchRequest } from "./core/types.ts";
 import { fetchWeb as routeFetchWeb } from "./fetch/router.ts";
 import type { FetchResponse, FetchRuntime } from "./fetch/types.ts";
 import {
   type CodexModelRegistry,
   resolveCodexAuth,
-} from "./providers/codex/auth.ts";
-import { createCodexProvider } from "./providers/codex/provider.ts";
-import { createSearxngProvider } from "./providers/searxng/provider.ts";
-import type { FetchLike } from "./shared/http.ts";
+} from "./search/providers/codex/auth.ts";
+import { createCodexProvider } from "./search/providers/codex/provider.ts";
+import { createSearxngProvider } from "./search/providers/searxng/provider.ts";
+import { WebSearchRouter } from "./search/router.ts";
+import type { RoutedSearchResponse, SearchRequest } from "./search/types.ts";
+import type { FetchLike } from "./shared/request.ts";
 
 export interface SearchRuntime {
   modelRegistry?: CodexModelRegistry;

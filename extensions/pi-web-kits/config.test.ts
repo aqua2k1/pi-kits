@@ -12,9 +12,9 @@ import {
   resolveFetchConfig,
   resolveSearchConfig,
 } from "./config.ts";
-import { WebSearchError } from "./core/errors.ts";
-import { CODEX_DEFAULT_MODEL } from "./providers/codex/config.ts";
-import { SEARXNG_DEFAULT_URL } from "./providers/searxng/config.ts";
+import { WebSearchError } from "./search/errors.ts";
+import { CODEX_DEFAULT_MODEL } from "./search/providers/codex/config.ts";
+import { SEARXNG_DEFAULT_URL } from "./search/providers/searxng/config.ts";
 import {
   DEFAULT_FETCH_TIMEOUT_MS,
   DEFAULT_GITHUB_CLONE_TIMEOUT_SECONDS,

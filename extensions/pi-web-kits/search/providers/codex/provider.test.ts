@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { WebSearchError } from "../../core/errors.ts";
+import { WebSearchError } from "../../errors.ts";
 import {
   buildCodexSearchPayload,
   CODEX_ALPHA_SEARCH_URL,

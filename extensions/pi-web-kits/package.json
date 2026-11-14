@@ -14,7 +14,7 @@
     ]
   },
   "scripts": {
-    "test": "node --import tsx --test '*.test.ts' 'core/*.test.ts' 'shared/*.test.ts' 'fetch/*.test.ts' 'providers/*/*.test.ts'",
+    "test": "node --import tsx --test '*.test.ts' 'search/*.test.ts' 'shared/*.test.ts' 'fetch/*.test.ts' 'search/providers/*/*.test.ts'",
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {
@@ -31,9 +31,8 @@
   },
   "files": [
     "*.ts",
-    "core",
+    "search",
     "fetch",
-    "providers",
     "shared",
     "docs",
     "README.md"

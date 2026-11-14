@@ -10,13 +10,11 @@ import {
   readConfigSnapshot,
   resolveConfig,
 } from "./config.ts";
-import { toWebSearchError } from "./core/errors.ts";
 import { toWebFetchError } from "./fetch/errors.ts";
 import { buildFetchOutput } from "./fetch/format.ts";
 import { createFetchRuntime } from "./fetch/router.ts";
 import { cleanupExpiredSpools } from "./fetch/spool.ts";
 import type { FetchRuntime } from "./fetch/types.ts";
-import { buildSearchOutput } from "./format.ts";
 import {
   renderFetchCall,
   renderFetchResult,
@@ -24,6 +22,8 @@ import {
   renderSearchResult,
 } from "./renderers.ts";
 import { FetchOutputSchema, SearchOutputSchema } from "./schema.ts";
+import { toWebSearchError } from "./search/errors.ts";
+import { buildSearchOutput } from "./search/format.ts";
 import {
   MAX_DOMAIN_COUNT,
   MAX_DOMAIN_LENGTH,

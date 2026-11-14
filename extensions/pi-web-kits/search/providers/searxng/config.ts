@@ -1,5 +1,5 @@
-import { WebSearchError } from "../../core/errors.ts";
-import { isSafeHeaderValue } from "../../shared/http.ts";
+import { WebSearchError } from "../../errors.ts";
+import { isSafeHeaderValue } from "../../validation.ts";
 
 export const SEARXNG_DEFAULT_URL = "http://localhost:8080";
 

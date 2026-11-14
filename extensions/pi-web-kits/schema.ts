@@ -1,5 +1,5 @@
 import { type Static, Type } from "typebox";
-import { WEB_SEARCH_PROVIDER_NAMES } from "./core/types.ts";
+import { WEB_SEARCH_PROVIDER_NAMES } from "./search/types.ts";
 
 // Shared by the response contracts and output schemas to avoid shape drift.
 export const SearchResultSchema = Type.Object({

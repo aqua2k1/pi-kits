@@ -1,5 +1,5 @@
 import { WEB_DEFAULTS } from "@pi-kits/config";
-import { WebSearchError } from "../../core/errors.ts";
+import { WebSearchError } from "../../errors.ts";
 
 export const CODEX_DEFAULT_MODEL = WEB_DEFAULTS.codexModel;
 

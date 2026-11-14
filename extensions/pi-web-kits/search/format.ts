@@ -1,9 +1,9 @@
-import { WebSearchError } from "./core/errors.ts";
-import type { RoutedSearchResponse } from "./core/types.ts";
-import type { SearchDetails, SearchMachineOutput } from "./schema.ts";
-import { MAX_OUTPUT_BYTES } from "./shared/limits.ts";
+import type { SearchDetails, SearchMachineOutput } from "../schema.ts";
+import { MAX_OUTPUT_BYTES } from "../shared/limits.ts";
+import { WebSearchError } from "./errors.ts";
+import type { RoutedSearchResponse } from "./types.ts";
 
-export type { SearchDetails } from "./schema.ts";
+export type { SearchDetails } from "../schema.ts";
 
 function markdownText(text: string): string {
   return text.replace(/([\\`*_[\]<>])/g, "\\$1");

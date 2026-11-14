@@ -1,6 +1,6 @@
 import type { Static } from "typebox";
 import type { FetchSourceSchema, FetchTruncationSchema } from "../schema.ts";
-import type { FetchLike } from "../shared/http.ts";
+import type { FetchLike } from "../shared/request.ts";
 
 export type FetchSource = Static<typeof FetchSourceSchema>;
 

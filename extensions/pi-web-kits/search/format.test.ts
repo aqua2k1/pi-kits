@@ -1,11 +1,11 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { Value } from "typebox/value";
-import { WebSearchError } from "./core/errors.ts";
+import { SearchDetailsSchema, SearchOutputSchema } from "../schema.ts";
+import { MAX_OUTPUT_BYTES } from "../shared/limits.ts";
+import { WebSearchError } from "./errors.ts";
 import { buildSearchOutput as buildOutput } from "./format.ts";
-import { SearchDetailsSchema, SearchOutputSchema } from "./schema.ts";
-import { MAX_OUTPUT_BYTES } from "./shared/limits.ts";
-import { normalizeSearchResponse } from "./shared/results.ts";
+import { normalizeSearchResponse } from "./results.ts";
 
 function buildSearchOutput(...args: Parameters<typeof buildOutput>) {
   const output = buildOutput(...args);

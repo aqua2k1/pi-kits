@@ -4,10 +4,27 @@ import {
   MAX_MAX_RESULTS,
   MAX_QUERY_LENGTH,
   MAX_RECENCY_DAYS,
+  MAX_SEARCH_TIMEOUT_MS,
   MIN_MAX_RESULTS,
+  MIN_SEARCH_TIMEOUT_MS,
 } from "../shared/limits.ts";
 import { WebSearchError } from "./errors.ts";
 import type { SearchRequest } from "./types.ts";
+
+export function isSafeHeaderValue(value: string, maxLength = 8_192): boolean {
+  return value.length <= maxLength && /^[\x21-\x7e]+$/.test(value);
+}
+
+export function validateTimeout(timeoutMs: number): number {
+  if (
+    !Number.isInteger(timeoutMs) ||
+    timeoutMs < MIN_SEARCH_TIMEOUT_MS ||
+    timeoutMs > MAX_SEARCH_TIMEOUT_MS
+  ) {
+    throw new WebSearchError("invalid-config", "Search timeout is invalid.");
+  }
+  return timeoutMs;
+}
 
 function normalizeDomain(raw: string): string {
   const domain = raw.trim().toLowerCase();

@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import { RequestError } from "../shared/request.ts";
 import {
   assertNotCancelled,
   errorCodeForStatus,
@@ -7,6 +8,29 @@ import {
   toWebSearchError,
   WebSearchError,
 } from "./errors.ts";
+
+test("request errors retain search status policy and transport classifications", () => {
+  for (const status of [400, 401, 403, 404, 408, 429, 500]) {
+    const error = toWebSearchError(
+      new RequestError("status", status),
+      "searxng",
+    );
+    assert.equal(error.code, errorCodeForStatus(status));
+    assert.equal(error.status, status);
+    assert.equal(error.provider, "searxng");
+  }
+  for (const code of [
+    "network",
+    "timeout",
+    "cancelled",
+    "invalid-response",
+  ] as const) {
+    assert.equal(
+      toWebSearchError(new RequestError(code), "searxng").code,
+      code,
+    );
+  }
+});
 
 test("errorCodeForStatus: classifies common provider responses", () => {
   assert.equal(errorCodeForStatus(400), "request");
