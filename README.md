@@ -20,7 +20,6 @@ pi install https://github.com/aqua2k1/pi-kits.git
 | [request-viewer](extensions/pi-request-viewer/README.md) | 查看模型请求 payload |
 | [token-meter](extensions/pi-token-meter/README.md) | 编辑器下方信息行显示最近请求的 TTFT 和 TPS |
 | [handoff](extensions/pi-handoff/README.md) | 克隆会话并生成交接摘要 |
-| [notify](extensions/pi-notify/README.md) | 任务完成桌面通知 |
 | [ask-user-question](extensions/pi-ask-user-question/README.md) | 单选、多选和自定义回答 |
 | [subagent](extensions/pi-subagent/README.md) | Pi/Codex 独立任务与原生终端视图；在 Herdr 内按环境自动启用 |
 | [web-kits](extensions/pi-web-kits/README.md) | Web 搜索、网页与 GitHub 内容获取 |
@@ -32,6 +31,8 @@ pi install https://github.com/aqua2k1/pi-kits.git
 `stats` 扩展原实现保留在 `archive/stats` 分支；主线保留旧 `stats` 配置兼容，`/stats` 不再注册。
 
 `provider-usage` 扩展原实现保留在 `archive/provider-usage` 分支；主线保留旧 `providerUsage` 配置兼容，`/usage` 不再注册。
+
+`notify` 扩展与共享通知库原实现保留在 `archive/notify` 分支；主线保留旧 `notify` 配置兼容，任务结束和问卷开始不再发送桌面通知。
 
 ## 配置
 

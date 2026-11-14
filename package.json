@@ -12,7 +12,6 @@
     "context-preview": "./extensions/pi-request-viewer/index.ts",
     "token-meter": "./extensions/pi-token-meter/index.ts",
     "handoff": "./extensions/pi-handoff/index.ts",
-    "notify": "./extensions/pi-notify/index.ts",
     "ask-user-question": "./extensions/pi-ask-user-question/index.ts",
     "subagent": "./extensions/pi-subagent/index.ts",
     "web-kits": "./extensions/pi-web-kits/index.ts"
@@ -25,7 +24,6 @@
       "./extensions/pi-request-viewer/index.ts",
       "./extensions/pi-token-meter/index.ts",
       "./extensions/pi-handoff/index.ts",
-      "./extensions/pi-notify/index.ts",
       "./extensions/pi-ask-user-question/index.ts",
       "./extensions/pi-subagent/index.ts",
       "./extensions/pi-web-kits/index.ts"

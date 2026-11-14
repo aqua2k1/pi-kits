@@ -1,6 +1,5 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { readPiKitsConfig } from "@pi-kits/config";
-import { notify } from "../../shared/notifications/index.ts";
 import {
   DOCKED_PANEL_CLOSED,
   DOCKED_PANEL_OPENED,
@@ -27,7 +26,7 @@ import {
 } from "./events.ts";
 
 export default function askUserQuestionExtension(pi: ExtensionAPI): void {
-  const { askUserQuestion, notify: notifyConfig } = readPiKitsConfig();
+  const { askUserQuestion } = readPiKitsConfig();
   if (!askUserQuestion.enabled) return;
 
   pi.registerTool({
@@ -81,9 +80,6 @@ export default function askUserQuestionExtension(pi: ExtensionAPI): void {
       let end: AskUserQuestionEndEvent = { ...start, status: "error" };
       pi.events.emit(ASK_USER_QUESTION_START, start);
       try {
-        if (ctx.mode === "tui" && notifyConfig.enabled) {
-          notify("Pi", "Waiting for your answer.");
-        }
         const panel: DockedPanelOpenedEvent = {
           panelId: "ask-user-question",
           instanceId: id,

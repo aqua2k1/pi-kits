@@ -279,7 +279,7 @@ for (const [enabled, legacy] of [
   [true, false],
   [false, false],
 ] as const) {
-  test(`TUI question notification respects notify.enabled=${enabled} (${legacy ? "legacy" : "top-level"})`, async (t) => {
+  test(`TUI questions emit hooks without desktop notifications with notify.enabled=${enabled} (${legacy ? "legacy" : "top-level"})`, async (t) => {
     const settings = { notify: { enabled } };
     const { tool, events } = capture(
       t,
@@ -294,7 +294,7 @@ for (const [enabled, legacy] of [
         async custom(factory: Parameters<ExtensionUIContext["custom"]>[0]) {
           assert.equal(events[0]?.name, ASK_USER_QUESTION_START);
           assert.equal(events.length, 1);
-          assert.equal(notifications.length, enabled ? 1 : 0);
+          assert.deepEqual(notifications, []);
           let result: unknown;
           const component = await factory(
             {
@@ -342,9 +342,7 @@ for (const [enabled, legacy] of [
         status: "cancelled",
       },
     });
-    if (enabled) {
-      assert.ok(notifications[0]?.includes("Waiting for your answer."));
-    }
+    assert.deepEqual(notifications, []);
   });
 }
 
@@ -371,9 +369,7 @@ for (const outcome of [
   "factory-gap-abort",
 ] as const) {
   test(`TUI UI hooks remain distinct from tool hooks (${outcome})`, async (t) => {
-    const { tool, events } = capture(t, {
-      workflow: { notify: { enabled: false } },
-    });
+    const { tool, events } = capture(t);
     assert.ok(tool);
     const controller = new AbortController();
     const failure = new Error("host failure");

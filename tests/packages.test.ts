@@ -245,6 +245,7 @@ test("flat resource declarations select web-kits without legacy aliases", async 
   for (const name of [
     "stats",
     "provider-usage",
+    "notify",
     "workspace-kit",
     "usage-kit",
     "workflow-kit",
