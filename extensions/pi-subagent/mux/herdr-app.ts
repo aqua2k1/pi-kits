@@ -123,6 +123,7 @@ const RPC_ERROR_CODES = new Set([
   "machine_unknown",
   "config",
   "live",
+  "conflict",
 ]);
 const LAUNCH_REJECTED_CODES = new Set([
   "invalid_params",
@@ -172,7 +173,18 @@ export class HerdrAppAdapter implements MuxAdapter {
   private readonly timeoutMs: number;
   private readonly maxOutputBytes: number;
   private readonly workers = new Map<string, Worker>();
-  private readonly views = new Set<string>();
+  private readonly views = new Map<
+    string,
+    {
+      terminal: TerminalHandle;
+      address: string;
+      space: string;
+      tab: string;
+      pending: boolean;
+      closing: boolean;
+      requestFailed: boolean;
+    }
+  >();
   private readonly closedViews = new Set<string>();
   private mutation: Promise<void> = Promise.resolve();
 
@@ -397,43 +409,248 @@ export class HerdrAppAdapter implements MuxAdapter {
     });
   }
 
-  private unsupported(operation: string): void {
-    // A notification sink must never turn a warning-only operation into failure.
+  private notify(message: string): void {
     try {
-      this.warn(
-        `Herdr app: ${operation} is unavailable for managed relative views; no window changes were made.`,
-      );
+      this.warn(`Herdr app: ${message}`);
     } catch {}
   }
 
-  async open_view(options: OpenViewOptions): Promise<ViewHandle> {
-    this.worker(options.terminal);
-    // terminal.keep targets the current focus, not the requested parent/anchor.
-    // Do not steal focus, create an unrelated pane, or pretend it was attached.
-    this.unsupported("open_view");
-    const view = { id: randomUUID() };
-    this.views.add(view.id);
-    return view;
+  private async layout(): Promise<{ value: JsonObject; version: number }> {
+    const result = await this.rpc("doc.get", { name: "herdr-app" });
+    if (
+      !Number.isSafeInteger(result.version) ||
+      (result.version as number) < 0
+    ) {
+      throw new HerdrAppError("invalid_response");
+    }
+    const value = result.value === null ? { spaces: [] } : object(result.value);
+    if (!Array.isArray(value.spaces))
+      throw new HerdrAppError("invalid_response");
+    return { value, version: result.version as number };
+  }
+
+  private tab(
+    value: JsonObject,
+    spaceId: string,
+    tabId: string,
+  ): JsonObject | undefined {
+    for (const entry of value.spaces as unknown[]) {
+      const space = object(entry);
+      if (space.id !== spaceId) continue;
+      if (!Array.isArray(space.tabs))
+        throw new HerdrAppError("invalid_response");
+      return space.tabs.map(object).find((tab) => tab.id === tabId);
+    }
+    return undefined;
+  }
+
+  private contains(node: JsonObject, terminal: string): boolean {
+    if (node.content && object(node.content).terminal === terminal) return true;
+    if (
+      Array.isArray(node.floating) &&
+      node.floating.some((entry) => this.contains(object(entry), terminal))
+    )
+      return true;
+    return (
+      Array.isArray(node.children) &&
+      node.children.some((entry) => this.contains(object(entry), terminal))
+    );
+  }
+
+  /** Remove only the owned terminal; preserve sibling panes and unknown fields. */
+  private without(node: JsonObject, terminal: string): JsonObject | undefined {
+    if (node.content && object(node.content).terminal === terminal) {
+      if (Array.isArray(node.floating) && node.floating.length) {
+        throw new HerdrAppError("view_layout_changed");
+      }
+      return undefined;
+    }
+    if (Array.isArray(node.floating)) {
+      node.floating = node.floating.filter(
+        (entry) => object(object(entry).content).terminal !== terminal,
+      );
+    }
+    if (Array.isArray(node.children)) {
+      node.children = node.children.flatMap((entry) => {
+        const child = this.without(object(entry), terminal);
+        return child ? [child] : [];
+      });
+      if (
+        !(node.children as unknown[]).length &&
+        !(Array.isArray(node.floating) && node.floating.length)
+      )
+        return undefined;
+      if (
+        node.type === "stack" &&
+        typeof node.active === "string" &&
+        !(node.children as JsonObject[]).some(
+          (child) => child.id === node.active,
+        )
+      ) {
+        node.active = (node.children as JsonObject[])[0]?.id ?? null;
+      }
+    }
+    return node;
+  }
+
+  open_view(options: OpenViewOptions): Promise<ViewHandle> {
+    return this.serialize(async () => {
+      const worker = this.worker(options.terminal);
+      for (const [id, attachment] of this.views) {
+        if (
+          attachment.terminal.id === options.terminal.id &&
+          attachment.requestFailed
+        ) {
+          await this.closeOwnedView({ id });
+        }
+      }
+      if ((await this.facts(worker))?.state !== "live")
+        throw new HerdrAppError("terminal_not_live");
+      const parent = await this.rpc("terminal.get", {
+        terminal: worker.parent,
+      });
+      if (address(parent.address) !== worker.parent)
+        throw new HerdrAppError("terminal_identity_changed");
+      const space = object(parent.labels)["herdr.space"];
+      if (typeof space !== "string" || !space)
+        throw new HerdrAppError("parent_space_unavailable");
+      const view = { id: randomUUID() };
+      const tab = `tb${randomUUID().replaceAll("-", "")}`;
+      // Record partial requests so destroy/retry never loses ownership.
+      this.views.set(view.id, {
+        terminal: options.terminal,
+        address: address(worker.address),
+        space,
+        tab,
+        pending: true,
+        closing: false,
+        requestFailed: true,
+      });
+      try {
+        await this.rpc("terminal.label", {
+          terminal: worker.address,
+          labels: { "herdr.space": space, "herdr.tab": tab },
+        });
+        await this.rpc("terminal.keep", {
+          terminal: worker.address,
+          keep: true,
+        });
+        const attachment = this.views.get(view.id);
+        if (attachment) attachment.requestFailed = false;
+      } catch (error) {
+        // A lost reply can still have changed labels/keep. Undo only our own
+        // request; if cleanup fails, retain it for the next open or destroy.
+        await this.closeOwnedView(view).catch(() => {});
+        throw error;
+      }
+      this.notify(
+        "Tab requested in the parent terminal's space; switch to it in your client. Attachment is asynchronous.",
+      );
+      return view;
+    });
   }
 
   async inspect_view(view: ViewHandle): Promise<{ alive: boolean }> {
-    if (!this.views.has(view.id) && !this.closedViews.has(view.id)) {
-      throw new HerdrAppError("unowned_view");
+    if (this.closedViews.has(view.id)) return { alive: false };
+    const attachment = this.views.get(view.id);
+    if (!attachment) throw new HerdrAppError("unowned_view");
+    const worker = this.workers.get(attachment.terminal.id);
+    if (!worker) return { alive: false };
+    const facts = await this.facts(worker);
+    if (!facts || facts.state !== "live") return { alive: false };
+    const labels = object(facts.labels);
+    if (
+      labels["herdr.space"] !== attachment.space ||
+      labels["herdr.tab"] !== attachment.tab
+    )
+      return { alive: false };
+    const { value } = await this.layout();
+    const tab = this.tab(value, attachment.space, attachment.tab);
+    if (tab && this.contains(object(tab.root), worker.address as string)) {
+      attachment.pending = false;
+      return { alive: true };
     }
+    // Labels/keep acknowledge a request, not a pane: do not release the worker
+    // or claim a live view before a client has published its shared layout.
+    if (attachment.pending) throw new HerdrAppError("view_change_unconfirmed");
     return { alive: false };
   }
 
   async focus_view(view: ViewHandle): Promise<void> {
-    if (!this.views.has(view.id) && !this.closedViews.has(view.id)) {
+    if (!this.views.has(view.id) && !this.closedViews.has(view.id))
       throw new HerdrAppError("unowned_view");
-    }
-    this.unsupported("focus_view");
+    this.notify(
+      "Focus is local to each client; switch to the task tab manually.",
+    );
   }
 
-  async close_view(view: ViewHandle): Promise<void> {
+  close_view(view: ViewHandle): Promise<void> {
+    return this.serialize(() => this.closeOwnedView(view));
+  }
+
+  private async closeOwnedView(view: ViewHandle): Promise<void> {
     if (this.closedViews.has(view.id)) return;
-    if (!this.views.has(view.id)) throw new HerdrAppError("unowned_view");
-    this.unsupported("close_view");
+    const attachment = this.views.get(view.id);
+    if (!attachment) throw new HerdrAppError("unowned_view");
+    const worker = this.workers.get(attachment.terminal.id);
+    const facts = worker && (await this.facts(worker));
+    if (facts) {
+      const labels = object(facts.labels);
+      const owned =
+        labels["herdr.space"] === attachment.space &&
+        labels["herdr.tab"] === attachment.tab;
+      const cleared = !labels["herdr.space"] && !labels["herdr.tab"];
+      // Never follow a placement changed by a person or another client.
+      if (!owned && !(attachment.closing && cleared)) {
+        this.views.delete(view.id);
+        this.closedViews.add(view.id);
+        return;
+      }
+      attachment.closing = true;
+      await this.rpc("terminal.label", {
+        terminal: attachment.address,
+        labels: { "herdr.space": "", "herdr.tab": "" },
+      });
+      await this.rpc("terminal.keep", {
+        terminal: attachment.address,
+        keep: false,
+      });
+    }
+    // Runtime teardown may precede this call (or a cleanup retry). The immutable
+    // address and original placement still identify our stale document entry.
+    for (let attempt = 0; ; attempt++) {
+      const { value, version } = await this.layout();
+      const tab = this.tab(value, attachment.space, attachment.tab);
+      if (!tab || !this.contains(object(tab.root), attachment.address)) break;
+      const root = this.without(object(tab.root), attachment.address);
+      if (root) tab.root = root;
+      else {
+        const space = (value.spaces as JsonObject[]).find(
+          (entry) => entry.id === attachment.space,
+        );
+        if (space)
+          space.tabs = (space.tabs as JsonObject[]).filter(
+            (entry) => entry.id !== attachment.tab,
+          );
+      }
+      try {
+        const result = await this.rpc("doc.set", {
+          name: "herdr-app",
+          version,
+          value,
+        });
+        if (!Number.isSafeInteger(result.version))
+          throw new HerdrAppError("invalid_response");
+        break;
+      } catch (error) {
+        if (
+          !(error instanceof HerdrAppError) ||
+          error.code !== "conflict" ||
+          attempt >= 2
+        )
+          throw error;
+      }
+    }
     this.views.delete(view.id);
     this.closedViews.add(view.id);
   }

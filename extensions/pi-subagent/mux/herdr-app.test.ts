@@ -45,6 +45,7 @@ interface Facts {
   labels: Record<string, string>;
   parent: string;
   state: "live" | "finished";
+  keep?: boolean;
 }
 
 function reply(result: unknown): HerdrAppRunResult {
@@ -71,6 +72,16 @@ function failure(kind = "not_found", exitCode = 1): HerdrAppRunResult {
 class FakeCore {
   calls: Call[] = [];
   terminals = new Map<string, Facts>();
+  document: {
+    spaces: {
+      id: string;
+      tabs: { id: string; root: Params; [key: string]: unknown }[];
+      [key: string]: unknown;
+    }[];
+    [key: string]: unknown;
+  } = { spaces: [] };
+  version = 1;
+  parentLabels: Record<string, string> = { "herdr.space": "spremote" };
   intercept?: (call: Call) => HerdrAppRunResult | undefined;
   after?: (call: Call, result: HerdrAppRunResult) => HerdrAppRunResult;
   private next = 1;
@@ -97,7 +108,34 @@ class FakeCore {
     return this.after?.(call, result) ?? result;
   };
 
+  publish(terminal = "t1"): void {
+    const labels = this.facts(terminal).labels;
+    let space = this.document.spaces.find(
+      (entry) => entry.id === labels["herdr.space"],
+    );
+    if (!space) {
+      space = { id: labels["herdr.space"], name: "Remote work", tabs: [] };
+      this.document.spaces.push(space);
+    }
+    space.tabs.push({
+      id: labels["herdr.tab"],
+      name: "Task",
+      root: { id: `p${terminal}`, type: "block", content: { terminal } },
+    });
+    this.version++;
+  }
+
   private execute({ method, params }: Call): HerdrAppRunResult {
+    if (method === "terminal.get" && params.terminal === "tparent")
+      return reply({ address: "tparent", labels: this.parentLabels });
+    if (method === "doc.get")
+      return reply({ value: this.document, version: this.version });
+    if (method === "doc.set") {
+      assert.equal(params.name, "herdr-app");
+      if (params.version !== this.version) return failure("conflict");
+      this.document = structuredClone(params.value) as typeof this.document;
+      return reply({ version: ++this.version });
+    }
     if (method === "terminal.run") {
       const address = `t${this.next++}`;
       this.terminals.set(address, {
@@ -118,6 +156,14 @@ class FakeCore {
     if (method === "terminal.get") return reply(terminal);
     // Destructive operations must never follow mutable names.
     assert.equal(params.terminal, terminal.address);
+    if (method === "terminal.label") {
+      Object.assign(terminal.labels, params.labels);
+      return reply({});
+    }
+    if (method === "terminal.keep") {
+      terminal.keep = params.keep as boolean;
+      return reply({});
+    }
     if (method === "terminal.kill") {
       terminal.state = "finished";
       return reply({});
@@ -612,53 +658,223 @@ test("malformed success and uncertain server errors retain late launch cleanup",
   }
 });
 
-test("unsupported relative views only warn: no RPC/window fallback, false inspection, idempotent close", async (t) => {
-  for (const throwing of [false, true]) {
-    await t.test(`throwing warning sink: ${throwing}`, async () => {
+test("HC-only tab requests use the parent space, confirm shared layout, and never focus a local app", async () => {
+  const fake = new FakeCore();
+  const warnings: string[] = [];
+  const adapter = fake.adapter({ warn: (message) => warnings.push(message) });
+  const terminal = await adapter.start(startOptions);
+  const otherTerminal = await adapter.start(startOptions);
+  const first = await adapter.open_view({ terminal, direction: "right" });
+  const second = await adapter.open_view({
+    terminal: otherTerminal,
+    direction: "down",
+    relativeTo: first,
+  });
+  assert.notEqual(first.id, second.id);
+  const a = fake.facts("t1");
+  const b = fake.facts("t2");
+  assert.equal(a.labels["herdr.space"], "spremote");
+  assert.equal(b.labels["herdr.space"], "spremote");
+  assert.notEqual(a.labels["herdr.tab"], b.labels["herdr.tab"]);
+  assert.equal(a.keep, true);
+  await assert.rejects(
+    adapter.inspect_view(first),
+    code("view_change_unconfirmed"),
+  );
+  fake.publish("t1");
+  fake.publish("t2");
+  assert.deepEqual(await adapter.inspect_view(first), { alive: true });
+  const beforeFocus = fake.calls.length;
+  await adapter.focus_view(first);
+  assert.equal(fake.calls.length, beforeFocus);
+  assert.match(warnings.at(-1) ?? "", /Focus is local/);
+  for (const view of [first, second]) {
+    await adapter.close_view(view);
+    const count = fake.calls.length;
+    await adapter.close_view(view);
+    assert.equal(fake.calls.length, count);
+    assert.deepEqual(await adapter.inspect_view(view), { alive: false });
+  }
+  assert.equal(fake.document.spaces[0].tabs.length, 0);
+  assert.equal(fake.facts().keep, false);
+  assert.equal(fake.facts().labels["herdr.space"], "");
+  assert.equal(fake.methods().includes("terminal.kill"), false);
+  assert.ok(
+    fake.calls.every(
+      (call) => call.binary === binary && call.argv.join() === "connect",
+    ),
+  );
+  const other = fake.adapter();
+  for (const view of [first, { id: "foreign" }]) {
+    await assert.rejects(other.inspect_view(view), code("unowned_view"));
+    await assert.rejects(other.focus_view(view), code("unowned_view"));
+    await assert.rejects(other.close_view(view), code("unowned_view"));
+  }
+  await adapter.destroy(terminal);
+  await adapter.destroy(otherTerminal);
+});
+
+test("pending requests can be cancelled without any client or published tab", async () => {
+  const fake = new FakeCore();
+  const adapter = fake.adapter({
+    warn: () => {
+      throw new Error(SECRET);
+    },
+  });
+  const terminal = await adapter.start(startOptions);
+  const view = await adapter.open_view({ terminal, direction: "right" });
+  await adapter.close_view(view);
+  assert.deepEqual(await adapter.inspect(terminal), { alive: true });
+  assert.equal(fake.facts().keep, false);
+  assert.equal(fake.methods().includes("doc.set"), false);
+});
+
+test("inspection and close never follow placement changed by another client", async () => {
+  const fake = new FakeCore();
+  const adapter = fake.adapter({ warn: () => {} });
+  const terminal = await adapter.start(startOptions);
+  const view = await adapter.open_view({ terminal, direction: "right" });
+  fake.publish();
+  assert.deepEqual(await adapter.inspect_view(view), { alive: true });
+  fake.facts().labels["herdr.tab"] = "tbforeign";
+  assert.deepEqual(await adapter.inspect_view(view), { alive: false });
+  fake.calls.length = 0;
+  await adapter.close_view(view);
+  assert.deepEqual(fake.methods(), ["terminal.get"]);
+  assert.equal(fake.document.spaces[0].tabs.length, 1);
+});
+
+test("close retries CAS conflicts and preserves unrelated panes and document fields", async () => {
+  const fake = new FakeCore();
+  const adapter = fake.adapter({ warn: () => {} });
+  const terminal = await adapter.start(startOptions);
+  const view = await adapter.open_view({ terminal, direction: "right" });
+  fake.publish();
+  const tab = fake.document.spaces[0].tabs[0];
+  tab.root = {
+    id: "row1",
+    type: "row",
+    children: [
+      tab.root,
+      { id: "external", type: "block", content: { terminal: "texternal" } },
+    ],
+  };
+  tab.custom = "preserved";
+  let conflict = true;
+  fake.intercept = (call) => {
+    if (call.method === "doc.set" && conflict) {
+      conflict = false;
+      fake.document.concurrent = "kept";
+      fake.version++;
+      return failure("conflict");
+    }
+  };
+  await adapter.close_view(view);
+  assert.equal(fake.document.concurrent, "kept");
+  assert.equal(fake.document.spaces[0].tabs[0].custom, "preserved");
+  assert.deepEqual(fake.document.spaces[0].tabs[0].root.children, [
+    { id: "external", type: "block", content: { terminal: "texternal" } },
+  ]);
+  assert.equal(
+    fake.calls.filter((call) => call.method === "doc.set").length,
+    2,
+  );
+});
+
+test("failed layout cleanup retains ownership after labels are cleared", async () => {
+  const fake = new FakeCore();
+  const adapter = fake.adapter({ warn: () => {} });
+  const terminal = await adapter.start(startOptions);
+  const view = await adapter.open_view({ terminal, direction: "right" });
+  fake.publish();
+  fake.intercept = (call) =>
+    call.method === "doc.set" ? failure("unavailable") : undefined;
+  await assert.rejects(adapter.close_view(view), code("unavailable"));
+  assert.equal(fake.document.spaces[0].tabs.length, 1);
+  fake.intercept = undefined;
+  await adapter.close_view(view);
+  assert.equal(fake.document.spaces[0].tabs.length, 0);
+});
+
+test("layout cleanup survives runtime destruction before close or retry", async (t) => {
+  for (const failedFirst of [false, true]) {
+    await t.test(String(failedFirst), async () => {
       const fake = new FakeCore();
-      const warnings: string[] = [];
-      const adapter = fake.adapter({
-        warn(message) {
-          warnings.push(message);
-          if (throwing) throw new Error("notification sink failed");
-        },
-      });
+      const adapter = fake.adapter({ warn: () => {} });
       const terminal = await adapter.start(startOptions);
-      const count = fake.calls.length;
-      const first = await adapter.open_view({ terminal, direction: "right" });
-      const second = await adapter.open_view({
-        terminal,
-        direction: "down",
-        relativeTo: first,
-      });
-      assert.notEqual(first.id, second.id);
-      assert.deepEqual(Object.keys(first), ["id"]);
-      for (const view of [first, second]) {
-        assert.deepEqual(await adapter.inspect_view(view), { alive: false });
-        await adapter.focus_view(view);
-        await adapter.close_view(view);
-        const warned = warnings.length;
-        await adapter.close_view(view);
-        assert.equal(warnings.length, warned);
-        assert.deepEqual(await adapter.inspect_view(view), { alive: false });
+      const view = await adapter.open_view({ terminal, direction: "right" });
+      fake.publish();
+      if (failedFirst) {
+        fake.intercept = (call) =>
+          call.method === "doc.set" ? failure("unavailable") : undefined;
+        await assert.rejects(adapter.close_view(view), code("unavailable"));
+        fake.intercept = undefined;
       }
-      assert.equal(fake.calls.length, count);
-      assert.equal(warnings.length, 6);
-      for (const warning of warnings) {
-        assert.match(warning, /unavailable/);
-        assert.match(warning, /no window changes/);
-        assert.ok(!warning.includes(SECRET));
-      }
-      const other = fake.adapter();
-      for (const view of [first, { id: "foreign" }]) {
-        await assert.rejects(other.inspect_view(view), code("unowned_view"));
-        await assert.rejects(other.focus_view(view), code("unowned_view"));
-        await assert.rejects(other.close_view(view), code("unowned_view"));
-      }
-      assert.equal(fake.calls.length, count);
       await adapter.destroy(terminal);
+      assert.equal(fake.document.spaces[0].tabs.length, 1);
+      await adapter.close_view(view);
+      assert.equal(fake.document.spaces[0].tabs.length, 0);
+      assert.deepEqual(await adapter.inspect_view(view), { alive: false });
     });
   }
+});
+
+test("lost keep reply rolls back only its placement and retry uses a fresh request", async () => {
+  const fake = new FakeCore();
+  const adapter = fake.adapter({ warn: () => {} });
+  const terminal = await adapter.start(startOptions);
+  let fail = true;
+  fake.after = (call, result) => {
+    if (call.method === "terminal.keep" && call.params.keep === true && fail) {
+      fail = false;
+      fake.publish();
+      throw new HerdrAppError("timeout");
+    }
+    return result;
+  };
+  await assert.rejects(
+    adapter.open_view({ terminal, direction: "right" }),
+    code("timeout"),
+  );
+  assert.equal(fake.facts().keep, false);
+  assert.equal(fake.facts().labels["herdr.space"], "");
+  assert.equal(fake.document.spaces[0].tabs.length, 0);
+  const view = await adapter.open_view({ terminal, direction: "right" });
+  fake.publish();
+  assert.deepEqual(await adapter.inspect_view(view), { alive: true });
+});
+
+test("malformed shared layouts do not confirm an attachment", async () => {
+  const fake = new FakeCore();
+  const adapter = fake.adapter({ warn: () => {} });
+  const terminal = await adapter.start(startOptions);
+  const view = await adapter.open_view({ terminal, direction: "right" });
+  fake.intercept = (call) =>
+    call.method === "doc.get"
+      ? reply({ version: 1, value: { spaces: "invalid" } })
+      : undefined;
+  await assert.rejects(adapter.inspect_view(view), code("invalid_response"));
+});
+
+test("missing parent placement and changed terminal ownership reject before mutations", async () => {
+  const fake = new FakeCore();
+  const adapter = fake.adapter({ warn: () => {} });
+  const terminal = await adapter.start(startOptions);
+  fake.parentLabels = {};
+  await assert.rejects(
+    adapter.open_view({ terminal, direction: "right" }),
+    code("parent_space_unavailable"),
+  );
+  assert.equal(fake.methods().includes("terminal.label"), false);
+  fake.parentLabels = { "herdr.space": "spremote" };
+  const view = await adapter.open_view({ terminal, direction: "right" });
+  fake.facts().labels[OWNER] = "foreign";
+  fake.calls.length = 0;
+  await assert.rejects(
+    adapter.close_view(view),
+    code("terminal_identity_changed"),
+  );
+  assert.deepEqual(fake.methods(), ["terminal.get"]);
 });
 
 test("invalid environment/start options and runner limits are rejected before RPC", async () => {

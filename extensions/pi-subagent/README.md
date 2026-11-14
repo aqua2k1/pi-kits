@@ -31,7 +31,7 @@ pi install ./extensions/pi-subagent
 /subagent:views
 ```
 
-旧版 Herdr 可打开相对布局视图；新版 Herdr app 的相对视图操作仅发出警告，不改变窗口。
+新版 Herdr app 通过任务机器上的 `hc` 请求在父终端工作区的新标签页中显示任务，随后在客户端手动切换；旧版 Herdr 使用相对分屏布局。关闭视图后，执行中的任务继续运行。
 
 启动时自动选择首个匹配环境：`HC_TERMINAL_ID` 非空时优先使用新版 Herdr app，否则在 `HERDR_ENV=1` 时使用旧版 Herdr；均未匹配时不注册。`subagent.enabled` 默认为 `true`，设为 `false` 可关闭扩展；修改配置后重新加载扩展。
 
