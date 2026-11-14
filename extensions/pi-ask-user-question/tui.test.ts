@@ -402,7 +402,10 @@ test("details can be scrolled with Shift arrows", async () => {
     ],
   };
   const host = testUI((component) => {
-    const initial = component.render(80);
+    const initial = component.render(100);
+    assert.ok(
+      initial.some((line) => line.includes("Tab/Shift+Tab switch question")),
+    );
     assert.ok(initial.some((line) => line.includes("First line")));
     assert.ok(initial.some((line) => line.includes("Shift+↑/↓ details")));
     assert.ok(initial.every((line) => !line.includes("⇧")));
