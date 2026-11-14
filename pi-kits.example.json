@@ -63,10 +63,7 @@
       "enabled": true,
       "timeoutMs": 15000,
       "github": {
-        "enabled": true,
-        "mode": "auto",
-        "maxRepoSizeMB": 350,
-        "cloneTimeoutSeconds": 30
+        "enabled": true
       }
     }
   }

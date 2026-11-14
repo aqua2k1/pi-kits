@@ -1,16 +1,5 @@
-import {
-  chmod,
-  mkdir,
-  mkdtemp,
-  readdir,
-  rm,
-  stat,
-  utimes,
-} from "node:fs/promises";
-import { dirname, join } from "node:path";
 import type { ResolvedGitHubFetchConfig } from "../config.ts";
 import {
-  MAX_GITHUB_SESSION_CLONES,
   MAX_GITHUB_TREE_ENTRIES,
   TEMP_SPOOL_TTL_MS,
 } from "../shared/limits.ts";
@@ -18,7 +7,6 @@ import { isBinaryFileName } from "./content.ts";
 import { assertNotCancelled, WebFetchError } from "./errors.ts";
 import { formatDocument } from "./formatters/index.ts";
 import { GhClient } from "./gh-client.ts";
-import { generateCloneContent } from "./github-content.ts";
 import { resolveGitHubRef } from "./github-refs.ts";
 import {
   encodeGitHubPath,
@@ -33,100 +21,42 @@ import type {
   FetchRuntime,
 } from "./types.ts";
 
-const CLONE_CACHE_PREFIX = "pi-web-tools-clone-";
-const CLONE_TEMP_PREFIX = ".pi-web-tools-clone-tmp-";
-const GITHUB_SOURCE = "github-gh";
-const CLONE_SOURCE = "github-clone";
-
-interface ApiTreeEntry {
-  path?: unknown;
-  type?: unknown;
-  size?: unknown;
+function record(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-interface CloneOperation {
-  readonly promise: Promise<string | null>;
-  readonly controller: AbortController;
-  waiters: number;
-  settled: boolean;
-  accepting: boolean;
-}
-
-function cacheKey(info: GitHubUrlInfo, ref?: string): string {
-  return JSON.stringify([info.owner, info.repo, ref ?? null]);
-}
-
-async function cleanupExpiredClones(
-  basePath: string,
-  now: number,
-): Promise<void> {
-  let entries: string[];
-  try {
-    entries = await readdir(basePath);
-  } catch {
-    return;
-  }
-  await Promise.all(
-    entries
-      .filter(
-        (entry) =>
-          entry.startsWith(CLONE_CACHE_PREFIX) ||
-          entry.startsWith(CLONE_TEMP_PREFIX),
-      )
-      .map(async (entry) => {
-        const path = join(basePath, entry);
-        try {
-          const info = await stat(path);
-          if (now - info.mtimeMs > TEMP_SPOOL_TTL_MS) {
-            await rm(path, { recursive: true, force: true });
-          }
-        } catch {
-          // Ignore races with another cleanup or the operating system.
-        }
-      }),
+function invalidResponse(): never {
+  throw new WebFetchError(
+    "invalid-response",
+    "The GitHub API returned invalid content.",
+    { source: "github-gh" },
   );
+}
+
+function unsupported(): never {
+  throw new WebFetchError(
+    "unsupported",
+    "The requested GitHub content is unavailable.",
+    { source: "github-gh" },
+  );
+}
+
+function decodeContent(value: Record<string, unknown>): Buffer {
+  if (
+    typeof value.content !== "string" ||
+    (value.encoding !== undefined && value.encoding !== "base64")
+  )
+    invalidResponse();
+  const content = value.content.replace(/\s+/g, "");
+  if (content.length % 4 !== 0 || !/^[A-Za-z0-9+/]*={0,2}$/.test(content))
+    invalidResponse();
+  return Buffer.from(content, "base64");
 }
 
 function titleFor(info: GitHubUrlInfo): string {
   return info.path
     ? `${info.owner}/${info.repo} - ${info.path}`
     : `${info.owner}/${info.repo}`;
-}
-
-function decodeBase64(value: string): Buffer {
-  return Buffer.from(value.replace(/\s+/g, ""), "base64");
-}
-
-function isBinaryBytes(bytes: Uint8Array): boolean {
-  return bytes.includes(0);
-}
-
-function formatSize(bytes: number): string {
-  if (bytes < 1_024) return `${bytes} B`;
-  if (bytes < 1_024 * 1_024) return `${(bytes / 1_024).toFixed(1)} KiB`;
-  return `${(bytes / (1_024 * 1_024)).toFixed(1)} MiB`;
-}
-
-type GitHubFetchPlan =
-  | { kind: "api"; ref: string | undefined }
-  | { kind: "clone"; ref: string | undefined };
-
-function decideFetchPlan(
-  config: ResolvedGitHubFetchConfig,
-  info: GitHubUrlInfo,
-  metadata: { defaultBranch?: string; sizeMB?: number } | null,
-): GitHubFetchPlan {
-  const ref = info.ref ?? metadata?.defaultBranch;
-  if (
-    info.refIsFullSha ||
-    config.mode === "api" ||
-    (config.mode === "auto" &&
-      metadata?.sizeMB !== undefined &&
-      metadata.sizeMB > config.maxRepoSizeMB)
-  ) {
-    return { kind: "api", ref };
-  }
-  return { kind: "clone", ref };
 }
 
 export interface GitHubHandlerOptions {
@@ -136,15 +66,12 @@ export interface GitHubHandlerOptions {
 }
 
 export class GitHubHandler implements FetchHandler {
-  private readonly config: ResolvedGitHubFetchConfig;
+  private readonly enabled: boolean;
   private readonly gh: GhClient;
   private readonly now: () => number;
-  private readonly clones = new Map<string, CloneOperation>();
-  private cloneCount = 0;
-  private cloneReservations = 0;
 
   constructor(options: GitHubHandlerOptions) {
-    this.config = { ...options.config };
+    this.enabled = options.config.enabled;
     this.now = options.runtime?.now ?? Date.now;
     this.gh = new GhClient({
       command: options.runtime?.command,
@@ -156,379 +83,139 @@ export class GitHubHandler implements FetchHandler {
     request: FetchRequest,
     signal?: AbortSignal,
   ): Promise<FetchResponse | null> {
-    const stableRequest: FetchRequest = {
-      url: new URL(request.url.toString()),
-    };
-    if (!this.config.enabled) return null;
+    if (!this.enabled) return null;
+    const stableRequest = { url: new URL(request.url.toString()) };
     const parsed = parseGitHubUrl(stableRequest.url);
     if (!parsed) return null;
     assertNotCancelled(signal);
     const info = await resolveGitHubRef(parsed, this.gh, signal);
-    if (!info) return null;
-
-    await cleanupExpiredClones(this.config.clonePath, this.now());
-    const needsMetadata =
-      this.config.mode === "auto"
-        ? !info.refIsFullSha
-        : this.config.mode === "api" && !info.ref;
-    const metadata = needsMetadata
-      ? await this.gh.repoMetadata(info.owner, info.repo, signal)
-      : null;
-    const plan = decideFetchPlan(this.config, info, metadata);
-    if (plan.kind === "api") {
-      return this.fetchViaApi(stableRequest, info, plan.ref, signal);
-    }
-
-    let cloned: string | null;
-    try {
-      cloned = await this.getOrClone(info, plan.ref, signal);
-    } catch (error) {
-      if (
-        error instanceof WebFetchError &&
-        ["request", "timeout", "tool-unavailable"].includes(error.code)
-      ) {
-        const apiResult = await this.fetchViaApi(
-          stableRequest,
-          info,
-          plan.ref,
+    if (!info) unsupported();
+    const base = `repos/${info.owner}/${info.repo}`;
+    if (info.type === "root") {
+      const metadata = await this.gh.repoMetadata(
+        info.owner,
+        info.repo,
+        signal,
+      );
+      if (!metadata) unsupported();
+      const lines = [`Repository: ${info.owner}/${info.repo}`];
+      if (metadata.description) lines.push("", metadata.description);
+      if (metadata.defaultBranch) {
+        lines.push("", `Default branch: ${metadata.defaultBranch}`);
+        const readme = await this.gh.apiJson(
+          `${base}/readme?ref=${encodeURIComponent(metadata.defaultBranch)}`,
           signal,
         );
-        if (apiResult) return apiResult;
-        return null;
+        if (readme) {
+          if (!record(readme.value)) invalidResponse();
+          const value = readme.value;
+          const path =
+            typeof value.path === "string"
+              ? value.path
+              : typeof value.name === "string"
+                ? value.name
+                : undefined;
+          const text = await this.formatFile(value, path, signal);
+          lines.push("", `## ${path ?? "README"}`, text);
+        }
       }
-      throw error;
-    }
-    if (cloned) {
-      const content = await generateCloneContent(cloned, info, signal);
-      assertNotCancelled(signal);
+      lines.push(
+        "",
+        "This is a read-only repository overview, not a complete repository. For local exploration, explicitly clone with gh or git through bash.",
+      );
       return this.storeResponse(
         stableRequest,
-        content.text,
-        content.title,
-        content.contentType,
-        content.contentLength,
-        CLONE_SOURCE,
-        cloned,
-        content.truncated ?? false,
-      );
-    }
-
-    return this.fetchViaApi(stableRequest, info, plan.ref, signal);
-  }
-
-  private async getOrClone(
-    info: GitHubUrlInfo,
-    ref: string | undefined,
-    signal?: AbortSignal,
-  ): Promise<string | null> {
-    assertNotCancelled(signal);
-    const key = cacheKey(info, ref);
-    const cached = this.clones.get(key);
-    if (cached) {
-      if (!cached.accepting) {
-        await cached.promise.catch(() => null);
-        if (this.clones.get(key) === cached) this.clones.delete(key);
-        return this.getOrClone(info, ref, signal);
-      }
-      const existing = await this.waitForClone(cached, signal);
-      if (existing) {
-        try {
-          await stat(existing);
-          const renewedAt = new Date(this.now());
-          await utimes(dirname(existing), renewedAt, renewedAt);
-          return existing;
-        } catch {
-          if (this.clones.get(key) === cached) this.clones.delete(key);
-        }
-      } else {
-        if (this.clones.get(key) === cached) this.clones.delete(key);
-        return null;
-      }
-    }
-    if (this.cloneCount + this.cloneReservations >= MAX_GITHUB_SESSION_CLONES)
-      return null;
-    this.cloneReservations++;
-
-    const controller = new AbortController();
-    let operation: CloneOperation;
-    const promise = this.clone(info, ref, controller.signal).then(
-      (result) => {
-        operation.settled = true;
-        this.cloneReservations--;
-        if (result) this.cloneCount++;
-        return result;
-      },
-      (error: unknown) => {
-        operation.settled = true;
-        this.cloneReservations--;
-        throw error;
-      },
-    );
-    operation = {
-      promise,
-      controller,
-      waiters: 0,
-      settled: false,
-      accepting: true,
-    };
-    this.clones.set(key, operation);
-    void operation.promise.then(
-      (result) => {
-        if (!result && this.clones.get(key) === operation) {
-          this.clones.delete(key);
-        }
-      },
-      () => {
-        if (this.clones.get(key) === operation) this.clones.delete(key);
-      },
-    );
-    return this.waitForClone(operation, signal);
-  }
-
-  private async waitForClone(
-    operation: CloneOperation,
-    signal?: AbortSignal,
-  ): Promise<string | null> {
-    assertNotCancelled(signal);
-    operation.waiters++;
-    return new Promise<string | null>((resolve, reject) => {
-      let finished = false;
-      const finish = () => {
-        if (finished) return false;
-        finished = true;
-        signal?.removeEventListener("abort", onAbort);
-        operation.waiters--;
-        if (operation.waiters === 0 && !operation.settled) {
-          operation.accepting = false;
-          operation.controller.abort();
-        }
-        return true;
-      };
-      const onAbort = () => {
-        if (!finish()) return;
-        reject(new WebFetchError("cancelled", "Web fetch was cancelled."));
-      };
-      signal?.addEventListener("abort", onAbort, { once: true });
-      operation.promise.then(
-        (result) => {
-          if (!finish()) return;
-          resolve(result);
-        },
-        (error: unknown) => {
-          if (!finish()) return;
-          reject(error);
-        },
-      );
-      if (signal?.aborted) onAbort();
-    });
-  }
-
-  private async clone(
-    info: GitHubUrlInfo,
-    ref: string | undefined,
-    signal: AbortSignal,
-  ): Promise<string | null> {
-    const parent = this.config.clonePath;
-    await mkdir(parent, { recursive: true, mode: 0o700 });
-    await chmod(parent, 0o700).catch(() => {});
-    // Each operation owns its directory; other handlers never replace it.
-    const directory = await mkdtemp(join(parent, CLONE_CACHE_PREFIX));
-    const repositoryPath = join(directory, "repository");
-    try {
-      const cloned = await this.gh.clone({
-        owner: info.owner,
-        repo: info.repo,
-        ref,
-        destination: repositoryPath,
-        timeoutMs: this.config.cloneTimeoutSeconds * 1_000,
-        signal,
-      });
-      if (!cloned) {
-        await rm(directory, { recursive: true, force: true });
-        return null;
-      }
-      await chmod(repositoryPath, 0o700).catch(() => {});
-      const completedAt = new Date(this.now());
-      await utimes(directory, completedAt, completedAt);
-      return repositoryPath;
-    } catch (error) {
-      await rm(directory, { recursive: true, force: true }).catch(() => {});
-      throw error;
-    }
-  }
-
-  private async fetchViaApi(
-    request: FetchRequest,
-    info: GitHubUrlInfo,
-    ref: string | undefined,
-    signal?: AbortSignal,
-  ): Promise<FetchResponse | null> {
-    if (!ref) return null;
-    const encodedRef = encodeURIComponent(ref);
-    if (info.type === "blob" && info.path) {
-      const endpoint = `repos/${info.owner}/${info.repo}/contents/${encodeGitHubPath(info.path)}?ref=${encodedRef}`;
-      const result = await this.gh.apiJson(endpoint, signal);
-      if (
-        !result ||
-        typeof result.value !== "object" ||
-        result.value === null
-      ) {
-        return null;
-      }
-      const value = result.value as Record<string, unknown>;
-      if (value.type !== "file" || typeof value.content !== "string")
-        return null;
-      const bytes = decodeBase64(value.content);
-      const binary = isBinaryFileName(info.path) || isBinaryBytes(bytes);
-      const text = binary
-        ? `Binary file (${formatSize(bytes.byteLength)}). Use a local clone to inspect it.`
-        : await formatDocument({
-            text: new TextDecoder("utf-8", { fatal: false }).decode(bytes),
-            filePath: info.path,
-            signal,
-          });
-      assertNotCancelled(signal);
-      return this.storeResponse(
-        request,
-        text,
+        lines.join("\n"),
         titleFor(info),
-        binary ? "text/plain" : "text/plain",
-        bytes.byteLength,
-        GITHUB_SOURCE,
-        undefined,
-        false,
+        signal,
       );
     }
 
-    const treeResult = await this.gh.apiJson(
-      `repos/${info.owner}/${info.repo}/git/trees/${encodedRef}?recursive=1`,
+    if (!info.ref) unsupported();
+    const result = await this.gh.apiJson(
+      `${base}/contents/${encodeGitHubPath(info.path ?? "")}?ref=${encodeURIComponent(info.ref)}`,
       signal,
     );
-    if (!treeResult) return null;
-    const tree =
-      treeResult &&
-      typeof treeResult.value === "object" &&
-      treeResult.value !== null
-        ? (treeResult.value as Record<string, unknown>)
-        : undefined;
-    const entries = Array.isArray(tree?.tree)
-      ? (tree.tree as ApiTreeEntry[])
-          .filter((entry) => typeof entry.path === "string")
-          .map((entry) => ({
-            path: entry.path as string,
-            type: typeof entry.type === "string" ? entry.type : "",
-            size: typeof entry.size === "number" ? entry.size : undefined,
-          }))
-      : [];
-    const prefix = info.path ? `${info.path.replace(/\/$/, "")}/` : "";
-    const filtered = entries
-      .filter(
-        (entry) =>
-          !prefix || entry.path === info.path || entry.path.startsWith(prefix),
-      )
-      .slice(0, MAX_GITHUB_TREE_ENTRIES);
-    const lines = [
-      `Repository API view: ${info.owner}/${info.repo}@${ref}`,
-      "",
-      "## Structure",
-    ];
-    if (filtered.length) {
-      lines.push(
-        ...filtered.map((entry) =>
-          entry.type === "tree"
-            ? `${entry.path}/`
-            : `${entry.path}${entry.size === undefined ? "" : ` (${formatSize(entry.size)})`}`,
-        ),
-      );
-    } else {
-      lines.push("(no entries found)");
-    }
-    if (tree?.truncated === true || entries.length > MAX_GITHUB_TREE_ENTRIES) {
-      lines.push("... (tree listing truncated)");
+    if (!result) unsupported();
+    if (info.type === "blob") {
+      if (!record(result.value) || result.value.type !== "file")
+        invalidResponse();
+      const text = await this.formatFile(result.value, info.path, signal);
+      return this.storeResponse(stableRequest, text, titleFor(info), signal);
     }
 
-    if (info.type === "root") {
-      const readme = await this.fetchReadme(info, ref, signal);
-      if (readme !== undefined) lines.push("", "## README.md", readme);
-    }
-    lines.push(
+    if (!Array.isArray(result.value)) invalidResponse();
+    const entries = result.value;
+    const lines = [
+      `Directory: ${info.owner}/${info.repo}@${info.ref}/${info.path ?? ""}`,
       "",
-      "This is an API-only view. Use clone mode for local repository exploration.",
-    );
+      "## Entries",
+    ];
+    for (const entry of entries.slice(0, MAX_GITHUB_TREE_ENTRIES)) {
+      if (
+        !record(entry) ||
+        typeof entry.path !== "string" ||
+        typeof entry.type !== "string"
+      )
+        invalidResponse();
+      lines.push(`${entry.path}${entry.type === "dir" ? "/" : ""}`);
+    }
+    if (!entries.length) lines.push("(empty directory)");
+    // The Contents API returns at most 1,000 directory entries.
+    const truncated =
+      entries.length >= 1_000 || entries.length > MAX_GITHUB_TREE_ENTRIES;
+    if (truncated) lines.push("... (directory listing may be truncated)");
     return this.storeResponse(
-      request,
+      stableRequest,
       lines.join("\n"),
       titleFor(info),
-      "text/plain",
-      Buffer.byteLength(lines.join("\n"), "utf8"),
-      GITHUB_SOURCE,
-      undefined,
-      false,
+      signal,
+      truncated,
     );
   }
 
-  private async fetchReadme(
-    info: GitHubUrlInfo,
-    ref: string,
+  private async formatFile(
+    value: Record<string, unknown>,
+    path: string | undefined,
     signal?: AbortSignal,
-  ): Promise<string | undefined> {
-    const result = await this.gh.apiJson(
-      `repos/${info.owner}/${info.repo}/readme?ref=${encodeURIComponent(ref)}`,
-      signal,
-    );
-    if (!result || typeof result.value !== "object" || result.value === null) {
-      return undefined;
+  ): Promise<string> {
+    const bytes = decodeContent(value);
+    if ((path && isBinaryFileName(path)) || bytes.includes(0)) {
+      return `Binary file (${bytes.byteLength} B). Use gh or git through bash to inspect it locally.`;
     }
-    const value = result.value as Record<string, unknown>;
-    const content = value.content;
-    if (typeof content !== "string") return undefined;
-    const filePath =
-      typeof value.path === "string"
-        ? value.path
-        : typeof value.name === "string"
-          ? value.name
-          : undefined;
-    const decoded = new TextDecoder("utf-8", { fatal: false }).decode(
-      decodeBase64(content),
-    );
-    const formatted = await formatDocument({
-      text: decoded,
-      contentType: "text/plain",
-      filePath,
+    return formatDocument({
+      text: new TextDecoder("utf-8", { fatal: false }).decode(bytes),
+      filePath: path,
       signal,
     });
-    assertNotCancelled(signal);
-    return formatted;
   }
 
   private async storeResponse(
     request: FetchRequest,
     text: string,
     title: string,
-    contentType: string,
-    contentLength: number | undefined,
-    source: "github-gh" | "github-clone",
-    repositoryPath: string | undefined,
-    alreadyTruncated: boolean,
+    signal?: AbortSignal,
+    alreadyTruncated = false,
   ): Promise<FetchResponse> {
+    assertNotCancelled(signal);
     const spool = await createTempSpool();
     try {
       const bounded = await spool.saveText(text);
-      const truncated = alreadyTruncated || bounded.truncated;
+      assertNotCancelled(signal);
+      const contentLength = Buffer.byteLength(text, "utf8");
       return {
         text: bounded.text,
         title,
-        contentType,
+        contentType: "text/plain",
         contentLength,
         finalUrl: request.url.toString(),
-        source,
+        source: "github-gh",
         expiresAt: new Date(this.now() + TEMP_SPOOL_TTL_MS).toISOString(),
         fullOutputPath: spool.contentPath,
-        ...(repositoryPath ? { repositoryPath } : {}),
-        ...(truncated
+        ...(alreadyTruncated || bounded.truncated
           ? {
               truncation: {
-                totalBytes: Math.max(contentLength ?? 0, bounded.totalBytes),
+                totalBytes: bounded.totalBytes,
                 outputBytes: bounded.outputBytes,
               },
             }

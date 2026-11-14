@@ -7,39 +7,7 @@ import { GitHubHandler } from "./github.ts";
 import type { FetchRequest, FetchResponse, FetchRuntime } from "./types.ts";
 
 export function createFetchRuntime(): FetchRuntime {
-  const handlers = new Map<string, import("./github.ts").GitHubHandler>();
-  return {
-    githubHandlerCache: {
-      get: (key) => handlers.get(key),
-      set: (key, handler) => handlers.set(key, handler),
-    },
-    now: Date.now,
-    uuid: randomUUID,
-  };
-}
-
-function githubHandlerFor(
-  config: ResolvedWebFetchConfig,
-  runtime: FetchRuntime,
-): GitHubHandler {
-  if (runtime.github) return runtime.github;
-  const cache = runtime.githubHandlerCache;
-  const options = {
-    config: config.github,
-    apiTimeoutMs: config.timeoutMs,
-    runtime,
-  };
-  if (!cache) return new GitHubHandler(options);
-
-  const key = JSON.stringify({
-    github: config.github,
-    apiTimeoutMs: config.timeoutMs,
-  });
-  const existing = cache.get(key);
-  if (existing) return existing;
-  const handler = new GitHubHandler(options);
-  cache.set(key, handler);
-  return handler;
+  return { now: Date.now, uuid: randomUUID };
 }
 
 function parseHttpUrl(raw: string): URL {
@@ -82,7 +50,13 @@ export class WebFetchRouter {
       github: { ...config.github },
     };
     this.runtime = { ...runtime };
-    this.github = githubHandlerFor(this.config, this.runtime);
+    this.github =
+      this.runtime.github ??
+      new GitHubHandler({
+        config: this.config.github,
+        apiTimeoutMs: this.config.timeoutMs,
+        runtime: this.runtime,
+      });
   }
 
   async fetch(

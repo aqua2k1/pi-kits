@@ -14,20 +14,13 @@ import {
 } from "./search/types.ts";
 import {
   DEFAULT_FETCH_TIMEOUT_MS,
-  DEFAULT_GITHUB_CLONE_PATH,
-  DEFAULT_GITHUB_CLONE_TIMEOUT_SECONDS,
   DEFAULT_GITHUB_ENABLED,
-  DEFAULT_GITHUB_MAX_REPO_SIZE_MB,
   DEFAULT_MAX_RESULTS,
   DEFAULT_SEARCH_TIMEOUT_MS,
   MAX_FETCH_TIMEOUT_MS,
-  MAX_GITHUB_CLONE_TIMEOUT_SECONDS,
-  MAX_GITHUB_REPO_SIZE_MB,
   MAX_MAX_RESULTS,
   MAX_SEARCH_TIMEOUT_MS,
   MIN_FETCH_TIMEOUT_MS,
-  MIN_GITHUB_CLONE_TIMEOUT_SECONDS,
-  MIN_GITHUB_REPO_SIZE_MB,
   MIN_MAX_RESULTS,
   MIN_SEARCH_TIMEOUT_MS,
 } from "./shared/limits.ts";
@@ -46,14 +39,8 @@ export interface WebSearchFileConfig {
   codex?: { model?: string };
 }
 
-export type GitHubFetchMode = "auto" | "clone" | "api";
-
 export interface GitHubFileConfig {
   enabled?: boolean;
-  mode?: GitHubFetchMode;
-  maxRepoSizeMB?: number;
-  cloneTimeoutSeconds?: number;
-  clonePath?: string;
 }
 
 export interface WebFetchFileConfig {
@@ -82,10 +69,6 @@ export interface ResolvedWebSearchConfig {
 
 export interface ResolvedGitHubFetchConfig {
   enabled: boolean;
-  mode: GitHubFetchMode;
-  maxRepoSizeMB: number;
-  cloneTimeoutSeconds: number;
-  clonePath: string;
 }
 
 export interface ResolvedWebFetchConfig {
@@ -182,25 +165,7 @@ function parseFetchConfig(source: Record<string, unknown>): WebFetchFileConfig {
   if (Object.hasOwn(source, "github")) {
     if (!isRecord(source.github)) invalidField("fetch.github");
     const enabled = readField<boolean>(source.github, "enabled", "boolean");
-    const mode = readField<string>(source.github, "mode", "string");
-    const maxRepoSizeMB = readField<number>(
-      source.github,
-      "maxRepoSizeMB",
-      "number",
-    );
-    const cloneTimeoutSeconds = readField<number>(
-      source.github,
-      "cloneTimeoutSeconds",
-      "number",
-    );
-    const clonePath = readField<string>(source.github, "clonePath", "string");
-    config.github = {
-      ...(enabled !== undefined ? { enabled } : {}),
-      ...(mode !== undefined ? { mode: mode as GitHubFetchMode } : {}),
-      ...(maxRepoSizeMB !== undefined ? { maxRepoSizeMB } : {}),
-      ...(cloneTimeoutSeconds !== undefined ? { cloneTimeoutSeconds } : {}),
-      ...(clonePath !== undefined ? { clonePath } : {}),
-    };
+    config.github = enabled === undefined ? {} : { enabled };
   }
   return config;
 }
@@ -370,33 +335,12 @@ export function resolveFetchConfig(
     MAX_FETCH_TIMEOUT_MS,
   );
   const github = config.github ?? {};
-  const mode = github.mode ?? WEB_DEFAULTS.githubMode;
-  if (mode !== "auto" && mode !== "clone" && mode !== "api") {
-    return invalid(`${INVALID_CONFIG} fetch.github.mode is invalid.`);
-  }
-  const maxRepoSizeMB = parseInteger(
-    github.maxRepoSizeMB ?? DEFAULT_GITHUB_MAX_REPO_SIZE_MB,
-    "fetch.github.maxRepoSizeMB",
-    MIN_GITHUB_REPO_SIZE_MB,
-    MAX_GITHUB_REPO_SIZE_MB,
-  );
-  const cloneTimeoutSeconds = parseInteger(
-    github.cloneTimeoutSeconds ?? DEFAULT_GITHUB_CLONE_TIMEOUT_SECONDS,
-    "fetch.github.cloneTimeoutSeconds",
-    MIN_GITHUB_CLONE_TIMEOUT_SECONDS,
-    MAX_GITHUB_CLONE_TIMEOUT_SECONDS,
-  );
-  const configuredClonePath = stringValue(github.clonePath);
 
   return {
     enabled: config.enabled ?? true,
     timeoutMs,
     github: {
       enabled: github.enabled ?? DEFAULT_GITHUB_ENABLED,
-      mode,
-      maxRepoSizeMB,
-      cloneTimeoutSeconds,
-      clonePath: configuredClonePath ?? DEFAULT_GITHUB_CLONE_PATH,
     },
   };
 }

@@ -7,7 +7,7 @@ function result(overrides: Partial<CommandResult> = {}): CommandResult {
   return {
     code: 0,
     signal: null,
-    stdout: "",
+    stdout: "{}",
     stderr: "",
     notFound: false,
     timedOut: false,
@@ -18,85 +18,115 @@ function result(overrides: Partial<CommandResult> = {}): CommandResult {
   };
 }
 
-test("GhClient parses metadata through fixed gh api arguments", async () => {
-  const calls: { command: string; args: readonly string[] }[] = [];
+test("GhClient uses only fixed public gh api arguments and bounded execution", async () => {
   const command: CommandRunner = {
-    async run(commandName, args) {
-      calls.push({ command: commandName, args });
-      if (args[0] === "--version") return result({ stdout: "gh version 2\n" });
+    async run(name, args, options) {
+      assert.equal(name, "gh");
+      assert.deepEqual(args, [
+        "api",
+        "--hostname",
+        "github.com",
+        "repos/acme/project",
+      ]);
+      assert.equal(options.env?.GH_PROMPT_DISABLED, "1");
+      assert.equal(options.timeoutMs, 5000);
+      assert.ok(options.maxStdoutBytes > 0);
       return result({
-        stdout: JSON.stringify({ default_branch: "main", size: 12_288 }),
+        stdout: JSON.stringify({
+          default_branch: "main",
+          description: "A project",
+          size: 12_288,
+        }),
       });
     },
   };
-  const client = new GhClient({ command, timeoutMs: 5_000 });
-  assert.deepEqual(await client.repoMetadata("acme", "project"), {
-    defaultBranch: "main",
-    sizeMB: 12,
-  });
-  assert.deepEqual(calls, [
-    { command: "gh", args: ["--version"] },
-    {
-      command: "gh",
-      args: ["api", "--hostname", "github.com", "repos/acme/project"],
-    },
-  ]);
-});
-
-test("GhClient returns null when gh is unavailable", async () => {
-  const command: CommandRunner = {
-    async run() {
-      return result({ notFound: true, code: null });
-    },
-  };
-  const client = new GhClient({ command, timeoutMs: 5_000 });
-  assert.equal(await client.isGhAvailable(), false);
-  assert.equal(await client.apiJson("repos/acme/project"), null);
-});
-
-test("GhClient uses public gh clone even with an enterprise GH_HOST", async (t) => {
-  const previousHost = process.env.GH_HOST;
-  process.env.GH_HOST = "enterprise.example";
-  t.after(() => {
-    if (previousHost === undefined) delete process.env.GH_HOST;
-    else process.env.GH_HOST = previousHost;
-  });
-  const calls: { command: string; args: readonly string[] }[] = [];
-  const command: CommandRunner = {
-    async run(commandName, args, options) {
-      calls.push({ command: commandName, args });
-      assert.equal(options.env?.GH_HOST, "enterprise.example");
-      if (commandName === "gh" && args[0] === "--version") {
-        return result({ stdout: "gh version 2\n" });
-      }
-      return result();
-    },
-  };
-  const client = new GhClient({ command, timeoutMs: 5_000 });
-  assert.equal(
-    await client.clone({
-      owner: "acme",
-      repo: "project",
-      ref: "main",
-      destination: "/tmp/clone",
-      timeoutMs: 5_000,
-    }),
-    true,
+  assert.deepEqual(
+    await new GhClient({ command, timeoutMs: 5000 }).repoMetadata(
+      "acme",
+      "project",
+    ),
+    { defaultBranch: "main", description: "A project" },
   );
-  assert.deepEqual(calls[1], {
-    command: "gh",
-    args: [
-      "repo",
-      "clone",
-      "https://github.com/acme/project.git",
-      "/tmp/clone",
-      "--",
-      "--depth",
-      "1",
-      "--single-branch",
-      "--no-tags",
-      "--branch",
-      "main",
-    ],
+});
+
+for (const [overrides, code] of [
+  [{ notFound: true, code: null }, "tool-unavailable"],
+  [{ timedOut: true }, "timeout"],
+  [{ aborted: true }, "cancelled"],
+  [{ stdoutTruncated: true }, "invalid-response"],
+  [{ stdout: "not json" }, "invalid-response"],
+  [{ code: 4 }, "auth"],
+  [{ code: 1, stderr: "gh: forbidden (HTTP 403) secret" }, "auth"],
+  [
+    { code: 1, stderr: "gh: API rate limit exceeded (HTTP 403) secret" },
+    "rate-limit",
+  ],
+  [
+    { code: 1, stderr: "gh: too many requests (HTTP 429) secret" },
+    "rate-limit",
+  ],
+  [{ code: 1, stderr: "gh: error (HTTP 500) secret" }, "network"],
+  [{ code: 1, stderr: "secret" }, "request"],
+] as const) {
+  test(`GhClient classifies ${code} without exposing diagnostics: ${JSON.stringify(overrides)}`, async () => {
+    const client = new GhClient({
+      command: {
+        async run() {
+          return result(overrides);
+        },
+      },
+      timeoutMs: 5000,
+    });
+    await assert.rejects(
+      client.apiJson("repos/acme/project"),
+      (error: unknown) => {
+        assert.ok(error instanceof Error);
+        assert.equal((error as { code?: string }).code, code);
+        assert.ok(!error.message.includes("secret"));
+        return true;
+      },
+    );
   });
+}
+
+test("GhClient permits a missing optional resource and rejects invalid metadata", async () => {
+  const command = {
+    async run() {
+      return result({ code: 1, stderr: "gh: Not Found (HTTP 404)" });
+    },
+  };
+  assert.equal(
+    await new GhClient({ command, timeoutMs: 5000 }).apiJson(
+      "repos/acme/project/readme",
+    ),
+    null,
+  );
+  await assert.rejects(
+    new GhClient({
+      command: {
+        async run() {
+          return result({ stdout: "[]" });
+        },
+      },
+      timeoutMs: 5000,
+    }).repoMetadata("acme", "project"),
+    { code: "invalid-response" },
+  );
+});
+
+test("GhClient cancellation prevents command execution", async () => {
+  const controller = new AbortController();
+  controller.abort();
+  const client = new GhClient({
+    command: {
+      async run() {
+        assert.fail("must not execute");
+      },
+    },
+    timeoutMs: 5000,
+  });
+  await assert.rejects(
+    client.apiJson("repos/acme/project", controller.signal),
+    { code: "cancelled" },
+  );
 });

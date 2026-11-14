@@ -67,7 +67,7 @@ function currentConfig(): WebToolsFileConfig {
     },
     fetch: {
       timeoutMs: 5_000,
-      github: { enabled: true, mode: "auto" },
+      github: { enabled: true },
     },
   };
 }
@@ -106,7 +106,11 @@ test("/web-tools status: reports separate search and fetch settings", async () =
   assert.match(status, /search fallback provider: SearXNG \(config\)/);
   assert.match(status, /fetch timeout: 5000 ms/);
   assert.match(status, /GitHub fetch: enabled/);
-  assert.match(status, /GitHub mode: auto/);
+  assert.match(status, /GitHub uses read-only gh api/);
+  assert.doesNotMatch(
+    status,
+    /GitHub mode:|clone threshold:|clone timeout:|shallow clone/,
+  );
   assert.match(status, /Codex authentication: configured \(OAuth required\)/);
   assert.match(status, /SearXNG URL: configured \(env\)/);
   assert.match(status, /SearXNG Bearer key: set \(env\)/);

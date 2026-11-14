@@ -27,7 +27,7 @@ export const SearchOutputSchema = Type.Object({
 export type SearchMachineOutput = Static<typeof SearchOutputSchema>;
 
 export const FetchSourceSchema = Type.Enum(
-  ["native-http", "github-gh", "github-clone"] as const,
+  ["native-http", "github-gh"] as const,
   { type: "string" },
 );
 
@@ -78,7 +78,6 @@ export const FetchDetailsSchema = Type.Object({
   contentLength: Type.Optional(Type.Integer({ minimum: 0 })),
   source: FetchSourceSchema,
   savedContent: SavedContentSchema,
-  repositoryPath: Type.Optional(Type.String()),
 });
 
 export type FetchDetails = Readonly<Static<typeof FetchDetailsSchema>>;

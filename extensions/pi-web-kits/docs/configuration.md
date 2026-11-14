@@ -15,10 +15,6 @@
 | `fetch.enabled` | boolean | `true` | 控制 `web_fetch` 注册及加载时的临时文本清理 |
 | `fetch.timeoutMs` | integer | `15000` | 1000–120000；原生 HTTP 流程及单次 GitHub API 命令的超时毫秒数 |
 | `fetch.github.enabled` | boolean | `true` | 启用 GitHub 仓库 URL 专用处理 |
-| `fetch.github.mode` | string | `auto` | `auto` 按大小选择 API 或克隆；`clone` 优先克隆；`api` 使用 API；完整提交 SHA 使用 API |
-| `fetch.github.maxRepoSizeMB` | integer | `350` | 1–10240；`auto` 模式超过此 MiB 阈值时走 API |
-| `fetch.github.cloneTimeoutSeconds` | integer | `30` | 5–600；单次克隆命令的超时秒数 |
-| `fetch.github.clonePath` | string | 系统临时目录下的 `pi-web-tools-github` | 含非空白字符，去除首尾空白后作为克隆缓存父目录 |
 | `SEARXNG_URL`（环境变量） | string | `http://localhost:8080` | HTTP(S) 地址，最多 2048 字符；用户名、密码、查询与片段须留空；启动前设置 `export SEARXNG_URL="https://<searxng-host>"` |
 | `SEARXNG_API_KEY`（环境变量） | string | 未设置 | Bearer 密钥，去除首尾空白后最多 4096 个可见 ASCII 字符；启动前设置 `export SEARXNG_API_KEY="<api-key>"` |
 
@@ -45,11 +41,7 @@
       "enabled": true,
       "timeoutMs": 15000,
       "github": {
-        "enabled": true,
-        "mode": "auto",
-        "maxRepoSizeMB": 350,
-        "cloneTimeoutSeconds": 30,
-        "clonePath": "/<clone-directory>"
+        "enabled": true
       }
     }
   }

@@ -46,8 +46,7 @@ test("absent config uses defaults without creating a file", (t) => {
   assert.equal(config["web-kits"].search.maxResults, 5);
   assert.equal(config["web-kits"].search.codex.model, "gpt-5.4");
   assert.equal(config["web-kits"].fetch.timeoutMs, 15_000);
-  assert.equal(config["web-kits"].fetch.github.mode, "auto");
-  assert.equal(config["web-kits"].fetch.github.maxRepoSizeMB, 350);
+  assert.deepEqual(config["web-kits"].fetch.github, { enabled: true });
   assert.equal(readPiKitsFile(dir), undefined);
 });
 
@@ -117,6 +116,29 @@ test("unknown fields are preserved in raw config but ignored in resolved config"
       },
     }),
   );
+});
+
+test("obsolete GitHub settings remain raw but are ignored, including invalid types", () => {
+  for (const enabled of [true, false]) {
+    const input = {
+      "web-kits": {
+        fetch: {
+          github: {
+            enabled,
+            mode: { invalid: true },
+            maxRepoSizeMB: "invalid",
+            cloneTimeoutSeconds: null,
+            clonePath: 42,
+          },
+        },
+      },
+    };
+    const raw = parsePiKitsFile(JSON.stringify(input));
+    assert.deepEqual(raw, input);
+    assert.deepEqual(resolvePiKitsConfig(raw)["web-kits"].fetch.github, {
+      enabled,
+    });
+  }
 });
 
 test("flat configuration independently controls extensions", () => {

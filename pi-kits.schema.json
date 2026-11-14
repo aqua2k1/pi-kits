@@ -580,37 +580,6 @@
               "properties": {
                 "enabled": {
                   "type": "boolean"
-                },
-                "mode": {
-                  "anyOf": [
-                    {
-                      "type": "string",
-                      "const": "auto"
-                    },
-                    {
-                      "type": "string",
-                      "const": "clone"
-                    },
-                    {
-                      "type": "string",
-                      "const": "api"
-                    }
-                  ]
-                },
-                "maxRepoSizeMB": {
-                  "type": "integer",
-                  "minimum": 1,
-                  "maximum": 10240
-                },
-                "cloneTimeoutSeconds": {
-                  "type": "integer",
-                  "minimum": 5,
-                  "maximum": 600
-                },
-                "clonePath": {
-                  "type": "string",
-                  "minLength": 1,
-                  "pattern": "\\S"
                 }
               },
               "additionalProperties": true

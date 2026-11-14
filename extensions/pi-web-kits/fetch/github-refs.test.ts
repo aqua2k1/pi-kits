@@ -62,13 +62,13 @@ test("ambiguous, absent, incomplete or unavailable refs safely decline", async (
     }),
     null,
   );
-  assert.equal(
-    await resolveGitHubRef(info(), {
+  await assert.rejects(
+    resolveGitHubRef(info(), {
       async apiJson() {
         throw new WebFetchError("timeout", "timeout");
       },
     }),
-    null,
+    { code: "timeout" },
   );
   // The same branch/tag name is one boundary, not two.
   assert.equal(

@@ -4,6 +4,8 @@
 
 配置的各层对象允许未知字段；未知字段保留在原始配置中，但不进入生效配置。已知字段仍校验类型、范围和枚举，拼错的字段名也作为未知字段忽略。
 
+`web-kits.fetch.github` 仅保留 `enabled`（默认 `true`）；旧 `mode`、`maxRepoSizeMB`、`cloneTimeoutSeconds`、`clonePath` 作为未知字段忽略，包括类型无效的旧值。
+
 `subagent.enabled` 默认为 `true`，终端适配器由扩展按环境自动选择，旧 `subagent.mux` 字段忽略，顶层和旧 `workflow.subagent` 分组均适用。
 
 ## 旧分组兼容

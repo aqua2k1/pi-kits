@@ -171,16 +171,6 @@ export const PI_KITS_SCHEMA = Type.Object(
         timeoutMs: integer(1_000, 120_000, 15_000),
         github: section({
           enabled: Type.Optional(Type.Boolean()),
-          mode: Type.Optional(
-            Type.Union([
-              Type.Literal("auto"),
-              Type.Literal("clone"),
-              Type.Literal("api"),
-            ]),
-          ),
-          maxRepoSizeMB: integer(1, 10_240),
-          cloneTimeoutSeconds: integer(5, 600),
-          clonePath: Type.Optional(text()),
         }),
       }),
     }),

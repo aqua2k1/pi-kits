@@ -18,7 +18,6 @@ export interface FetchResponse {
   readonly finalUrl: string;
   readonly source: FetchSource;
   readonly fullOutputPath: string;
-  readonly repositoryPath?: string;
   readonly truncation?: FetchTruncation;
   readonly expiresAt?: string;
 }
@@ -57,17 +56,10 @@ export interface CommandRunner {
   ): Promise<CommandResult>;
 }
 
-export interface GitHubHandlerCache {
-  get(key: string): import("./github.ts").GitHubHandler | undefined;
-  set(key: string, handler: import("./github.ts").GitHubHandler): void;
-}
-
 export interface FetchRuntime {
   readonly fetch?: FetchLike;
   readonly command?: CommandRunner;
   readonly github?: import("./github.ts").GitHubHandler;
-  /** Process-local state is owned by the caller instead of a module singleton. */
-  readonly githubHandlerCache?: GitHubHandlerCache;
   /** Effect capabilities supplied by the composition boundary. */
   readonly now?: () => number;
   readonly uuid?: () => string;

@@ -1,16 +1,9 @@
 import assert from "node:assert/strict";
-import {
-  mkdir,
-  mkdtemp,
-  open,
-  readFile,
-  rm,
-  writeFile,
-} from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { readFile, rm } from "node:fs/promises";
+import { dirname } from "node:path";
 import { test } from "node:test";
 import { MAX_FETCH_CONTENT_BYTES } from "../shared/limits.ts";
+import { WebFetchError } from "./errors.ts";
 import { buildFetchOutput } from "./format.ts";
 import { GitHubHandler } from "./github.ts";
 import type { CommandResult, CommandRunner } from "./types.ts";
@@ -29,122 +22,83 @@ function result(stdout = ""): CommandResult {
   };
 }
 
-for (const mode of ["api", "clone"] as const) {
-  test(`${mode} root README is not independently limited to 8 KiB`, async () => {
-    const root = await mkdtemp(join(tmpdir(), "pi-web-readme-"));
-    const readme = `${"README body\n".repeat(1_000)}END-OF-README`;
-    const command: CommandRunner = {
-      async run(_name, args) {
-        if (args[0] === "--version") return result("gh version 2");
-        if (args[0] === "repo") {
-          const destination = args[3];
-          await mkdir(destination, { recursive: true });
-          await writeFile(join(destination, "README.txt"), readme);
-          return result();
-        }
-        const endpoint = args.at(-1) ?? "";
-        if (endpoint === "repos/acme/project") {
-          return result(JSON.stringify({ default_branch: "main", size: 1 }));
-        }
-        if (endpoint.includes("/git/trees/")) {
-          return result(JSON.stringify({ tree: [] }));
-        }
-        if (endpoint.includes("/readme?")) {
-          return result(
-            JSON.stringify({
-              path: "README.txt",
-              content: Buffer.from(readme).toString("base64"),
-            }),
-          );
-        }
-        return { ...result(), code: 1 };
-      },
-    };
-    const handler = new GitHubHandler({
-      config: {
-        enabled: true,
-        mode,
-        maxRepoSizeMB: 350,
-        cloneTimeoutSeconds: 30,
-        clonePath: root,
-      },
-      apiTimeoutMs: 1_000,
-      runtime: { command },
-    });
-    let savedPath: string | undefined;
-    try {
-      const response = await handler.fetch({
-        url: new URL("https://github.com/acme/project"),
-      });
-      assert.ok(response);
-      savedPath = response.fullOutputPath;
-      const saved = await readFile(savedPath, "utf8");
-      assert.ok(saved.includes(readme));
-      assert.equal(
-        buildFetchOutput(response).details.savedContent.truncated,
-        false,
-      );
-    } finally {
-      if (savedPath)
-        await rm(join(savedPath, ".."), { recursive: true, force: true });
-      await rm(root, { recursive: true, force: true });
-    }
-  });
-}
-
-test("clone root README uses the overall saved-content limit and reports truncation", async () => {
-  const root = await mkdtemp(join(tmpdir(), "pi-web-readme-limit-"));
+function readmeHandler(readme: string, stdoutTruncated = false) {
+  const endpoints: string[] = [];
   const command: CommandRunner = {
-    async run(_name, args) {
-      if (args[0] === "--version") return result("gh version 2");
-      if (args[0] === "repo") {
-        const destination = args[3];
-        await mkdir(destination, { recursive: true });
-        const file = await open(join(destination, "README.txt"), "w");
-        try {
-          const chunk = Buffer.alloc(1_024 * 1_024, "x");
-          for (let i = 0; i < MAX_FETCH_CONTENT_BYTES / chunk.length; i++) {
-            await file.write(chunk);
-          }
-          for (let i = 0; i < MAX_FETCH_CONTENT_BYTES / chunk.length; i++) {
-            await file.write(chunk);
-          }
-          await file.write("OMITTED-END-MARKER");
-        } finally {
-          await file.close();
-        }
-        return result();
+    async run(name, args) {
+      assert.equal(name, "gh");
+      assert.equal(args[0], "api");
+      const endpoint = String(args.at(-1));
+      endpoints.push(endpoint);
+      if (endpoint === "repos/acme/project") {
+        return result(JSON.stringify({ default_branch: "main" }));
       }
-      return { ...result(), code: 1 };
+      assert.equal(endpoint, "repos/acme/project/readme?ref=main");
+      return {
+        ...result(
+          JSON.stringify({
+            path: "README.txt",
+            encoding: "base64",
+            content: Buffer.from(readme).toString("base64"),
+          }),
+        ),
+        stdoutTruncated,
+      };
     },
   };
-  const handler = new GitHubHandler({
-    config: {
-      enabled: true,
-      mode: "clone",
-      maxRepoSizeMB: 350,
-      cloneTimeoutSeconds: 30,
-      clonePath: root,
-    },
-    apiTimeoutMs: 1_000,
-    runtime: { command },
-  });
-  let savedPath: string | undefined;
+  return {
+    handler: new GitHubHandler({
+      config: { enabled: true },
+      apiTimeoutMs: 1_000,
+      runtime: { command },
+    }),
+    endpoints,
+  };
+}
+
+const request = { url: new URL("https://github.com/acme/project") };
+
+test("API root README is not independently limited to 8 KiB and never requests a tree", async () => {
+  const readme = `${"README body\n".repeat(1_000)}END-OF-README`;
+  const { handler, endpoints } = readmeHandler(readme);
+  const response = await handler.fetch(request);
+  assert.ok(response);
   try {
-    const response = await handler.fetch({
-      url: new URL("https://github.com/acme/project"),
+    const saved = await readFile(response.fullOutputPath, "utf8");
+    assert.ok(saved.includes(readme));
+    assert.equal(saved, response.text);
+    assert.equal(
+      buildFetchOutput(response).details.savedContent.truncated,
+      false,
+    );
+    assert.deepEqual(endpoints, [
+      "repos/acme/project",
+      "repos/acme/project/readme?ref=main",
+    ]);
+  } finally {
+    await rm(dirname(response.fullOutputPath), {
+      recursive: true,
+      force: true,
     });
-    assert.ok(response);
-    savedPath = response.fullOutputPath;
+  }
+});
+
+test("API root README uses the overall saved-content limit and reports truncation", async () => {
+  // The injected runner bypasses the smaller command-output budget to isolate
+  // the saved-content boundary. Real oversized API responses are rejected below.
+  const readme = `${"x".repeat(MAX_FETCH_CONTENT_BYTES)}OMITTED-END-MARKER`;
+  const { handler } = readmeHandler(readme);
+  const response = await handler.fetch(request);
+  assert.ok(response);
+  try {
     const output = buildFetchOutput(response);
     assert.equal(output.details.savedContent.truncated, true);
     assert.equal(output.details.savedContent.bytes, MAX_FETCH_CONTENT_BYTES);
     assert.ok(output.details.savedContent.truncation);
-    const originalReadmeBytes =
-      2 * MAX_FETCH_CONTENT_BYTES + Buffer.byteLength("OMITTED-END-MARKER");
     assert.ok(
-      output.details.savedContent.truncation.totalBytes > originalReadmeBytes,
-      "logical source size must include the complete README and repository wrapper",
+      output.details.savedContent.truncation.totalBytes >
+        Buffer.byteLength(readme),
+      "logical source size includes the complete README and repository wrapper",
     );
     assert.equal(
       output.details.savedContent.truncation.totalBytes,
@@ -155,9 +109,23 @@ test("clone root README uses the overall saved-content limit and reports truncat
       /cannot recover omitted source content/,
     );
     assert.ok(!response.text.includes("OMITTED-END-MARKER"));
+    assert.equal(
+      await readFile(response.fullOutputPath, "utf8"),
+      response.text,
+    );
   } finally {
-    if (savedPath)
-      await rm(join(savedPath, ".."), { recursive: true, force: true });
-    await rm(root, { recursive: true, force: true });
+    await rm(dirname(response.fullOutputPath), {
+      recursive: true,
+      force: true,
+    });
   }
+});
+
+test("API root README rejects truncated command output rather than saving incomplete base64", async () => {
+  const { handler } = readmeHandler("README body", true);
+  await assert.rejects(
+    handler.fetch(request),
+    (error: unknown) =>
+      error instanceof WebFetchError && error.code === "invalid-response",
+  );
 });

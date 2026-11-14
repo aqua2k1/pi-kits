@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { readFile, rm } from "node:fs/promises";
+import { dirname } from "node:path";
 import { test } from "node:test";
 import { resolveFetchConfig } from "../config.ts";
+import { WebFetchError } from "./errors.ts";
 import { GitHubHandler } from "./github.ts";
 import type { CommandResult, CommandRunner } from "./types.ts";
 
@@ -25,26 +25,31 @@ test("GitHub API README uses its returned filename and preserves unknown/plain f
     { name: "README.rst" },
     {},
     { path: "README.md" },
+    { name: "README.md" },
+    { path: "README.txt", name: "README.md" },
   ]) {
     const text = "-   item\n";
+    const endpoints: string[] = [];
     const command: CommandRunner = {
-      async run(_name, args) {
-        if (args[0] === "--version") return success("gh version 2");
+      async run(name, args) {
+        assert.equal(name, "gh");
+        assert.equal(args[0], "api");
         const endpoint = String(args.at(-1));
+        endpoints.push(endpoint);
         if (endpoint === "repos/acme/project")
           return success('{"default_branch":"main"}');
-        if (endpoint.includes("/git/trees/")) return success('{"tree":[]}');
-        assert.ok(endpoint.includes("/readme?"));
+        assert.equal(endpoint, "repos/acme/project/readme?ref=main");
         return success(
           JSON.stringify({
             ...metadata,
+            encoding: "base64",
             content: Buffer.from(text).toString("base64"),
           }),
         );
       },
     };
     const handler = new GitHubHandler({
-      config: resolveFetchConfig({ github: { mode: "api" } }).github,
+      config: resolveFetchConfig({ github: { enabled: true } }).github,
       apiTimeoutMs: 5_000,
       runtime: { command },
     });
@@ -53,9 +58,19 @@ test("GitHub API README uses its returned filename and preserves unknown/plain f
     });
     assert.ok(response);
     try {
-      const expected =
-        "path" in metadata && metadata.path === "README.md" ? "- item\n" : text;
-      assert.ok(response.text.includes(`## README.md\n${expected}`));
+      const filename = "path" in metadata ? metadata.path : metadata.name;
+      const expected = filename === "README.md" ? "- item\n" : text;
+      assert.ok(
+        response.text.includes(`## ${filename ?? "README"}\n${expected}`),
+      );
+      assert.equal(
+        await readFile(response.fullOutputPath, "utf8"),
+        response.text,
+      );
+      assert.deepEqual(endpoints, [
+        "repos/acme/project",
+        "repos/acme/project/readme?ref=main",
+      ]);
     } finally {
       await rm(dirname(response.fullOutputPath), {
         recursive: true,
@@ -65,77 +80,109 @@ test("GitHub API README uses its returned filename and preserves unknown/plain f
   }
 });
 
-for (const mode of ["api", "clone"] as const) {
-  test(`GitHub ${mode} formats source blobs before storage or scaffold rendering`, async () => {
-    const root = await mkdtemp(join(tmpdir(), "pi-github-format-"));
-    const sources = new Map([
-      ["data.json", '{"large":900719925474099312345,"x":[1,2]}'],
-      ["page.html", "<title>Docs</title><p>Hello</p>"],
-      ["README.md", "# Heading\n\n-   item\n"],
-      ["broken.json", '{"broken":'],
-      ["data.xml", "<root>  unchanged </root>"],
-    ]);
-    const expected = new Map([
-      ["data.json", '{ "large": 900719925474099312345, "x": [1, 2] }\n'],
-      ["page.html", "<title>Docs</title>\n<p>Hello</p>\n"],
-      ["README.md", "# Heading\n\n- item\n"],
-      ["broken.json", '{"broken":'],
-      ["data.xml", "<root>  unchanged </root>"],
-    ]);
+test("GitHub API formats base64 source blobs before storage", async () => {
+  const sources = new Map([
+    ["data.json", '{"large":900719925474099312345,"x":[1,2]}'],
+    ["page.html", "<title>Docs</title><p>Hello</p>"],
+    ["README.md", "# Heading\n\n-   item\n"],
+    ["broken.json", '{"broken":'],
+    ["data.xml", "<root>  unchanged </root>"],
+  ]);
+  const expected = new Map([
+    ["data.json", '{ "large": 900719925474099312345, "x": [1, 2] }\n'],
+    ["page.html", "<title>Docs</title>\n<p>Hello</p>\n"],
+    ["README.md", "# Heading\n\n- item\n"],
+    ["broken.json", '{"broken":'],
+    ["data.xml", "<root>  unchanged </root>"],
+  ]);
+  const command: CommandRunner = {
+    async run(name, args) {
+      assert.equal(name, "gh");
+      assert.equal(args[0], "api");
+      const endpoint = String(args.at(-1));
+      const path = endpoint.split("/contents/")[1]?.split("?")[0];
+      const text = sources.get(path);
+      assert.ok(text !== undefined);
+      assert.equal(endpoint, `repos/acme/project/contents/${path}?ref=main`);
+      return success(
+        JSON.stringify({
+          type: "file",
+          encoding: "base64",
+          content: Buffer.from(text).toString("base64"),
+        }),
+      );
+    },
+  };
+  const handler = new GitHubHandler({
+    config: resolveFetchConfig({ github: { enabled: true } }).github,
+    apiTimeoutMs: 5_000,
+    runtime: { command },
+  });
+  for (const [path, formatted] of expected) {
+    const response = await handler.fetch({
+      url: new URL(`https://github.com/acme/project/blob/main/${path}`),
+    });
+    assert.ok(response);
+    try {
+      const saved = await readFile(response.fullOutputPath, "utf8");
+      assert.equal(saved, response.text);
+      assert.equal(saved, formatted);
+      assert.equal(response.source, "github-gh");
+      assert.equal("repositoryPath" in response, false);
+    } finally {
+      await rm(dirname(response.fullOutputPath), {
+        recursive: true,
+        force: true,
+      });
+    }
+  }
+});
+
+for (const kind of ["blob", "root"] as const) {
+  test(`GitHub ${kind} cancellation during formatting cannot return saved content`, async () => {
+    const controller = new AbortController();
     const command: CommandRunner = {
       async run(_name, args) {
-        if (args[0] === "--version") return success("gh version 2");
-        if (args[0] === "repo") {
-          await mkdir(args[3], { recursive: true });
-          for (const [path, text] of sources)
-            await writeFile(join(args[3], path), text);
-          return success();
-        }
         assert.equal(args[0], "api");
-        const path = String(args.at(-1)).split("/contents/")[1]?.split("?")[0];
-        const text = sources.get(path);
-        assert.ok(text !== undefined);
+        const endpoint = String(args.at(-1));
+        if (endpoint === "repos/acme/project")
+          return success('{"default_branch":"main"}');
+        assert.equal(
+          endpoint,
+          kind === "blob"
+            ? "repos/acme/project/contents/README.md?ref=main"
+            : "repos/acme/project/readme?ref=main",
+        );
+        // Queue cancellation after API decoding, while the formatter is pending.
+        setImmediate(() => controller.abort());
         return success(
           JSON.stringify({
             type: "file",
-            content: Buffer.from(text).toString("base64"),
+            path: "README.md",
+            encoding: "base64",
+            content: Buffer.from("# Heading\n\n-   item\n").toString("base64"),
           }),
         );
       },
     };
     const handler = new GitHubHandler({
-      config: resolveFetchConfig({ github: { mode, clonePath: root } }).github,
+      config: { enabled: true },
       apiTimeoutMs: 5_000,
       runtime: { command },
     });
-    try {
-      for (const [path, formatted] of expected) {
-        const response = await handler.fetch({
-          url: new URL(`https://github.com/acme/project/blob/main/${path}`),
-        });
-        assert.ok(response);
-        try {
-          const saved = await readFile(response.fullOutputPath, "utf8");
-          assert.equal(saved, response.text);
-          if (mode === "api") assert.equal(saved, formatted);
-          else {
-            assert.ok(saved.includes(`## ${path}\n${formatted}`));
-            assert.match(saved, /Repository cloned to:/);
-            // Formatting only touches the saved view, not cloned source files.
-            assert.equal(
-              await readFile(join(response.repositoryPath ?? "", path), "utf8"),
-              sources.get(path),
-            );
-          }
-        } finally {
-          await rm(dirname(response.fullOutputPath), {
-            recursive: true,
-            force: true,
-          });
-        }
-      }
-    } finally {
-      await rm(root, { recursive: true, force: true });
-    }
+    await assert.rejects(
+      handler.fetch(
+        {
+          url: new URL(
+            kind === "blob"
+              ? "https://github.com/acme/project/blob/main/README.md"
+              : "https://github.com/acme/project",
+          ),
+        },
+        controller.signal,
+      ),
+      (error: unknown) =>
+        error instanceof WebFetchError && error.code === "cancelled",
+    );
   });
 }

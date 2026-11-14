@@ -71,9 +71,6 @@ export function buildFetchOutput(response: FetchResponse): {
       ...(response.expiresAt ? { expiresAt: response.expiresAt } : {}),
       ...(truncation ? { truncation } : {}),
     },
-    ...(response.repositoryPath
-      ? { repositoryPath: response.repositoryPath }
-      : {}),
   };
   const lines = [
     `**Fetched:** ${details.finalUrl}`,
@@ -88,9 +85,6 @@ export function buildFetchOutput(response: FetchResponse): {
     `**Longest line bytes:** ${details.savedContent.maxLineBytes}`,
     `**Saved content truncated:** ${details.savedContent.truncated}`,
     ...(response.expiresAt ? [`**Expires:** ${response.expiresAt}`] : []),
-    ...(response.repositoryPath
-      ? [`**Repository:** ${response.repositoryPath}`]
-      : []),
     "",
     "Content is not returned inline. Use the `read` tool to inspect the saved file.",
     "Read returns at most 2000 lines or 50 KiB per call. For full-file analysis, start at line 1 and follow each returned offset until no content remains; a single read is not proof of full coverage. For targeted questions, search first and read relevant ranges.",

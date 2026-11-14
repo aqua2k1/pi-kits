@@ -105,13 +105,10 @@ function statusText(
     `  Codex authentication: ${auth}`,
     `  fetch timeout: ${config.fetch.timeoutMs} ms`,
     `  GitHub fetch: ${fetchEnabled && config.fetch.github.enabled ? "enabled" : "disabled"}`,
-    `  GitHub mode: ${config.fetch.github.mode}`,
-    `  GitHub clone threshold: ${config.fetch.github.maxRepoSizeMB} MiB`,
-    `  GitHub clone timeout: ${config.fetch.github.cloneTimeoutSeconds} s`,
     "",
     "Settings are under web-kits.search and web-kits.fetch in pi-kits.json.",
     "SearXNG URL and credentials are read from environment variables.",
-    "GitHub uses gh api or shallow clone when the local commands are available.",
+    "GitHub uses read-only gh api for files, directories, root README and brief repository info; no automatic clones.",
   ].join("\n");
 }
 

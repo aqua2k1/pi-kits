@@ -4,12 +4,7 @@ import { test } from "node:test";
 import { resolveConfig } from "../config.ts";
 import { TEMP_SPOOL_TTL_MS } from "../shared/limits.ts";
 import { WebFetchError } from "./errors.ts";
-import {
-  createFetchRuntime,
-  fetchWeb,
-  normalizeFetchRequest,
-  WebFetchRouter,
-} from "./router.ts";
+import { fetchWeb, normalizeFetchRequest } from "./router.ts";
 
 async function cleanup(path: string): Promise<void> {
   await rm(path.substring(0, path.lastIndexOf("/")), {
@@ -58,27 +53,35 @@ test("fetchWeb uses native HTTP for ordinary URLs and saves full text", async ()
   }
 });
 
-test("fetch runtimes own GitHub handler caches explicitly", () => {
-  const config = resolveConfig({}, {}).fetch;
-  const first = createFetchRuntime();
-  const second = createFetchRuntime();
-  new WebFetchRouter(config, first);
-  new WebFetchRouter(config, first);
-  new WebFetchRouter(config, second);
-  const key = JSON.stringify({
-    github: config.github,
-    apiTimeoutMs: config.timeoutMs,
-  });
-  assert.ok(first.githubHandlerCache?.get(key));
-  assert.ok(second.githubHandlerCache?.get(key));
-  assert.notEqual(first.githubHandlerCache, second.githubHandlerCache);
-  const original = first.githubHandlerCache?.get(key);
-  const changed = { ...config, timeoutMs: config.timeoutMs + 1_000 };
-  new WebFetchRouter(changed, first);
-  const changedKey = JSON.stringify({
-    github: changed.github,
-    apiTimeoutMs: changed.timeoutMs,
-  });
-  assert.ok(first.githubHandlerCache?.get(changedKey));
-  assert.notEqual(first.githubHandlerCache?.get(changedKey), original);
+test("GitHub API failures never fall back to native HTTP", async () => {
+  let httpCalls = 0;
+  await assert.rejects(
+    fetchWeb(
+      { url: "https://github.com/acme/project" },
+      resolveConfig({}, {}).fetch,
+      {
+        command: {
+          async run() {
+            return {
+              code: null,
+              signal: null,
+              stdout: "",
+              stderr: "",
+              notFound: true,
+              timedOut: false,
+              aborted: false,
+              stdoutTruncated: false,
+              stderrTruncated: false,
+            };
+          },
+        },
+        fetch: async () => {
+          httpCalls++;
+          return new Response("login");
+        },
+      },
+    ),
+    { code: "tool-unavailable" },
+  );
+  assert.equal(httpCalls, 0);
 });

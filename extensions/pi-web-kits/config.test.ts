@@ -17,9 +17,7 @@ import { CODEX_DEFAULT_MODEL } from "./search/providers/codex/config.ts";
 import { SEARXNG_DEFAULT_URL } from "./search/providers/searxng/config.ts";
 import {
   DEFAULT_FETCH_TIMEOUT_MS,
-  DEFAULT_GITHUB_CLONE_TIMEOUT_SECONDS,
   DEFAULT_GITHUB_ENABLED,
-  DEFAULT_GITHUB_MAX_REPO_SIZE_MB,
   DEFAULT_MAX_RESULTS,
   DEFAULT_SEARCH_TIMEOUT_MS,
 } from "./shared/limits.ts";
@@ -46,9 +44,6 @@ test("parseConfig: separates search and fetch settings", () => {
           timeoutMs: 10_000,
           github: {
             enabled: true,
-            mode: "clone",
-            maxRepoSizeMB: 100,
-            cloneTimeoutSeconds: 60,
           },
         },
         unknown: "ignored",
@@ -69,9 +64,6 @@ test("parseConfig: separates search and fetch settings", () => {
         timeoutMs: 10_000,
         github: {
           enabled: true,
-          mode: "clone",
-          maxRepoSizeMB: 100,
-          cloneTimeoutSeconds: 60,
         },
       },
     },
@@ -111,7 +103,7 @@ test("parseConfig: rejects malformed JSON and known field types safely", () => {
     invalidConfig,
   );
   assert.throws(
-    () => parseConfig(JSON.stringify({ fetch: { github: { mode: 42 } } })),
+    () => parseConfig(JSON.stringify({ fetch: { github: { enabled: 42 } } })),
     invalidConfig,
   );
 });
@@ -136,14 +128,7 @@ test("resolveConfig: applies independent search and fetch defaults", () => {
   assert.equal(config.search.codexModel, CODEX_DEFAULT_MODEL);
   assert.equal(config.fetch.timeoutMs, DEFAULT_FETCH_TIMEOUT_MS);
   assert.equal(config.fetch.github.enabled, DEFAULT_GITHUB_ENABLED);
-  assert.equal(
-    config.fetch.github.maxRepoSizeMB,
-    DEFAULT_GITHUB_MAX_REPO_SIZE_MB,
-  );
-  assert.equal(
-    config.fetch.github.cloneTimeoutSeconds,
-    DEFAULT_GITHUB_CLONE_TIMEOUT_SECONDS,
-  );
+  assert.deepEqual(config.fetch.github, { enabled: DEFAULT_GITHUB_ENABLED });
 });
 
 test("resolveSearchConfig: reads search settings and secrets only from env", () => {
@@ -176,32 +161,37 @@ test("resolveSearchConfig: reads search settings and secrets only from env", () 
   });
 });
 
-test("resolveFetchConfig: validates GitHub clone settings", () => {
-  const config = resolveFetchConfig({
-    timeoutMs: 5_000,
-    github: {
-      enabled: true,
-      mode: "clone",
-      maxRepoSizeMB: 42,
-      cloneTimeoutSeconds: 20,
-      clonePath: "/tmp/synthetic-clones",
-    },
-  });
-  assert.deepEqual(config, {
-    enabled: true,
-    timeoutMs: 5_000,
-    github: {
-      enabled: true,
-      mode: "clone",
-      maxRepoSizeMB: 42,
-      cloneTimeoutSeconds: 20,
-      clonePath: "/tmp/synthetic-clones",
-    },
-  });
-  assert.throws(
-    () => resolveFetchConfig({ github: { mode: "invalid" as never } }),
-    invalidConfig,
+test("resolveFetchConfig: retains only the GitHub enabled switch", () => {
+  assert.deepEqual(
+    resolveFetchConfig({ timeoutMs: 5_000, github: { enabled: false } }),
+    { enabled: true, timeoutMs: 5_000, github: { enabled: false } },
   );
+});
+
+test("obsolete GitHub settings are ignored, including invalid types", async () => {
+  for (const enabled of [true, false]) {
+    const github = {
+      enabled,
+      mode: { invalid: true },
+      maxRepoSizeMB: "invalid",
+      cloneTimeoutSeconds: null,
+      clonePath: 42,
+    };
+    const parsed = parseConfig(JSON.stringify({ fetch: { github } }));
+    assert.deepEqual(parsed, { fetch: { github: { enabled } } });
+    assert.deepEqual(resolveFetchConfig({ github }).github, { enabled });
+    await withConfigDirectory(async (directory) => {
+      await writeFile(
+        getConfigPath(directory),
+        JSON.stringify({ "web-kits": { fetch: { github } } }),
+      );
+      const snapshot = await readConfigSnapshot(getConfigPath(directory));
+      assert.deepEqual(snapshot.rawConfig.fetch?.github, { enabled });
+      assert.deepEqual(resolveConfig(snapshot.rawConfig, {}).fetch.github, {
+        enabled,
+      });
+    });
+  }
 });
 
 test("resolveSearchConfig: validates search values", () => {

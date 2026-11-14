@@ -6,7 +6,6 @@ import {
   rmSync,
   writeFileSync,
 } from "node:fs";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { getAgentDir as getPiAgentDir } from "@earendil-works/pi-coding-agent";
 import { Value } from "typebox/value";
@@ -30,10 +29,6 @@ export const WEB_DEFAULTS = {
   codexModel: "gpt-5.4",
   fetchTimeoutMs: 15_000,
   githubEnabled: true,
-  githubMode: "auto" as const,
-  githubMaxRepoSizeMB: 350,
-  githubCloneTimeoutSeconds: 30,
-  githubClonePath: join(tmpdir(), "pi-web-tools-github"),
 };
 
 function normalizeProvider(
@@ -265,16 +260,6 @@ export function resolvePiKitsConfig(raw: PiKitsFileConfig = {}) {
           enabled:
             raw["web-kits"]?.fetch?.github?.enabled ??
             WEB_DEFAULTS.githubEnabled,
-          mode: raw["web-kits"]?.fetch?.github?.mode ?? WEB_DEFAULTS.githubMode,
-          maxRepoSizeMB:
-            raw["web-kits"]?.fetch?.github?.maxRepoSizeMB ??
-            WEB_DEFAULTS.githubMaxRepoSizeMB,
-          cloneTimeoutSeconds:
-            raw["web-kits"]?.fetch?.github?.cloneTimeoutSeconds ??
-            WEB_DEFAULTS.githubCloneTimeoutSeconds,
-          clonePath:
-            raw["web-kits"]?.fetch?.github?.clonePath ??
-            WEB_DEFAULTS.githubClonePath,
         },
       },
     },

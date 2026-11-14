@@ -59,13 +59,12 @@ text(await tools.read({ path: fetched.savedContent.path, offset: 1 }));
 | `savedContent.path`、`bytes` | 保存路径与最终文本的 UTF-8 字节数 |
 | `savedContent.lines` | 与 `read` 一致的行数；空文件为 1 行，末尾换行增加一个空行 |
 | `savedContent.maxLineBytes` | 最长行的 UTF-8 字节数，不计换行符 |
-| `savedContent.truncated` | 保存文本本身受到截断 |
+| `savedContent.truncated` | 保存文本被截断，或 GitHub 目录列表存在省略 |
 | `savedContent.truncation` | 截断时的 `totalBytes`、`outputBytes`，以及有值时的 `totalLines`、`outputLines` |
 | `savedContent.expiresAt` | 有值时返回临时文件的到期时间 |
 | `url`、`finalUrl` | 处理器报告的最终 URL，经脱敏后两者相同 |
 | `title`、`contentType`、`contentLength` | 有值时返回标题、媒体类型和内容长度；长度含义随来源变化，保存字节数以 `savedContent.bytes` 为准 |
-| `source` | `native-http`、`github-gh`、`github-clone` |
-| `repositoryPath` | 克隆成功时返回本地仓库路径 |
+| `source` | `native-http`、`github-gh` |
 
 完整分析从第 1 行开始，按 `read` 返回的后续偏移续读；定点查询先搜索保存文件，再读取相关范围。单次 `read` 最多返回 2000 行或 50 KiB；最长行超过 50 KiB 时改用 UTF-8 安全的字节分块或结构化处理。保存文本已截断时，续读仅覆盖已保存部分。
 
@@ -79,11 +78,19 @@ https://github.com/<owner>/<repo>/blob/<ref>/<file>
 https://github.com/<owner>/<repo>/tree/<ref>/<directory>
 ```
 
-GitHub API 读取需要本地 `gh`；浅克隆先使用 `gh`，失败后尝试 `git`，认证交给本地命令。`fetch.github.mode` 为 `auto` 时查询仓库大小，超过 `fetch.github.maxRepoSizeMB` 走 API，其余优先克隆；`clone` 优先克隆，`api` 走 API；40 位完整提交 SHA 走 API。
+GitHub 专用读取仅通过本地 `gh api` 获取文件、目录、根 README 与简要仓库信息，认证交给本地 `gh`。工具不自动克隆仓库。
 
-克隆返回空结果或发生请求、超时、命令不可用错误时尝试 API；GitHub 专用处理返回空结果时转原生 HTTP。含 `/` 的分支或标签可用 `%2F` 明确边界；未编码且存在多个划分时查询真实引用，仅接受唯一划分，解析失败或有歧义时转原生 HTTP。
+仅未匹配 GitHub 专用路由或关闭专用处理时使用原生 HTTP；已匹配的 GitHub 请求失败会报错。根 README 返回 404 时保留仓库信息。含 `/` 的分支或标签可用 `%2F` 明确边界；未编码且存在多个划分时查询真实引用，仅接受唯一划分，解析失败或有歧义时报错。
 
-仓库根与目录返回结构列表，根目录附带读取到的 README；文件返回文本或二进制描述。结构列表有 200 项边界，列表内标记省略；`savedContent.truncated` 单独描述文本保存截断。格式化只改变保存视图，克隆中的原文件保持原样。
+仓库根仅返回描述、默认分支与 README；目录通过 contents API 返回非递归列表，文件返回文本或二进制描述。目录列表最多保存 200 项，省略时在正文及 `savedContent.truncated` 中标记。
+
+用户明确要求本地仓库工作流时，通过 `bash` 显式执行 `gh`／`git`，例如：
+
+```sh
+gh repo clone <owner>/<repo> <local-directory>
+# 或
+git clone https://github.com/<owner>/<repo>.git <local-directory>
+```
 
 保存文本上限为 50 MiB，原生 HTTP 响应超过 50 MiB 时报错。临时文本的到期时间为生成后 24 小时；启用抓取时，扩展加载会清理过期抓取文件。
 

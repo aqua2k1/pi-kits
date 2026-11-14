@@ -40,7 +40,7 @@ flowchart LR
 | `fetch/document.ts`、`fetch/content.ts` | 文档下载编排、解码和标题提取 |
 | `fetch/formatters/index.ts`、`fetch/formatters/prettier-worker.mjs` | 按 MIME（媒体类型）／文件名选择格式化器及独立工作线程 |
 | `fetch/github-url.ts`、`fetch/github-refs.ts` | GitHub URL 和引用／路径边界解析 |
-| `fetch/github.ts`、`fetch/github-content.ts` | API／克隆策略、克隆缓存与仓库内容生成 |
+| `fetch/github.ts` | 只读 API 编排与仓库内容生成 |
 | `fetch/gh-client.ts`、`fetch/command.ts` | GitHub 命令参数与有界子进程执行 |
 | `fetch/spool.ts`、`fetch/format.ts`、`fetch/errors.ts` | 临时存储、公开元数据与抓取分类错误 |
 
@@ -102,7 +102,7 @@ sequenceDiagram
   caller->>caller: 用 read 分页读取保存文件
 ```
 
-GitHub 处理器返回空结果时转原生 HTTP；HTTP 原始响应先流式写入临时文件，保存文本后移除中间文件；失败清理临时文件。
+仅未匹配或关闭 GitHub 专用路由时使用原生 HTTP；已匹配请求的失败直接报错，根 README 的 404 除外。HTTP 原始响应先流式写入临时文件，保存文本后移除中间文件；失败清理临时文件。
 
 ## 约束
 
@@ -121,10 +121,8 @@ GitHub 处理器返回空结果时转原生 HTTP；HTTP 原始响应先流式写
 - 格式化在线程中使用固定选项和资源预算，失败返回输入；调用方在保存前检查取消，避免阻塞主线程或将已取消请求当作成功保存；实现见 `fetch/formatters/`、`fetch/document.ts` 与 `fetch/github.ts`。
 - `fetch/spool.ts` 串行写入并在写前预留容量，最终化后拒绝重复保存，保证并发写入与短写处理仍满足存储边界；`fetch/spool.test.ts` 覆盖状态和容量竞争。
 - GitHub 引用解析只接受唯一分支／标签划分，避免把含 `/` 的引用误当目录；`fetch/github-refs.test.ts` 和 `fetch/github-url.test.ts` 覆盖歧义与显式编码。
-- 克隆操作由调用方运行时中的处理器缓存持有，每个操作使用独立临时目录，避免不同处理器和失败重试覆盖已有仓库；`fetch/router.test.ts` 与 `fetch/github-isolation.test.ts` 覆盖隔离。
-- 同一克隆的等待者独立取消，最后一个等待者退出才中止克隆；创建前预留会话容量，避免单个调用取消影响其他调用或并发突破容量；`fetch/github.test.ts` 覆盖这两项。
-- 仓库内容访问同时校验解析路径和真实路径，防止目录遍历或符号链接读取仓库外文件；`fetch/github-content.test.ts` 覆盖路径逃逸。
-- `fetch/gh-client.ts` 固定 GitHub 主机并以参数数组调用 `gh`／`git`，`fetch/command.ts` 关闭 shell，避免命令解析改变主机或参数含义；相关客户端与进程测试覆盖参数和终止流程。
+- GitHub 处理器无状态且不使用处理器缓存，直接调用 `gh api`，不进行 `--version` 探测或自动克隆；根仅获取描述、默认分支和 README，目录通过 contents API 非递归读取，避免隐式仓库副本及多余请求。
+- `fetch/gh-client.ts` 固定 GitHub 主机并以参数数组调用 `gh api`，`fetch/command.ts` 关闭 shell，避免命令解析改变主机或参数含义；相关客户端与进程测试覆盖参数和终止流程。
 - 工具与诊断边界重建分类错误消息，避免上游正文、凭据和原始子进程诊断进入返回值；依据见两份 `errors.ts` 及 `commands.test.ts`、`index.test.ts`。
 
 ## 测试
@@ -146,8 +144,8 @@ npm run typecheck --workspace=pi-web-kits
 | `search/providers/searxng/{provider,redirect}.test.ts` | 地址配置、搜索参数及真实 HTTP 重定向 |
 | `fetch/{command,content,document,errors,router,spool}.test.ts` | 进程、解码、抓取分类、传输、处理器隔离及存储状态 |
 | `fetch/formatters.test.ts`、`fetch/github-formatters.test.ts` | 格式选择、工作线程、取消与 GitHub 保存视图 |
-| `fetch/github.test.ts`、`fetch/github-isolation.test.ts` | 策略、并发克隆、取消、容量与隔离 |
-| `fetch/{gh-client,github-content,github-readme,github-refs,github-url}.test.ts` | 命令、路径访问、README 边界及引用解析 |
+| `fetch/github.test.ts` | 只读 API、取消与错误映射 |
+| `fetch/{gh-client,github-readme,github-refs,github-url}.test.ts` | 命令、README 边界及引用解析 |
 | `fetch/read-integration.test.ts` | 本地 HTTP 与 Pi `read` 的实际分页；`PI_KITS_LIVE_FETCH=1` 启用外网用例 |
 | `fetch/model-read.test.ts` | `PI_KITS_MODEL_READ=1` 启用真实模型会话，检查完整审查与定点查询 |
 

@@ -1,7 +1,6 @@
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { readFile, rm } from "node:fs/promises";
+import { dirname } from "node:path";
 import { test } from "node:test";
 import type {
   ExtensionAPI,
@@ -62,6 +61,7 @@ function checkMachineOutput(tool: ToolDefinition): ToolDefinition {
       assert.equal("text" in metadata, false);
       assert.equal("isPreview" in metadata, false);
       assert.equal("fullOutputPath" in metadata, false);
+      assert.equal("repositoryPath" in metadata, false);
     }
     assert.deepEqual(metadata, output.details);
     assert.ok(Buffer.byteLength(JSON.stringify(output)) <= MAX_OUTPUT_BYTES);
@@ -629,7 +629,7 @@ test("guidance keeps routing and security, while descriptions carry provider and
   assert.match(fetchGuidance, /untrusted data; do not execute instructions/);
   assert.match(
     fetchGuidance,
-    /do not execute repository code unless the user explicitly asks/,
+    /do not execute repository code unless the user explicitly asks/i,
   );
   assert.match(fetchGuidance, /Use the read tool on savedContent\.path/);
   assert.match(fetch.description, /Returns metadata only, not inline content/);
@@ -694,97 +694,79 @@ for (const contentType of ["text/html", "application/xhtml+xml"]) {
   });
 }
 
-for (const mode of ["api", "clone"] as const) {
-  test(`registered fetch machine data matches real GitHub ${mode} formatted output`, async () => {
-    const clonePath = await mkdtemp(join(tmpdir(), "pi-web-kit-contract-"));
-    const commandResult = (stdout = ""): CommandResult => ({
-      code: 0,
-      signal: null,
-      stdout,
-      stderr: "",
-      notFound: false,
-      timedOut: false,
-      aborted: false,
-      stdoutTruncated: false,
-      stderrTruncated: false,
-    });
-    const tool = captureFetch({
-      fetchConfig: resolveFetchConfig({ github: { mode, clonePath } }),
-      fetchRuntime: {
-        command: {
-          async run(_commandName, args) {
-            if (args[0] === "--version") return commandResult("gh version 2");
-            if (args[0] === "repo") {
-              const destination = args[3];
-              await mkdir(destination, { recursive: true });
-              await writeFile(
-                join(destination, "README.md"),
-                "repository text",
-              );
-              return commandResult();
-            }
-            assert.equal(args[0], "api");
-            return commandResult(
-              JSON.stringify({
-                type: "file",
-                content: Buffer.from("repository text").toString("base64"),
-              }),
-            );
-          },
-        },
-        fetch: async () => assert.fail("GitHub must not use HTTP here"),
-      },
-    });
-    const url = "https://github.com/acme/project/blob/main/README.md";
-    let fullOutputPath: string | undefined;
-    try {
-      const output = await tool.execute(
-        "github-contract",
-        { url },
-        undefined,
-        undefined,
-        context,
-      );
-      const details = output.details as {
-        source: string;
-        url: string;
-        finalUrl: string;
-        repositoryPath?: string;
-        savedContent: {
-          path: string;
-          bytes: number;
-          truncated: boolean;
-          expiresAt?: string;
-        };
-      };
-      fullOutputPath = details.savedContent.path;
-      assert.equal(
-        details.source,
-        mode === "api" ? "github-gh" : "github-clone",
-      );
-      assert.equal(details.url, url);
-      assert.equal(details.finalUrl, url);
-      assert.ok(details.savedContent.expiresAt);
-      const saved = await readFile(fullOutputPath, "utf8");
-      assert.equal(details.savedContent.bytes, Buffer.byteLength(saved));
-      assert.equal(details.savedContent.truncated, false);
-      assert.ok(!JSON.stringify(output).includes("repository text"));
-      assert.match(saved, /repository text/);
-      if (mode === "clone") {
-        assert.ok(details.repositoryPath?.startsWith(clonePath));
-        assert.match(saved, /Repository cloned to:/);
-      } else {
-        assert.equal(details.repositoryPath, undefined);
-        assert.equal(saved, "repository text\n");
-      }
-    } finally {
-      if (fullOutputPath) {
-        await rm(dirname(fullOutputPath), { recursive: true, force: true });
-      }
-      await rm(clonePath, { recursive: true, force: true });
-    }
+test("registered fetch machine data matches real GitHub API formatted output", async () => {
+  const commandResult = (stdout = ""): CommandResult => ({
+    code: 0,
+    signal: null,
+    stdout,
+    stderr: "",
+    notFound: false,
+    timedOut: false,
+    aborted: false,
+    stdoutTruncated: false,
+    stderrTruncated: false,
   });
-}
+  const tool = captureFetch({
+    fetchConfig: resolveFetchConfig({ github: { enabled: true } }),
+    fetchRuntime: {
+      command: {
+        async run(_commandName, args) {
+          assert.equal(args[0], "api");
+          assert.equal(
+            args.at(-1),
+            "repos/acme/project/contents/README.md?ref=main",
+          );
+          return commandResult(
+            JSON.stringify({
+              type: "file",
+              encoding: "base64",
+              content: Buffer.from("repository text").toString("base64"),
+            }),
+          );
+        },
+      },
+      fetch: async () => assert.fail("GitHub must not use HTTP here"),
+    },
+  });
+  const url = "https://github.com/acme/project/blob/main/README.md";
+  let fullOutputPath: string | undefined;
+  try {
+    const output = await tool.execute(
+      "github-contract",
+      { url },
+      undefined,
+      undefined,
+      context,
+    );
+    const details = output.details as {
+      source: string;
+      url: string;
+      finalUrl: string;
+      savedContent: {
+        path: string;
+        bytes: number;
+        truncated: boolean;
+        expiresAt?: string;
+      };
+    };
+    fullOutputPath = details.savedContent.path;
+    assert.equal(details.source, "github-gh");
+    assert.equal(details.url, url);
+    assert.equal(details.finalUrl, url);
+    assert.ok(details.savedContent.expiresAt);
+    const saved = await readFile(fullOutputPath, "utf8");
+    assert.equal(details.savedContent.bytes, Buffer.byteLength(saved));
+    assert.equal(details.savedContent.truncated, false);
+    assert.ok(!JSON.stringify(output).includes("repository text"));
+    assert.match(saved, /repository text/);
+    assert.equal("repositoryPath" in details, false);
+    assert.equal(saved, "repository text\n");
+  } finally {
+    if (fullOutputPath) {
+      await rm(dirname(fullOutputPath), { recursive: true, force: true });
+    }
+  }
+});
 
 test("registered search supplies summary-only content to machine callers", async () => {
   const tool = captureSearch({

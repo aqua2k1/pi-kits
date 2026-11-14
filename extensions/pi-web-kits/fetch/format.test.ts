@@ -16,6 +16,7 @@ function buildFetchOutput(...args: Parameters<typeof buildOutput>) {
     "text",
     "isPreview",
     "fullOutputPath",
+    "repositoryPath",
     "expiresAt",
     "truncation",
   ]) {
@@ -101,7 +102,7 @@ test("large, line-heavy, and JSON-escaped content never appear in tool output", 
   }
 });
 
-for (const source of ["native-http", "github-gh", "github-clone"] as const) {
+for (const source of ["native-http", "github-gh"] as const) {
   test(`fetch output preserves saved metadata and redacts URL aliases for ${source}`, () => {
     const input: FetchResponse = {
       ...response("hello"),
@@ -114,9 +115,6 @@ for (const source of ["native-http", "github-gh", "github-clone"] as const) {
         totalLines: 10,
         outputLines: 1,
       },
-      ...(source === "github-clone"
-        ? { repositoryPath: "/tmp/pi-web-tools-github/hash" }
-        : {}),
     };
     const output = buildFetchOutput(input);
     assert.deepEqual(output.details, {
@@ -135,12 +133,9 @@ for (const source of ["native-http", "github-gh", "github-clone"] as const) {
         expiresAt: input.expiresAt,
         truncation: input.truncation,
       },
-      ...(input.repositoryPath ? { repositoryPath: input.repositoryPath } : {}),
     });
     assert.ok(!JSON.stringify(output).includes("password"));
     assert.ok(!JSON.stringify(output).includes("hidden"));
-    if (input.repositoryPath)
-      assert.ok(output.content[0].text.includes(input.repositoryPath));
   });
 }
 
