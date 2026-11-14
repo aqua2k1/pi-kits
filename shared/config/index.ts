@@ -215,8 +215,12 @@ export function resolvePiKitsConfig(raw: PiKitsFileConfig = {}) {
     subagent: {
       enabled: raw.subagent?.enabled ?? true,
       maxConcurrent: raw.subagent?.maxConcurrent ?? 4,
-      extensionAllowlist: structuredClone(
-        raw.subagent?.extensionAllowlist ?? [...SUBAGENT_DEFAULT_EXTENSIONS],
+      extensionAllowlist: (
+        raw.subagent?.extensionAllowlist ?? [...SUBAGENT_DEFAULT_EXTENSIONS]
+      ).map((entry) =>
+        typeof entry === "string"
+          ? entry
+          : { source: entry.source, extensions: [...entry.extensions] },
       ),
     },
     commit: {

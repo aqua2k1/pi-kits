@@ -86,9 +86,36 @@ test("web-kits is the sole web configuration key", () => {
   assert.equal(config["web-kits"].enabled, false);
   assert.equal(config["web-kits"].search.maxResults, 2);
   assert.ok(!("web" in config));
-  assert.throws(
-    () => parsePiKitsFile('{"web":{"enabled":false}}'),
-    /Invalid pi-kits.json/,
+  assert.equal(
+    parsePiKitsConfig('{"web":{"enabled":false}}')["web-kits"].enabled,
+    true,
+  );
+});
+
+test("unknown fields are preserved in raw config but ignored in resolved config", () => {
+  const input = {
+    future: { enabled: false },
+    notify: { unknown: true },
+    workspace: { future: false, terminal: { oldEditor: "legacy" } },
+    workflow: { subagent: { mux: { backend: "old" } } },
+    subagent: {
+      unknown: null,
+      extensionAllowlist: [
+        { source: "package", extensions: ["web-kits"], unknown: true },
+      ],
+    },
+    "web-kits": { fetch: { github: { future: ["anything"] } } },
+  };
+  const raw = parsePiKitsFile(JSON.stringify(input));
+  assert.deepEqual(raw, input);
+  const config = resolvePiKitsConfig(raw);
+  assert.deepEqual(
+    config,
+    resolvePiKitsConfig({
+      subagent: {
+        extensionAllowlist: [{ source: "package", extensions: ["web-kits"] }],
+      },
+    }),
   );
 });
 
@@ -164,7 +191,6 @@ for (const value of [
   '{"stats":{"enabled":"false"}}',
   '{"providerUsage":{"intervalMs":0}}',
   '{"commit":{"timeoutMs":0}}',
-  '{"notify":{"unknown":true}}',
 ]) {
   test(`invalid flat config is rejected: ${value}`, () => {
     assert.throws(() => parsePiKitsConfig(value), /Invalid pi-kits.json/);
@@ -258,7 +284,6 @@ test("explicit subagent extension allowlists replace defaults, including empty",
     [{ source: "x" }],
     [{ source: "x", extensions: [""] }],
     [{ source: "x", extensions: ["web-kits", "web-kits"] }],
-    [{ source: "x", extensions: ["web-kits"], unknown: true }],
   ]) {
     assert.throws(
       () =>
@@ -305,7 +330,6 @@ test("fresh snapshots pick up edits without retaining mutable defaults", (t) => 
 for (const [name, value] of [
   ["non-object", "null"],
   ["malformed JSON", "{"],
-  ["unknown section", '{"usgae":{}}'],
   ["invalid enable type", '{"workspace":{"enabled":"false"}}'],
   ["empty executable", '{"workspace":{"terminal":{"editor":" "}}}'],
   [
@@ -319,7 +343,6 @@ for (const [name, value] of [
   ["overflow concurrency", '{"workflow":{"subagent":{"maxConcurrent":33}}}'],
   ["fractional concurrency", '{"workflow":{"subagent":{"maxConcurrent":1.5}}}'],
   ["string concurrency", '{"workflow":{"subagent":{"maxConcurrent":"4"}}}'],
-  ["unknown subagent field", '{"workflow":{"subagent":{"agent":"custom"}}}'],
   [
     "unknown provider",
     '{"web-kits":{"search":{"routing":{"provider":"invalid"}}}}',
@@ -336,10 +359,6 @@ for (const [name, value] of [
   [
     "invalid Codex model",
     '{"web-kits":{"search":{"codex":{"model":"bad model"}}}}',
-  ],
-  [
-    "embedded credential",
-    '{"web-kits":{"search":{"searxng":{"apiKey":"secret"}}}}',
   ],
 ] as const) {
   test(`invalid config is rejected: ${name}`, () => {
@@ -372,7 +391,10 @@ test("agent directory override and home expansion match Pi", (t) => {
 test("configuration updates preserve sections and reject invalid writes", (t) => {
   const dir = mkdtempSync(join(tmpdir(), "pi-kits-update-"));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
-  writeFileSync(getPiKitsConfigPath(dir), '{"usage":{"enabled":false}}');
+  writeFileSync(
+    getPiKitsConfigPath(dir),
+    '{"usage":{"enabled":false,"future":1},"future":{"value":true}}',
+  );
   updatePiKitsConfig(
     (raw) => ({
       ...raw,
@@ -382,6 +404,11 @@ test("configuration updates preserve sections and reject invalid writes", (t) =>
   );
   assert.equal(readPiKitsConfig(dir).stats.enabled, false);
   assert.equal(readPiKitsConfig(dir).commit.lastModel, "provider/model");
+  assert.deepEqual(JSON.parse(readFileSync(getPiKitsConfigPath(dir), "utf8")), {
+    usage: { enabled: false, future: 1 },
+    future: { value: true },
+    workflow: { commit: { lastModel: "provider/model" } },
+  });
   const before = readFileSync(getPiKitsConfigPath(dir), "utf8");
   assert.throws(
     () =>

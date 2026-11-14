@@ -16,7 +16,7 @@ const integer = (minimum: number, maximum: number, value?: number) =>
     }),
   );
 const section = <P extends TProperties>(properties: P) =>
-  Type.Optional(Type.Object(properties, { additionalProperties: false }));
+  Type.Optional(Type.Object(properties, { additionalProperties: true }));
 const feature = () => section({ enabled });
 const executable = (value: string) =>
   Type.Optional(Type.String({ minLength: 1, pattern: "\\S", default: value }));
@@ -39,7 +39,7 @@ const WORKER_EXTENSION_SOURCE_SCHEMA = Type.Union([
       source: extensionSource(),
       extensions: Type.Array(extensionSource(), { uniqueItems: true }),
     },
-    { additionalProperties: false },
+    { additionalProperties: true },
   ),
 ]);
 export type WorkerExtensionSource = Static<
@@ -118,7 +118,7 @@ export const PI_KITS_SCHEMA = Type.Object(
       Type.Object(
         { enabled, ...workspaceFeatures },
         {
-          additionalProperties: false,
+          additionalProperties: true,
           deprecated: true,
           description: "Legacy group; prefer top-level extension settings.",
         },
@@ -128,7 +128,7 @@ export const PI_KITS_SCHEMA = Type.Object(
       Type.Object(
         { enabled, ...usageFeatures },
         {
-          additionalProperties: false,
+          additionalProperties: true,
           deprecated: true,
           description: "Legacy group; prefer top-level extension settings.",
         },
@@ -138,7 +138,7 @@ export const PI_KITS_SCHEMA = Type.Object(
       Type.Object(
         { enabled, ...workflowFeatures },
         {
-          additionalProperties: false,
+          additionalProperties: true,
           deprecated: true,
           description: "Legacy group; prefer top-level extension settings.",
         },
@@ -189,7 +189,7 @@ export const PI_KITS_SCHEMA = Type.Object(
     $schema: "https://json-schema.org/draft/2020-12/schema",
     $id: "https://raw.githubusercontent.com/aqua2k1/pi-kits/main/pi-kits.schema.json",
     title: "Pi Kits configuration",
-    additionalProperties: false,
+    additionalProperties: true,
   },
 );
 

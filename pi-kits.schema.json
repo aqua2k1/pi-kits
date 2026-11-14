@@ -30,7 +30,7 @@
           "default": "yazi"
         }
       },
-      "additionalProperties": false
+      "additionalProperties": true
     },
     "open": {
       "type": "object",
@@ -40,7 +40,7 @@
           "default": true
         }
       },
-      "additionalProperties": false
+      "additionalProperties": true
     },
     "preview": {
       "type": "object",
@@ -50,7 +50,7 @@
           "default": true
         }
       },
-      "additionalProperties": false
+      "additionalProperties": true
     },
     "contextPreview": {
       "type": "object",
@@ -60,7 +60,7 @@
           "default": true
         }
       },
-      "additionalProperties": false
+      "additionalProperties": true
     },
     "canvas-note": {
       "type": "object",
@@ -93,7 +93,7 @@
           "default": [10000, 20000]
         }
       },
-      "additionalProperties": false
+      "additionalProperties": true
     },
     "providerUsage": {
       "type": "object",
@@ -115,7 +115,7 @@
           "default": 15000
         }
       },
-      "additionalProperties": false
+      "additionalProperties": true
     },
     "stats": {
       "type": "object",
@@ -125,7 +125,7 @@
           "default": true
         }
       },
-      "additionalProperties": false
+      "additionalProperties": true
     },
     "askUserQuestion": {
       "type": "object",
@@ -135,7 +135,7 @@
           "default": true
         }
       },
-      "additionalProperties": false
+      "additionalProperties": true
     },
     "subagent": {
       "type": "object",
@@ -178,7 +178,7 @@
                     "uniqueItems": true
                   }
                 },
-                "additionalProperties": false
+                "additionalProperties": true
               }
             ]
           },
@@ -187,7 +187,7 @@
           "default": ["builtin:codemode", "builtin:tool-search"]
         }
       },
-      "additionalProperties": false
+      "additionalProperties": true
     },
     "commit": {
       "type": "object",
@@ -222,7 +222,7 @@
           "default": true
         }
       },
-      "additionalProperties": false
+      "additionalProperties": true
     },
     "notify": {
       "type": "object",
@@ -238,7 +238,7 @@
           "default": 1000
         }
       },
-      "additionalProperties": false
+      "additionalProperties": true
     },
     "workspace": {
       "type": "object",
@@ -273,7 +273,7 @@
               "default": "yazi"
             }
           },
-          "additionalProperties": false
+          "additionalProperties": true
         },
         "open": {
           "type": "object",
@@ -283,7 +283,7 @@
               "default": true
             }
           },
-          "additionalProperties": false
+          "additionalProperties": true
         },
         "preview": {
           "type": "object",
@@ -293,7 +293,7 @@
               "default": true
             }
           },
-          "additionalProperties": false
+          "additionalProperties": true
         },
         "contextPreview": {
           "type": "object",
@@ -303,10 +303,10 @@
               "default": true
             }
           },
-          "additionalProperties": false
+          "additionalProperties": true
         }
       },
-      "additionalProperties": false,
+      "additionalProperties": true,
       "deprecated": true,
       "description": "Legacy group; prefer top-level extension settings."
     },
@@ -337,7 +337,7 @@
               "default": 15000
             }
           },
-          "additionalProperties": false
+          "additionalProperties": true
         },
         "stats": {
           "type": "object",
@@ -347,10 +347,10 @@
               "default": true
             }
           },
-          "additionalProperties": false
+          "additionalProperties": true
         }
       },
-      "additionalProperties": false,
+      "additionalProperties": true,
       "deprecated": true,
       "description": "Legacy group; prefer top-level extension settings."
     },
@@ -369,7 +369,7 @@
               "default": true
             }
           },
-          "additionalProperties": false
+          "additionalProperties": true
         },
         "subagent": {
           "type": "object",
@@ -412,7 +412,7 @@
                         "uniqueItems": true
                       }
                     },
-                    "additionalProperties": false
+                    "additionalProperties": true
                   }
                 ]
               },
@@ -421,7 +421,7 @@
               "default": ["builtin:codemode", "builtin:tool-search"]
             }
           },
-          "additionalProperties": false
+          "additionalProperties": true
         },
         "commit": {
           "type": "object",
@@ -456,7 +456,7 @@
               "default": true
             }
           },
-          "additionalProperties": false
+          "additionalProperties": true
         },
         "notify": {
           "type": "object",
@@ -472,10 +472,10 @@
               "default": 1000
             }
           },
-          "additionalProperties": false
+          "additionalProperties": true
         }
       },
-      "additionalProperties": false,
+      "additionalProperties": true,
       "deprecated": true,
       "description": "Legacy group; prefer top-level extension settings."
     },
@@ -532,7 +532,7 @@
                   ]
                 }
               },
-              "additionalProperties": false
+              "additionalProperties": true
             },
             "timeoutMs": {
               "type": "integer",
@@ -557,10 +557,10 @@
                   "default": "gpt-5.4"
                 }
               },
-              "additionalProperties": false
+              "additionalProperties": true
             }
           },
-          "additionalProperties": false
+          "additionalProperties": true
         },
         "fetch": {
           "type": "object",
@@ -613,17 +613,17 @@
                   "pattern": "\\S"
                 }
               },
-              "additionalProperties": false
+              "additionalProperties": true
             }
           },
-          "additionalProperties": false
+          "additionalProperties": true
         }
       },
-      "additionalProperties": false
+      "additionalProperties": true
     }
   },
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://raw.githubusercontent.com/aqua2k1/pi-kits/main/pi-kits.schema.json",
   "title": "Pi Kits configuration",
-  "additionalProperties": false
+  "additionalProperties": true
 }

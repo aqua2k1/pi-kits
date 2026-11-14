@@ -270,9 +270,9 @@ test("unified config: web section is read without merging old files", async () =
     assert.equal(snapshot.source, "pi-kits");
     assert.equal(snapshot.configPath, getConfigPath(directory));
     assert.deepEqual(snapshot.rawConfig, { search: { maxResults: 2 } });
-    await assert.rejects(
-      readConfig(join(directory, "web-tools-config.json")),
-      invalidConfig,
+    assert.deepEqual(
+      await readConfig(join(directory, "web-tools-config.json")),
+      {},
     );
     assert.equal(
       resolveConfig(snapshot.rawConfig, {}).fetch.timeoutMs,
@@ -326,15 +326,12 @@ test("unified config: explicit paths read exactly that file using the root schem
       configPath: path,
       source: "pi-kits",
     });
-    for (const text of [
-      '{"search":{}}',
-      '{"fetch":{}}',
-      '{"enabled":false}',
-      "not-json",
-    ]) {
+    for (const text of ['{"search":{}}', '{"fetch":{}}', '{"enabled":false}']) {
       await writeFile(path, text);
-      await assert.rejects(readConfig(path), invalidConfig);
+      assert.deepEqual(await readConfig(path), {});
     }
+    await writeFile(path, "not-json");
+    await assert.rejects(readConfig(path), invalidConfig);
     await assert.rejects(readConfig(directory), invalidConfig);
   });
 });
