@@ -38,7 +38,8 @@ flowchart LR
 | `runtime/pi/extensions.ts` | 扩展源解析和包声明资源选择 |
 | `runtime/codex/config.ts`、`runtime/codex/schema.ts` | 会话开关、每轮审阅目标和工具参数结构 |
 | `runtime/codex/index.ts` | 私有 app-server、线程控制、事件转换与回复补读 |
-| `runtime/codex/transport.ts` | Bearer 认证 WebSocket JSON-RPC、请求边界和服务端请求处理 |
+| `runtime/transport/websocket.ts`、`runtime/transport/json-rpc.ts` | WebSocket 连接、JSON-RPC 请求关联、超时和断线收尾 |
+| `runtime/codex/transport.ts` | Bearer 认证配置、Codex 服务端请求策略和原生审批接管 |
 | `runtime/codex/guardian.ts`、`runtime/codex/guardian.mjs` | POSIX 进程组、父进程 IPC 与后端清理 |
 | `mux/index.ts` | `MuxAdapter` 终端和视图契约 |
 | `mux/registry.ts` | `registerMux` 内部注册列表与首个环境匹配 |
@@ -98,6 +99,7 @@ sequenceDiagram
 - Herdr 句柄仅属于创建它的适配器实例，销毁前核对窗格、终端、工作区及停止结果；部分启动失败交回清理句柄，防止误关外部终端或丢失所有权。
 - Pi 入队前冻结父分支，只在克隆的上下文投影中隐藏未完成工具调用，保留原始历史，防止修改父会话或伪造工具结果。
 - Pi worker 以 `agent_settled` 作为整批完成边界，父连接或协议失败触发关闭，防止重试中间结果被当作完成或孤立 worker 继续执行。
+- 通用 transport 只处理连接及 JSON-RPC 机制，Codex 适配层保留认证配置和审批策略，防止其他 runtime 继承 Codex 语义；连接打开时同步安装消息处理器，防止丢失首批事件。
 - Codex 后端、原生终端和认证目录归同一会话拥有，guardian 关闭等待退出确认，防止终端脱离或父进程退出遗留执行资源。
 - 包资源名从 `extensionResources` 读取并限于启用的 Pi 清单路径，防止名称猜测或路径越界加载扩展。
 - 展示组件销毁时退订并停表，展示和通知回调失败不改执行结果，防止 UI 故障中断任务或遗留刷新资源。
@@ -122,7 +124,8 @@ npm test --workspace=pi-subagent
 | `runtime/pi/config.test.ts`、`runtime/pi/index.test.ts`、`runtime/pi/extensions.test.ts` | 配置、启动参数与扩展资源解析 |
 | `runtime/pi/clone.test.ts`、`runtime/pi/inheritance.test.ts`、`runtime/pi/worker.test.ts` | 快照、上下文投影、协议、批次、原生交互 |
 | `runtime/codex/config.test.ts`、`runtime/codex/call-config.test.ts`、`runtime/codex/schema.test.ts` | 开关、每轮审阅目标和参数结构 |
-| `runtime/codex/index.test.ts`、`runtime/codex/transport.test.ts`、`runtime/codex/guardian.test.ts` | RPC、补读、认证、轮次、终端和进程组清理 |
+| `runtime/transport/websocket.test.ts`、`runtime/transport/json-rpc.test.ts` | 连接边界、请求关联、容量限制、超时及断线收尾 |
+| `runtime/codex/index.test.ts`、`runtime/codex/transport.test.ts`、`runtime/codex/guardian.test.ts` | 补读、认证、审批策略、轮次、终端和进程组清理 |
 | `ui/components.test.ts`、`ui/renderers.test.ts`、`ui/status-widget-click.test.ts` | 状态区、面板、结果展示和鼠标行为 |
 
 `tests/herdr-live.ts` 需要显式启用，会调用真实模型并创建 Herdr 资源；其环境变量 `PI_KITS_CODEX_BIN` 可指定 `<Codex可执行文件绝对路径>`：

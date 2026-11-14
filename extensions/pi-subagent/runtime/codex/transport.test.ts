@@ -46,61 +46,6 @@ async function fixture(
   return { socket, transport, notifications, failures };
 }
 
-test("RPC correlates responses independently of notification/response order", async () => {
-  const f = await fixture();
-  const a = f.transport.request("a", { one: 1 });
-  const b = f.transport.request("b", {});
-  f.socket.message({
-    method: "turn/started",
-    params: { turn: { id: "early" } },
-  });
-  f.socket.message({ id: f.socket.sent[1].id, result: "b" });
-  f.socket.message({ id: f.socket.sent[0].id, result: "a" });
-  assert.deepEqual(await Promise.all([a, b]), ["a", "b"]);
-  assert.equal(f.notifications[0].method, "turn/started");
-  f.transport.close();
-});
-
-test("RPC errors reject only their request and release pending slot", async () => {
-  const f = await fixture();
-  const request = f.transport.request("turn/steer", {});
-  f.socket.message({
-    id: f.socket.sent[0].id,
-    error: { code: -32000, message: "wrong turn" },
-  });
-  await assert.rejects(request, /wrong turn/);
-  const next = f.transport.request("next", {});
-  f.socket.message({ id: f.socket.sent[1].id, result: {} });
-  await next;
-  assert.equal(f.failures.length, 0);
-  f.transport.close();
-});
-
-test("pending RPCs are bounded to 32 and rejected together on disconnect", async () => {
-  const f = await fixture();
-  const requests = Array.from({ length: 32 }, () =>
-    f.transport.request("wait", {}),
-  );
-  const settled = Promise.allSettled(requests);
-  await assert.rejects(f.transport.request("overflow", {}), /pending limit/);
-  assert.equal(f.socket.sent.length, 32);
-  f.socket.emit("close");
-  assert.ok((await settled).every((entry) => entry.status === "rejected"));
-  assert.equal(f.failures.length, 1);
-  await assert.rejects(f.transport.request("after", {}), /disconnected/);
-});
-
-test("timeout fails ambiguous transport and rejects all other pending requests", async () => {
-  const f = await fixture(20);
-  const settled = Promise.allSettled([
-    f.transport.request("mutating", {}),
-    f.transport.request("other", {}),
-  ]);
-  assert.ok((await settled).every((entry) => entry.status === "rejected"));
-  assert.equal(f.socket.terminated, true);
-  assert.equal(f.failures.length, 1);
-});
-
 test("approval, user-input and unknown server requests always receive error and blocked notification", async () => {
   const f = await fixture();
   for (const method of [
@@ -226,20 +171,6 @@ test("async policy failure disconnects and rejects pending RPCs without denying 
     await assert.rejects(f.transport.request("after", {}), /disconnected/);
   } finally {
     f.transport.close();
-  }
-});
-
-test("malformed and oversized protocol frames disconnect instead of leaking pending work", async () => {
-  for (const frame of [
-    "{invalid",
-    JSON.stringify(null),
-    "x".repeat(1024 * 1024 + 1),
-  ]) {
-    const f = await fixture();
-    const request = f.transport.request("wait", {});
-    f.socket.emit("message", frame);
-    await assert.rejects(request, /Invalid Codex protocol/);
-    assert.equal(f.failures.length, 1);
   }
 });
 
