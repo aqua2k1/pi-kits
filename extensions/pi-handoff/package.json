@@ -13,6 +13,9 @@
       "./index.ts"
     ]
   },
+  "scripts": {
+    "test": "node --import tsx --test *.test.ts"
+  },
   "peerDependencies": {
     "@earendil-works/pi-ai": "*",
     "@earendil-works/pi-coding-agent": "*",
