@@ -54,10 +54,10 @@ test("workspace entries keep public names without implicit sibling registration"
   }
 });
 
-test("disabled workspace registers no commands, tools, shortcuts or hooks", () => {
+test("disabled canonical extensions register no commands, tools, shortcuts or hooks", () => {
   writeFileSync(
     join(agentDir, "pi-kits.json"),
-    '{"workspace":{"enabled":false}}',
+    '{"pi-open":{"enabled":false},"pi-output-viewer":{"enabled":false}}',
   );
   for (const entry of [open, preview]) {
     const h = host();
@@ -69,16 +69,44 @@ test("disabled workspace registers no commands, tools, shortcuts or hooks", () =
   }
 });
 
-test("workspace feature switches disable only their own entry", () => {
+test("directory-named settings control their own extension and ignore removed group switches", () => {
+  for (const [entry, key] of [
+    [open, "pi-open"],
+    [preview, "pi-output-viewer"],
+  ] as const) {
+    writeFileSync(
+      join(agentDir, "pi-kits.json"),
+      JSON.stringify({ [key]: { enabled: false } }),
+    );
+    const disabled = host();
+    entry(disabled.pi);
+    assert.equal(disabled.commands.size, 0);
+    assert.deepEqual(disabled.tools, []);
+    assert.deepEqual(disabled.shortcuts, []);
+
+    writeFileSync(
+      join(agentDir, "pi-kits.json"),
+      JSON.stringify({
+        workspace: { enabled: false },
+        [key]: { enabled: true },
+      }),
+    );
+    const enabled = host();
+    entry(enabled.pi);
+    assert.equal(enabled.commands.size, 1);
+  }
+});
+
+test("canonical feature switches disable only their own entry", () => {
   const cases = [
-    [open, "open"],
-    [preview, "preview"],
+    [open, "pi-open"],
+    [preview, "pi-output-viewer"],
   ] as const;
   for (const [entry, feature] of cases) {
     writeFileSync(
       join(agentDir, "pi-kits.json"),
       JSON.stringify({
-        workspace: { [feature]: { enabled: false } },
+        [feature]: { enabled: false },
       }),
     );
     const h = host();

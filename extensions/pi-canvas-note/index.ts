@@ -33,7 +33,7 @@ import {
 } from "./server/index.ts";
 
 export default function canvasNoteExtension(pi: ExtensionAPI) {
-  const config = readPiKitsConfig()["canvas-note"];
+  const config = readPiKitsConfig()["pi-canvas-note"];
   if (!config.enabled) return;
   const feedbackInbox = createFeedbackInbox(pi);
   let store: DocumentStore | undefined;

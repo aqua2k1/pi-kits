@@ -57,7 +57,7 @@ test("new sources survive parsing, file loading and shared resolution", async ()
   await withConfigDirectory(async (directory) => {
     await writeFile(
       getConfigPath(directory),
-      JSON.stringify({ "web-kits": { search } }),
+      JSON.stringify({ "pi-web-kits": { search } }),
     );
     const raw = await readConfig(getConfigPath(directory));
     assert.deepEqual(raw, { search });
@@ -90,7 +90,7 @@ test("new sources reject invalid and mixed settings through all extension entrie
     await withConfigDirectory(async (directory) => {
       await writeFile(
         getConfigPath(directory),
-        JSON.stringify({ "web-kits": { search } }),
+        JSON.stringify({ "pi-web-kits": { search } }),
       );
       await assert.rejects(readConfig(getConfigPath(directory)), invalidConfig);
     });
@@ -277,7 +277,7 @@ test("obsolete GitHub settings are ignored, including invalid types", async () =
     await withConfigDirectory(async (directory) => {
       await writeFile(
         getConfigPath(directory),
-        JSON.stringify({ "web-kits": { fetch: { github } } }),
+        JSON.stringify({ "pi-web-kits": { fetch: { github } } }),
       );
       const snapshot = await readConfigSnapshot(getConfigPath(directory));
       assert.deepEqual(snapshot.rawConfig.fetch?.github, { enabled });
@@ -348,7 +348,7 @@ test("unified config: web section is read without merging old files", async () =
     );
     await writeFile(
       getConfigPath(directory),
-      JSON.stringify({ "web-kits": { search: { maxResults: 2 } } }),
+      JSON.stringify({ "pi-web-kits": { search: { maxResults: 2 } } }),
     );
     const snapshot = await readConfigSnapshot(getConfigPath(directory));
     assert.equal(snapshot.source, "pi-kits");
@@ -397,14 +397,17 @@ test("unified config: missing file uses defaults and never reads old files", asy
 
 test("unified config: explicit paths read exactly that file using the root schema", async () => {
   await withConfigDirectory(async (directory) => {
-    await writeFile(getConfigPath(directory), '{"web-kits":{"enabled":false}}');
+    await writeFile(
+      getConfigPath(directory),
+      '{"pi-web-kits":{"enabled":false}}',
+    );
     const path = join(directory, "custom-config.json");
     assert.deepEqual(await readConfigSnapshot(path), {
       rawConfig: {},
       configPath: path,
       source: "defaults",
     });
-    await writeFile(path, '{"web-kits":{"search":{"maxResults":4}}}');
+    await writeFile(path, '{"pi-web-kits":{"search":{"maxResults":4}}}');
     assert.deepEqual(await readConfigSnapshot(path), {
       rawConfig: { search: { maxResults: 4 } },
       configPath: path,
@@ -426,12 +429,12 @@ test("unified config: invalid new files never fall back", async () => {
     for (const text of [
       "not-json",
       "[]",
-      '{"web-kits":null}',
-      '{"web-kits":{"enabled":"false"}}',
-      '{"web-kits":{"search":{"enabled":0}}}',
-      '{"web-kits":{"fetch":{"enabled":null}}}',
-      '{"web-kits":{"search":{"maxResults":0}}}',
-      '{"web-kits":{"search":{"searxng":{"apiKey":"synthetic-secret"}}}}',
+      '{"pi-web-kits":null}',
+      '{"pi-web-kits":{"enabled":"false"}}',
+      '{"pi-web-kits":{"search":{"enabled":0}}}',
+      '{"pi-web-kits":{"fetch":{"enabled":null}}}',
+      '{"pi-web-kits":{"search":{"maxResults":0}}}',
+      '{"pi-web-kits":{"search":{"searxng":{"apiKey":"synthetic-secret"}}}}',
     ]) {
       await writeFile(getConfigPath(directory), text);
       await assert.rejects(
@@ -443,7 +446,7 @@ test("unified config: invalid new files never fall back", async () => {
     // Shared validation also rejects routing conflicts before file loading.
     await writeFile(
       getConfigPath(directory),
-      '{"web-kits":{"search":{"routing":{"provider":"searxng","fallbackProvider":"searxng"}}}}',
+      '{"pi-web-kits":{"search":{"routing":{"provider":"searxng","fallbackProvider":"searxng"}}}}',
     );
     await assert.rejects(readConfig(getConfigPath(directory)), invalidConfig);
   });
@@ -454,7 +457,7 @@ test("unified config: enabled switches survive reading and default independently
     await writeFile(
       getConfigPath(directory),
       JSON.stringify({
-        "web-kits": {
+        "pi-web-kits": {
           enabled: false,
           search: { enabled: false },
           fetch: { enabled: false },

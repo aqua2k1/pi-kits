@@ -327,16 +327,18 @@ for (const [name, paths] of [
   });
 }
 
-test("legacy disabled groups remain accepted by the real Pi loader", (t) => {
+test("canonical disabled settings remain accepted by the real Pi loader", (t) => {
   const dir = mkdtempSync(join(tmpdir(), "pi-kits-disabled-"));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
   writeFileSync(
     join(dir, "pi-kits.json"),
     JSON.stringify({
-      workspace: { enabled: false },
-      usage: { enabled: false },
-      workflow: { enabled: false },
-      "web-kits": { enabled: false },
+      "pi-canvas-note": { enabled: false },
+      "pi-open": { enabled: false },
+      "pi-output-viewer": { enabled: false },
+      "pi-ask": { enabled: false },
+      "pi-subagent": { enabled: false },
+      "pi-web-kits": { enabled: false },
     }),
   );
   assert.doesNotMatch(smoke([root], dir), /--commit/);

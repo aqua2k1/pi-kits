@@ -245,8 +245,8 @@ async function openPreview(
 }
 
 export default function (pi: ExtensionAPI) {
-  const config = readPiKitsConfig();
-  if (!config.preview.enabled) return;
+  const config = readPiKitsConfig()["pi-output-viewer"];
+  if (!config.enabled) return;
 
   pi.registerCommand("output-viewer", {
     description:
@@ -267,7 +267,7 @@ export default function (pi: ExtensionAPI) {
       await openPreview(ctx, {
         includeThinking: parsed.includeThinking,
         latestOnly: false,
-        editor: config.terminal.editor,
+        editor: config.editor,
       });
     },
   });
@@ -278,7 +278,7 @@ export default function (pi: ExtensionAPI) {
       await openPreview(ctx, {
         includeThinking: false,
         latestOnly: true,
-        editor: config.terminal.editor,
+        editor: config.editor,
       });
     },
   });

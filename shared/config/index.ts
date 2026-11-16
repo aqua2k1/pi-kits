@@ -59,12 +59,12 @@ export function parsePiKitsFile(text: string): PiKitsFileConfig {
       `Invalid pi-kits.json: ${field} does not match the configuration schema.`,
     );
   }
-  const range = value["canvas-note"]?.portRange;
+  const range = value["pi-canvas-note"]?.portRange;
   if (range && range[0] > range[1])
     throw new Error(
-      "Invalid pi-kits.json: canvas-note.portRange must be ordered [minimum, maximum].",
+      "Invalid pi-kits.json: pi-canvas-note.portRange must be ordered [minimum, maximum].",
     );
-  const search = value["web-kits"]?.search;
+  const search = value["pi-web-kits"]?.search;
   if (
     search?.sources?.web !== undefined &&
     (search.routing !== undefined || search.codex !== undefined)
@@ -87,7 +87,7 @@ export function parsePiKitsFile(text: string): PiKitsFileConfig {
     normalizeProvider(routing?.provider) ?? WEB_DEFAULTS.provider;
   if (provider === normalizeProvider(routing?.fallbackProvider)) {
     throw new Error(
-      "Invalid pi-kits.json: web-kits.search.routing providers must differ.",
+      "Invalid pi-kits.json: pi-web-kits.search.routing providers must differ.",
     );
   }
   return value;
@@ -128,75 +128,9 @@ export function updatePiKitsConfig(
   }
 }
 
-/** Top-level fields win; legacy group switches still gate legacy features. */
-function mergeLegacyFeature<T extends { enabled?: boolean }>(
-  legacy: T | undefined,
-  groupEnabled: boolean | undefined,
-  current: T | undefined,
-): T & { enabled: boolean } {
-  return {
-    ...legacy,
-    ...current,
-    enabled:
-      current?.enabled ?? (groupEnabled !== false && legacy?.enabled !== false),
-  } as T & { enabled: boolean };
-}
-
-function normalizeLegacyConfig(raw: PiKitsFileConfig): PiKitsFileConfig {
-  return {
-    ...raw,
-    terminal: mergeLegacyFeature(
-      raw.workspace?.terminal,
-      raw.workspace?.enabled,
-      raw.terminal,
-    ),
-    open: mergeLegacyFeature(
-      raw.workspace?.open,
-      raw.workspace?.enabled,
-      raw.open,
-    ),
-    preview: mergeLegacyFeature(
-      raw.workspace?.preview,
-      raw.workspace?.enabled,
-      raw.preview,
-    ),
-    contextPreview: mergeLegacyFeature(
-      raw.workspace?.contextPreview,
-      raw.workspace?.enabled,
-      raw.contextPreview,
-    ),
-    providerUsage: mergeLegacyFeature(
-      raw.usage?.providerUsage,
-      raw.usage?.enabled,
-      raw.providerUsage,
-    ),
-    stats: mergeLegacyFeature(raw.usage?.stats, raw.usage?.enabled, raw.stats),
-    askUserQuestion: mergeLegacyFeature(
-      raw.workflow?.askUserQuestion,
-      raw.workflow?.enabled,
-      raw.askUserQuestion,
-    ),
-    subagent: mergeLegacyFeature(
-      raw.workflow?.subagent,
-      raw.workflow?.enabled,
-      raw.subagent,
-    ),
-    commit: mergeLegacyFeature(
-      raw.workflow?.commit,
-      raw.workflow?.enabled,
-      raw.commit,
-    ),
-    notify: mergeLegacyFeature(
-      raw.workflow?.notify,
-      raw.workflow?.enabled,
-      raw.notify,
-    ),
-  };
-}
-
 export function resolvePiKitsConfig(raw: PiKitsFileConfig = {}) {
-  raw = normalizeLegacyConfig(parsePiKitsFile(JSON.stringify(raw)));
-  const search = raw["web-kits"]?.search;
+  raw = parsePiKitsFile(JSON.stringify(raw));
+  const search = raw["pi-web-kits"]?.search;
   const legacy = search?.routing;
   const provider = normalizeProvider(legacy?.provider) ?? WEB_DEFAULTS.provider;
   const fallbackProvider = normalizeProvider(legacy?.fallbackProvider);
@@ -225,61 +159,36 @@ export function resolvePiKitsConfig(raw: PiKitsFileConfig = {}) {
     github: { enabled: search?.sources?.github?.enabled ?? true },
   };
   return {
-    terminal: {
-      enabled: raw.terminal?.enabled ?? true,
-      editor: raw.terminal?.editor ?? "nvim",
-      gitUI: raw.terminal?.gitUI ?? "lazygit",
-      fileManager: raw.terminal?.fileManager ?? "yazi",
+    "pi-canvas-note": {
+      enabled: raw["pi-canvas-note"]?.enabled ?? true,
+      host: raw["pi-canvas-note"]?.host,
+      portRange: [
+        ...(raw["pi-canvas-note"]?.portRange ?? [10_000, 20_000]),
+      ] as [number, number],
     },
-    "canvas-note": {
-      enabled: raw["canvas-note"]?.enabled ?? true,
-      host: raw["canvas-note"]?.host,
-      portRange: [...(raw["canvas-note"]?.portRange ?? [10_000, 20_000])] as [
-        number,
-        number,
-      ],
+    "pi-open": { enabled: raw["pi-open"]?.enabled ?? true },
+    "pi-output-viewer": {
+      enabled: raw["pi-output-viewer"]?.enabled ?? true,
+      editor: raw["pi-output-viewer"]?.editor ?? "nvim",
     },
-    open: { enabled: raw.open?.enabled ?? true },
-    preview: { enabled: raw.preview?.enabled ?? true },
-    contextPreview: {
-      enabled: raw.contextPreview?.enabled ?? true,
-    },
-    providerUsage: {
-      enabled: raw.providerUsage?.enabled ?? true,
-      intervalMs: raw.providerUsage?.intervalMs ?? 600_000,
-      timeoutMs: raw.providerUsage?.timeoutMs ?? 15_000,
-    },
-    stats: { enabled: raw.stats?.enabled ?? true },
-    askUserQuestion: {
-      enabled: raw.askUserQuestion?.enabled ?? true,
-    },
-    subagent: {
-      enabled: raw.subagent?.enabled ?? true,
-      maxConcurrent: raw.subagent?.maxConcurrent ?? 4,
+    "pi-ask": { enabled: raw["pi-ask"]?.enabled ?? true },
+    "pi-subagent": {
+      enabled: raw["pi-subagent"]?.enabled ?? true,
+      maxConcurrent: raw["pi-subagent"]?.maxConcurrent ?? 4,
       extensionAllowlist: (
-        raw.subagent?.extensionAllowlist ?? [...SUBAGENT_DEFAULT_EXTENSIONS]
+        raw["pi-subagent"]?.extensionAllowlist ?? [
+          ...SUBAGENT_DEFAULT_EXTENSIONS,
+        ]
       ).map((entry) =>
         typeof entry === "string"
           ? entry
           : { source: entry.source, extensions: [...entry.extensions] },
       ),
     },
-    commit: {
-      enabled: raw.commit?.enabled ?? true,
-      model: raw.commit?.model,
-      lastModel: raw.commit?.lastModel,
-      thinking: raw.commit?.thinking,
-      timeoutMs: raw.commit?.timeoutMs ?? 120_000,
-      rememberModel: raw.commit?.rememberModel ?? true,
-    },
-    notify: {
-      enabled: raw.notify?.enabled ?? true,
-      quietPeriodMs: raw.notify?.quietPeriodMs ?? 1_000,
-    },
-    "web-kits": {
-      enabled: raw["web-kits"]?.enabled ?? true,
+    "pi-web-kits": {
+      enabled: raw["pi-web-kits"]?.enabled ?? true,
       search: {
-        enabled: raw["web-kits"]?.search?.enabled ?? true,
+        enabled: raw["pi-web-kits"]?.search?.enabled ?? true,
         sources,
         /** @internal Derived compatibility fields. */
         routing: {
@@ -288,20 +197,20 @@ export function resolvePiKitsConfig(raw: PiKitsFileConfig = {}) {
           fallbackProvider: routing[1] ?? fallbackProvider,
         },
         timeoutMs:
-          raw["web-kits"]?.search?.timeoutMs ?? WEB_DEFAULTS.searchTimeoutMs,
+          raw["pi-web-kits"]?.search?.timeoutMs ?? WEB_DEFAULTS.searchTimeoutMs,
         maxResults:
-          raw["web-kits"]?.search?.maxResults ?? WEB_DEFAULTS.maxResults,
+          raw["pi-web-kits"]?.search?.maxResults ?? WEB_DEFAULTS.maxResults,
         codex: {
           model: sources.web.codex.model,
         },
       },
       fetch: {
-        enabled: raw["web-kits"]?.fetch?.enabled ?? true,
+        enabled: raw["pi-web-kits"]?.fetch?.enabled ?? true,
         timeoutMs:
-          raw["web-kits"]?.fetch?.timeoutMs ?? WEB_DEFAULTS.fetchTimeoutMs,
+          raw["pi-web-kits"]?.fetch?.timeoutMs ?? WEB_DEFAULTS.fetchTimeoutMs,
         github: {
           enabled:
-            raw["web-kits"]?.fetch?.github?.enabled ??
+            raw["pi-web-kits"]?.fetch?.github?.enabled ??
             WEB_DEFAULTS.githubEnabled,
         },
       },

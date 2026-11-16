@@ -198,7 +198,7 @@ function parseFetchConfig(source: Record<string, unknown>): WebFetchFileConfig {
   return config;
 }
 
-/** Parse the internal web-kits section, not a complete configuration file. */
+/** Parse the internal pi-web-kits section, not a complete configuration file. */
 export function parseConfig(text: string): WebToolsFileConfig {
   let raw: unknown;
   try {
@@ -210,7 +210,7 @@ export function parseConfig(text: string): WebToolsFileConfig {
     return invalid("Web tools configuration must be an object.");
 
   try {
-    parsePiKitsFile(JSON.stringify({ "web-kits": raw }));
+    parsePiKitsFile(JSON.stringify({ "pi-web-kits": raw }));
   } catch {
     return invalid("Web tools configuration is invalid.");
   }
@@ -245,7 +245,7 @@ export async function readConfigSnapshot(
   try {
     const file = parsePiKitsFile(await readFile(path, "utf8"));
     return {
-      rawConfig: parseConfig(JSON.stringify(file["web-kits"] ?? {})),
+      rawConfig: parseConfig(JSON.stringify(file["pi-web-kits"] ?? {})),
       configPath: path,
       source: "pi-kits",
     };
@@ -272,8 +272,8 @@ export async function readConfig(
 function resolveShared(config: WebToolsFileConfig) {
   try {
     return resolvePiKitsConfig(
-      parsePiKitsFile(JSON.stringify({ "web-kits": config })),
-    )["web-kits"];
+      parsePiKitsFile(JSON.stringify({ "pi-web-kits": config })),
+    )["pi-web-kits"];
   } catch {
     return invalid("Web tools configuration is invalid.");
   }

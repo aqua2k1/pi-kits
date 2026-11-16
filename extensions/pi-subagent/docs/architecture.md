@@ -81,7 +81,7 @@ sequenceDiagram
 - 六个工具共享 `subagent` namespace 元数据，保持 Codemode 分组与发现入口一致；工具名称、参数和默认 direct 暴露保持不变。
 - `index.ts` 在 worker 标记为 `1` 时直接返回；Pi 后端显式加载通信桥，防止子 Pi 递归注册父协调工具。
 - 各 mux 模块自行调用 `registerMux` 加入内部列表；`providers.ts` 先导入 `herdr-app` 再导入 `herdr`，启动时按注册顺序取首个环境匹配项，防止双环境标记改变选择优先级。
-- 新版 `herdr-app` 以 `HC_TERMINAL_ID` 非空为匹配条件，通过 `hc connect` 的 JSONL RPC 管理终端，完整传递 argv、目录和环境；旧版 `herdr` 以 `HERDR_ENV === "1"` 为条件。`subagent.enabled` 默认 `true`，均未匹配时不注册扩展，配置不参与适配器选择。
+- 新版 `herdr-app` 以 `HC_TERMINAL_ID` 非空为匹配条件，通过 `hc connect` 的 JSONL RPC 管理终端，完整传递 argv、目录和环境；旧版 `herdr` 以 `HERDR_ENV === "1"` 为条件。`pi-subagent.enabled` 默认 `true`，均未匹配时不注册扩展，配置不参与适配器选择。
 - `manager.ts` 和 `MuxAdapter` 契约保持不变；新版仅通过 `hc` 读取父终端的 `herdr.space`，用独立 `herdr.tab` 和 `terminal.keep` 请求标签页，防止假定 app 与任务同机；焦点属于客户端本地状态，聚焦操作提示手动切换。
 - 新版视图通过 `doc.get` 的 `herdr-app` 共享布局核对附着；请求未确认时探测报错而非声明存活或触发释放。关闭先清理所属标签及 keep，再以版本化 `doc.set` 只移除本任务窗格，冲突重读并保留其他窗格和未知字段，防止误关任务或覆盖客户端变更。
 - 新版终端以随机所有权标签和父终端核对身份；启动响应丢失时保留唯一名称及清理句柄，销毁确认退出后再移除记录，防止误杀外部终端或丢失清理责任。

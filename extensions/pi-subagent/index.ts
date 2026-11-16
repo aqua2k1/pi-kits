@@ -549,7 +549,7 @@ export function registerSubagents(
 export default function subagentExtension(pi: ExtensionAPI): void {
   // Workers inherit the mux environment but must not become coordinators.
   if (process.env.PI_KITS_SUBAGENT_WORKER === "1") return;
-  const { subagent } = readPiKitsConfig();
+  const subagent = readPiKitsConfig()["pi-subagent"];
   if (!subagent.enabled) return;
 
   let context: ExtensionContext | undefined;

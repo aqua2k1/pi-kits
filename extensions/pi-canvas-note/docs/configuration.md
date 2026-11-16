@@ -1,6 +1,6 @@
 # 配置
 
-配置位置：`<agent-dir>/pi-kits.json`，配置键 `canvas-note`；修改后 `/reload` 生效。
+配置位置：`<agent-dir>/pi-kits.json`，配置键 `pi-canvas-note`；修改后 `/reload` 生效。
 
 | 键 | 类型 | 默认值 | 说明 |
 |---|---|---|---|
@@ -12,7 +12,7 @@
 
 ```json
 {
-  "canvas-note": {
+  "pi-canvas-note": {
     "enabled": true,
     "portRange": [10000, 20000]
   }

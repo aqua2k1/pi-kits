@@ -42,13 +42,12 @@ Alt+P
 
 | 键 | 类型 | 默认值 | 说明 |
 |---|---|---|---|
-| `preview.enabled` | boolean | `true` | 注册命令和快捷键 |
-| `terminal.editor` | string | `"nvim"` | 编辑器可执行文件名或路径，含非空白字符；须接受 `-R` 参数 |
+| `pi-output-viewer.enabled` | boolean | `true` | 注册命令和快捷键 |
+| `pi-output-viewer.editor` | string | `"nvim"` | 编辑器可执行文件名或路径，含非空白字符；须接受 `-R` 参数 |
 
 ```json
 {
-  "preview": { "enabled": true },
-  "terminal": { "editor": "<编辑器可执行文件>" }
+  "pi-output-viewer": { "enabled": true, "editor": "<编辑器可执行文件>" }
 }
 ```
 
@@ -56,5 +55,5 @@ Alt+P
 
 ## 文档
 
-- [共享配置与兼容规则](../../shared/config/README.md)
+- [共享配置与迁移说明](../../shared/config/README.md)
 - [配置校验规则](../../pi-kits.schema.json)

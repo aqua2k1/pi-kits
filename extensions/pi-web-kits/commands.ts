@@ -128,7 +128,7 @@ function statusText(
     `  fetch timeout: ${config.fetch.timeoutMs} ms`,
     `  GitHub fetch: ${fetchEnabled && config.fetch.github.enabled ? "enabled" : "disabled"}`,
     "",
-    "Settings are under web-kits.search and web-kits.fetch in pi-kits.json.",
+    "Settings are under pi-web-kits.search and pi-web-kits.fetch in pi-kits.json.",
     "SearXNG URL and credentials are read from environment variables.",
     "GitHub uses read-only gh api for search, files, directories, root README and brief repository info; no automatic clones.",
   ].join("\n");

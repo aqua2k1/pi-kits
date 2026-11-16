@@ -45,15 +45,15 @@ pi install https://github.com/aqua2k1/pi-kits.git
 
 | 键 | 类型 | 默认值 | 说明 |
 |---|---|---|---|
-| `open.enabled` | boolean | `true` | 注册命令和工具 |
+| `pi-open.enabled` | boolean | `true` | 注册命令和工具 |
 
 ```json
 {
-  "open": { "enabled": true }
+  "pi-open": { "enabled": true }
 }
 ```
 
 ## 文档
 
-- [共享配置与兼容规则](../../shared/config/README.md)
+- [共享配置与迁移说明](../../shared/config/README.md)
 - [配置校验规则](../../pi-kits.schema.json)

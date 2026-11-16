@@ -121,16 +121,19 @@ test("schemas describe the contract while model guidance focuses on purpose", (t
   assert.doesNotMatch(guidance, /cancelled|cancellation|partial|approval/i);
 });
 
-test("factory respects kit and feature switches", (t) => {
+test("factory ignores old keys and respects only the canonical switch", (t) => {
   for (const config of [
     { workflow: { enabled: false } },
     { workflow: { askUserQuestion: { enabled: false } } },
     { askUserQuestion: { enabled: false } },
   ]) {
     const captured = capture(t, config);
-    assert.equal(captured.tool, undefined);
-    assert.equal(captured.handler, undefined);
+    assert.ok(captured.tool);
+    assert.ok(captured.handler);
   }
+  const disabled = capture(t, { "pi-ask": { enabled: false } });
+  assert.equal(disabled.tool, undefined);
+  assert.equal(disabled.handler, undefined);
 });
 
 test("tool rejects no UI and executes in an RPC-style dialog host", async (t) => {

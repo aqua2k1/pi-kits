@@ -15,8 +15,42 @@ import {
   SettingsManager,
 } from "@earendil-works/pi-coding-agent";
 import { WebSocket } from "ws";
+import { useAgentDir } from "../../../tests/helpers/agent-dir.ts";
 import { InsertBlocksToolParams } from "../core/model.ts";
 import canvasNote from "../index.ts";
+
+test("canonical switch disables canvas tools, command and lifecycle handlers", (t) => {
+  useAgentDir(t, { "pi-canvas-note": { enabled: false } });
+  const unexpected = () =>
+    assert.fail("Disabled canvas must not register handlers");
+  canvasNote({
+    registerTool: unexpected,
+    registerCommand: unexpected,
+    on: unexpected,
+  } as unknown as ExtensionAPI);
+});
+
+for (const config of [
+  { "canvas-note": { enabled: false } },
+  { "canvas-note": { enabled: false }, "pi-canvas-note": {} },
+]) {
+  test(`old canvas switch is ignored: ${JSON.stringify(config)}`, (t) => {
+    useAgentDir(t, config);
+    const tools: string[] = [];
+    const commands: string[] = [];
+    canvasNote({
+      registerTool(tool: { name: string }) {
+        tools.push(tool.name);
+      },
+      registerCommand(name: string) {
+        commands.push(name);
+      },
+      on() {},
+    } as unknown as ExtensionAPI);
+    assert.equal(tools.length, 4);
+    assert.deepEqual(commands, ["canvas-note-server"]);
+  });
+}
 
 test("extension registers four tools and the server command; real handlers lazily serve and route browser feedback", async (t) => {
   const agentDir = await mkdtemp(join(tmpdir(), "canvas-note-extension-"));
@@ -34,10 +68,12 @@ test("extension registers four tools and the server command; real handlers lazil
   const address = portProbe.address();
   assert.ok(address && typeof address !== "string");
   const port = address.port;
+  // Other parallel tests may claim the probe port after it is released.
+  const maximumPort = Math.min(port + 32, 65535);
   await new Promise<void>((resolve) => portProbe.close(() => resolve()));
   await writeFile(
     join(agentDir, "pi-kits.json"),
-    JSON.stringify({ "canvas-note": { portRange: [port, port] } }),
+    JSON.stringify({ "pi-canvas-note": { portRange: [port, maximumPort] } }),
   );
   type Tool = {
     name: string;
@@ -131,6 +167,8 @@ test("extension registers four tools and the server command; real handlers lazil
       { type: "math", spec: { latex: "x^2" } },
     ],
   });
+  const servedPort = Number(new URL(String(inserted.url)).port);
+  assert.ok(servedPort >= port && servedPort <= maximumPort);
   assert.equal((await fetch(String(inserted.url))).status, 200);
   assert.equal(statuses.get("canvas-note"), `Canvas Note: ${inserted.url}`);
   const ws = new WebSocket(
@@ -286,7 +324,9 @@ test("real Pi SDK loads Canvas Note and dispatches its lifecycle and tools", asy
   await writeFile(
     join(dir, "pi-kits.json"),
     JSON.stringify({
-      "canvas-note": { portRange: [address.port, address.port] },
+      "pi-canvas-note": {
+        portRange: [address.port, Math.min(address.port + 32, 65535)],
+      },
     }),
   );
   const settingsManager = SettingsManager.inMemory();

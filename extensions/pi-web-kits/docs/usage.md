@@ -12,7 +12,7 @@
 }
 ```
 
-网页搜索按 `search.sources.web.routing` 顺序选择 SearXNG 或 Codex，返回标题、URL 和片段。GitHub 搜索使用本地 `gh api`，例如：
+网页搜索按 `pi-web-kits.search.sources.web.routing` 顺序选择 SearXNG 或 Codex，返回标题、URL 和片段。GitHub 搜索使用本地 `gh api`，例如：
 
 ```json
 { "source": "github", "kind": "repositories", "query": "org:github topic:documentation", "max_results": 5 }
@@ -25,7 +25,7 @@
 | `source` | 必填，`web` 或 `github`；入口仅暴露已启用能力，运行时也拒绝禁用能力 |
 | `kind` | `source=github` 时必填：`repositories`、`code`、`issues`、`pull-requests`、`commits`；网页搜索不传 |
 | `query` | 必填，去除首尾空白后为 1–2000 字符 |
-| `max_results` | 整数 1–10；省略时取 `search.maxResults`，默认 5 |
+| `max_results` | 整数 1–10；省略时取 `pi-web-kits.search.maxResults`，默认 5 |
 | `domains` | 仅 `source=web`；最多 20 个主机名，每项最多 253 字符；去除首尾空白、忽略大小写；`example.com` 包含自身及子域，`*.example.org` 仅含子域 |
 | `recency_days` | 仅 `source=web`；整数 1–3650；近期筛选由服务执行，SearXNG 按 1、7、31 天边界映射为日、周、月，其余映射为年 |
 
@@ -127,7 +127,7 @@ git clone https://github.com/<owner>/<repo>.git <local-directory>
 |---|---|
 | 测试目标 | 必填，`searxng`、`codex-alpha-search`、`github`；`codex` 是 `codex-alpha-search` 别名 |
 
-`enabled` 或 `search.enabled` 关闭时所有搜索测试返回禁用提示；`search.sources.web.enabled` 和 `search.sources.github.enabled` 分别控制网页和 GitHub 测试。
+`pi-web-kits.enabled` 或 `pi-web-kits.search.enabled` 关闭时所有搜索测试返回禁用提示；`pi-web-kits.search.sources.web.enabled` 和 `pi-web-kits.search.sources.github.enabled` 分别控制网页和 GitHub 测试。
 
 ## 相关文档
 

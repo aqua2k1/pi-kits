@@ -1,22 +1,20 @@
 {
   "$schema": "https://raw.githubusercontent.com/aqua2k1/pi-kits/main/pi-kits.schema.json",
-  "terminal": {
-    "editor": "nvim"
-  },
-  "canvas-note": {
+  "pi-canvas-note": {
     "enabled": true,
     "portRange": [10000, 20000]
   },
-  "open": {
+  "pi-open": {
     "enabled": true
   },
-  "preview": {
+  "pi-output-viewer": {
+    "enabled": true,
+    "editor": "nvim"
+  },
+  "pi-ask": {
     "enabled": true
   },
-  "askUserQuestion": {
-    "enabled": true
-  },
-  "subagent": {
+  "pi-subagent": {
     "enabled": true,
     "maxConcurrent": 4,
     "extensionAllowlist": [
@@ -28,7 +26,7 @@
       }
     ]
   },
-  "web-kits": {
+  "pi-web-kits": {
     "enabled": true,
     "search": {
       "enabled": true,

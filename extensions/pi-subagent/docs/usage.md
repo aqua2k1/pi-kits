@@ -1,6 +1,6 @@
 # 使用
 
-在新版 Herdr app 或旧版 Herdr 内运行 Pi 后加载扩展；`subagent.enabled` 默认为 `true`，无需配置终端适配器。启动时优先匹配非空的 `HC_TERMINAL_ID`，其次匹配 `HERDR_ENV=1`；均未匹配时不注册。工具由父 Agent 调用；以下 JSON 是工具参数。
+在新版 Herdr app 或旧版 Herdr 内运行 Pi 后加载扩展；`pi-subagent.enabled` 默认为 `true`，无需配置终端适配器。启动时优先匹配非空的 `HC_TERMINAL_ID`，其次匹配 `HERDR_ENV=1`；均未匹配时不注册。工具由父 Agent 调用；以下 JSON 是工具参数。
 
 ## subagent
 

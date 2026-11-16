@@ -26,8 +26,8 @@ import {
 } from "./events.ts";
 
 export default function askUserQuestionExtension(pi: ExtensionAPI): void {
-  const { askUserQuestion } = readPiKitsConfig();
-  if (!askUserQuestion.enabled) return;
+  const config = readPiKitsConfig()["pi-ask"];
+  if (!config.enabled) return;
 
   pi.registerTool({
     name: "ask_user_question",

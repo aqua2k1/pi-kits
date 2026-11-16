@@ -4,65 +4,7 @@
     "$schema": {
       "type": "string"
     },
-    "terminal": {
-      "type": "object",
-      "properties": {
-        "enabled": {
-          "type": "boolean",
-          "default": true
-        },
-        "editor": {
-          "type": "string",
-          "minLength": 1,
-          "pattern": "\\S",
-          "default": "nvim"
-        },
-        "gitUI": {
-          "type": "string",
-          "minLength": 1,
-          "pattern": "\\S",
-          "default": "lazygit"
-        },
-        "fileManager": {
-          "type": "string",
-          "minLength": 1,
-          "pattern": "\\S",
-          "default": "yazi"
-        }
-      },
-      "additionalProperties": true
-    },
-    "open": {
-      "type": "object",
-      "properties": {
-        "enabled": {
-          "type": "boolean",
-          "default": true
-        }
-      },
-      "additionalProperties": true
-    },
-    "preview": {
-      "type": "object",
-      "properties": {
-        "enabled": {
-          "type": "boolean",
-          "default": true
-        }
-      },
-      "additionalProperties": true
-    },
-    "contextPreview": {
-      "type": "object",
-      "properties": {
-        "enabled": {
-          "type": "boolean",
-          "default": true
-        }
-      },
-      "additionalProperties": true
-    },
-    "canvas-note": {
+    "pi-canvas-note": {
       "type": "object",
       "properties": {
         "enabled": {
@@ -95,29 +37,33 @@
       },
       "additionalProperties": true
     },
-    "providerUsage": {
+    "pi-open": {
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "default": true
+        }
+      },
+      "additionalProperties": true
+    },
+    "pi-output-viewer": {
       "type": "object",
       "properties": {
         "enabled": {
           "type": "boolean",
           "default": true
         },
-        "intervalMs": {
-          "type": "integer",
-          "minimum": 1000,
-          "maximum": 2147483647,
-          "default": 600000
-        },
-        "timeoutMs": {
-          "type": "integer",
-          "minimum": 100,
-          "maximum": 300000,
-          "default": 15000
+        "editor": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "\\S",
+          "default": "nvim"
         }
       },
       "additionalProperties": true
     },
-    "stats": {
+    "pi-ask": {
       "type": "object",
       "properties": {
         "enabled": {
@@ -127,17 +73,7 @@
       },
       "additionalProperties": true
     },
-    "askUserQuestion": {
-      "type": "object",
-      "properties": {
-        "enabled": {
-          "type": "boolean",
-          "default": true
-        }
-      },
-      "additionalProperties": true
-    },
-    "subagent": {
+    "pi-subagent": {
       "type": "object",
       "properties": {
         "enabled": {
@@ -189,297 +125,7 @@
       },
       "additionalProperties": true
     },
-    "commit": {
-      "type": "object",
-      "properties": {
-        "enabled": {
-          "type": "boolean",
-          "default": true
-        },
-        "model": {
-          "type": "string",
-          "minLength": 1,
-          "pattern": "\\S"
-        },
-        "lastModel": {
-          "type": "string",
-          "minLength": 1,
-          "pattern": "\\S"
-        },
-        "thinking": {
-          "type": "string",
-          "minLength": 1,
-          "pattern": "\\S"
-        },
-        "timeoutMs": {
-          "type": "integer",
-          "minimum": 1000,
-          "maximum": 2147483647,
-          "default": 120000
-        },
-        "rememberModel": {
-          "type": "boolean",
-          "default": true
-        }
-      },
-      "additionalProperties": true
-    },
-    "notify": {
-      "type": "object",
-      "properties": {
-        "enabled": {
-          "type": "boolean",
-          "default": true
-        },
-        "quietPeriodMs": {
-          "type": "integer",
-          "minimum": 0,
-          "maximum": 60000,
-          "default": 1000
-        }
-      },
-      "additionalProperties": true
-    },
-    "workspace": {
-      "type": "object",
-      "properties": {
-        "enabled": {
-          "type": "boolean",
-          "default": true
-        },
-        "terminal": {
-          "type": "object",
-          "properties": {
-            "enabled": {
-              "type": "boolean",
-              "default": true
-            },
-            "editor": {
-              "type": "string",
-              "minLength": 1,
-              "pattern": "\\S",
-              "default": "nvim"
-            },
-            "gitUI": {
-              "type": "string",
-              "minLength": 1,
-              "pattern": "\\S",
-              "default": "lazygit"
-            },
-            "fileManager": {
-              "type": "string",
-              "minLength": 1,
-              "pattern": "\\S",
-              "default": "yazi"
-            }
-          },
-          "additionalProperties": true
-        },
-        "open": {
-          "type": "object",
-          "properties": {
-            "enabled": {
-              "type": "boolean",
-              "default": true
-            }
-          },
-          "additionalProperties": true
-        },
-        "preview": {
-          "type": "object",
-          "properties": {
-            "enabled": {
-              "type": "boolean",
-              "default": true
-            }
-          },
-          "additionalProperties": true
-        },
-        "contextPreview": {
-          "type": "object",
-          "properties": {
-            "enabled": {
-              "type": "boolean",
-              "default": true
-            }
-          },
-          "additionalProperties": true
-        }
-      },
-      "additionalProperties": true,
-      "deprecated": true,
-      "description": "Legacy group; prefer top-level extension settings."
-    },
-    "usage": {
-      "type": "object",
-      "properties": {
-        "enabled": {
-          "type": "boolean",
-          "default": true
-        },
-        "providerUsage": {
-          "type": "object",
-          "properties": {
-            "enabled": {
-              "type": "boolean",
-              "default": true
-            },
-            "intervalMs": {
-              "type": "integer",
-              "minimum": 1000,
-              "maximum": 2147483647,
-              "default": 600000
-            },
-            "timeoutMs": {
-              "type": "integer",
-              "minimum": 100,
-              "maximum": 300000,
-              "default": 15000
-            }
-          },
-          "additionalProperties": true
-        },
-        "stats": {
-          "type": "object",
-          "properties": {
-            "enabled": {
-              "type": "boolean",
-              "default": true
-            }
-          },
-          "additionalProperties": true
-        }
-      },
-      "additionalProperties": true,
-      "deprecated": true,
-      "description": "Legacy group; prefer top-level extension settings."
-    },
-    "workflow": {
-      "type": "object",
-      "properties": {
-        "enabled": {
-          "type": "boolean",
-          "default": true
-        },
-        "askUserQuestion": {
-          "type": "object",
-          "properties": {
-            "enabled": {
-              "type": "boolean",
-              "default": true
-            }
-          },
-          "additionalProperties": true
-        },
-        "subagent": {
-          "type": "object",
-          "properties": {
-            "enabled": {
-              "type": "boolean",
-              "default": true
-            },
-            "maxConcurrent": {
-              "type": "integer",
-              "minimum": 1,
-              "maximum": 32,
-              "default": 4
-            },
-            "extensionAllowlist": {
-              "type": "array",
-              "items": {
-                "anyOf": [
-                  {
-                    "type": "string",
-                    "minLength": 1,
-                    "pattern": "^(?=.*\\S)[^\\x00-\\x1f\\x7f]+$"
-                  },
-                  {
-                    "type": "object",
-                    "required": ["source", "extensions"],
-                    "properties": {
-                      "source": {
-                        "type": "string",
-                        "minLength": 1,
-                        "pattern": "^(?=.*\\S)[^\\x00-\\x1f\\x7f]+$"
-                      },
-                      "extensions": {
-                        "type": "array",
-                        "items": {
-                          "type": "string",
-                          "minLength": 1,
-                          "pattern": "^(?=.*\\S)[^\\x00-\\x1f\\x7f]+$"
-                        },
-                        "uniqueItems": true
-                      }
-                    },
-                    "additionalProperties": true
-                  }
-                ]
-              },
-              "uniqueItems": true,
-              "description": "Pi extension sources or package selections using declared extensionResources names. Relative paths use the agent directory.",
-              "default": ["builtin:codemode", "builtin:tool-search"]
-            }
-          },
-          "additionalProperties": true
-        },
-        "commit": {
-          "type": "object",
-          "properties": {
-            "enabled": {
-              "type": "boolean",
-              "default": true
-            },
-            "model": {
-              "type": "string",
-              "minLength": 1,
-              "pattern": "\\S"
-            },
-            "lastModel": {
-              "type": "string",
-              "minLength": 1,
-              "pattern": "\\S"
-            },
-            "thinking": {
-              "type": "string",
-              "minLength": 1,
-              "pattern": "\\S"
-            },
-            "timeoutMs": {
-              "type": "integer",
-              "minimum": 1000,
-              "maximum": 2147483647,
-              "default": 120000
-            },
-            "rememberModel": {
-              "type": "boolean",
-              "default": true
-            }
-          },
-          "additionalProperties": true
-        },
-        "notify": {
-          "type": "object",
-          "properties": {
-            "enabled": {
-              "type": "boolean",
-              "default": true
-            },
-            "quietPeriodMs": {
-              "type": "integer",
-              "minimum": 0,
-              "maximum": 60000,
-              "default": 1000
-            }
-          },
-          "additionalProperties": true
-        }
-      },
-      "additionalProperties": true,
-      "deprecated": true,
-      "description": "Legacy group; prefer top-level extension settings."
-    },
-    "web-kits": {
+    "pi-web-kits": {
       "type": "object",
       "properties": {
         "enabled": {

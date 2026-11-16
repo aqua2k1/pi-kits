@@ -92,35 +92,19 @@ function registrations() {
 for (const [name, config, env] of [
   ["no mux markers", {}, { HERDR_ENV: undefined }],
   [
-    "disabled workflow",
-    { workflow: { enabled: false, subagent: {} } },
+    "disabled canonical subagent",
+    { "pi-subagent": { enabled: false } },
     { HERDR_ENV: "1" },
-  ],
-  [
-    "disabled subagent",
-    { workflow: { subagent: { enabled: false } } },
-    { HERDR_ENV: "1" },
-  ],
-  [
-    "disabled top-level subagent",
-    { subagent: { enabled: false } },
-    { HERDR_ENV: "1" },
-  ],
-  ["top-level missing HERDR_ENV", { subagent: {} }, { HERDR_ENV: undefined }],
-  [
-    "top-level worker recursion guard",
-    { subagent: {} },
-    { HERDR_ENV: "1", PI_KITS_SUBAGENT_WORKER: "1" },
   ],
   [
     "missing HERDR_ENV",
-    { workflow: { subagent: {} } },
+    { "pi-subagent": {} },
     { HERDR_ENV: undefined, HERDR_PANE_ID: "w1:p1", TMUX: "tmux" },
   ],
-  ["invalid HERDR_ENV", { workflow: { subagent: {} } }, { HERDR_ENV: "0" }],
+  ["invalid HERDR_ENV", { "pi-subagent": {} }, { HERDR_ENV: "0" }],
   [
     "worker recursion guard",
-    { workflow: { subagent: {} } },
+    { "pi-subagent": {} },
     { HERDR_ENV: "1", PI_KITS_SUBAGENT_WORKER: "1" },
   ],
 ] as const) {
@@ -142,7 +126,14 @@ for (const [name, config, env] of [
   });
 }
 
-for (const config of [{}, { workflow: { subagent: {} } }, { subagent: {} }]) {
+for (const config of [
+  {},
+  // Old switches must not disable canonical defaults.
+  { workflow: { enabled: false, subagent: { enabled: false } } },
+  { subagent: { enabled: false } },
+  { subagent: { enabled: false }, "pi-subagent": {} },
+  { "pi-subagent": { enabled: true } },
+]) {
   test(`Herdr auto-registers with HERDR_ENV alone, without mux config or backend probing ${JSON.stringify(config)}`, (t) => {
     useAgentDir(t, config);
     environment(t, {
@@ -212,7 +203,7 @@ for (const [name, env, expected] of [
 
 for (const [name, config, worker] of [
   ["worker", {}, "1"],
-  ["disabled", { subagent: { enabled: false } }, undefined],
+  ["disabled", { "pi-subagent": { enabled: false } }, undefined],
 ] as const) {
   test(`automatic app routing respects ${name} guard`, (t) => {
     useAgentDir(t, config);
@@ -396,6 +387,41 @@ test("tool prompts stay runtime-neutral while runtime_config documents native re
   assert.ok(steer);
   assert.match(steer.description, /running task/);
   assert.ok(!steer.description.includes("after its current tools"));
+});
+
+test("canonical settings reach the subagent manager", async (t) => {
+  const extensionAllowlist = ["builtin:codemode"];
+  const cwd = useAgentDir(t, {
+    "pi-subagent": { enabled: true, maxConcurrent: 2, extensionAllowlist },
+  });
+  environment(t, {
+    HERDR_ENV: "1",
+    HC_TERMINAL_ID: undefined,
+    PI_KITS_SUBAGENT_WORKER: undefined,
+  });
+  let options: ManagerOptions | undefined;
+  t.mock.method(
+    SubagentManager.prototype,
+    "spawn",
+    function (this: SubagentManager) {
+      options = (this as unknown as { options: ManagerOptions }).options;
+      return { id: "canonical-id", description: "test", status: "queued" };
+    },
+  );
+  const capture = registrations();
+  capture.pi.getThinkingLevel = () => "low";
+  subagentExtension(capture.pi);
+  const spawn = capture.definitions.get("subagent");
+  assert.ok(spawn);
+  await spawn.execute(
+    "call",
+    { prompt: "go", description: "test" },
+    undefined,
+    undefined,
+    { cwd, mode: "print", hasUI: false } as ExtensionToolContext,
+  );
+  assert.equal(options?.maxConcurrent, 2);
+  assert.deepEqual(options?.extensionAllowlist, extensionAllowlist);
 });
 
 test("native reply notifications share the renderer without waking the parent", async (t) => {
