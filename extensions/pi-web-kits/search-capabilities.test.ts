@@ -34,13 +34,13 @@ test("search schema discriminates capabilities without accepting mixed arguments
     { source: "web", query: "docs", domains: ["example.com"] },
     { source: "github", kind: "code", query: "AbortSignal repo:acme/repo" },
     { source: "github", kind: "pull-requests", query: "fix" },
+    { source: "github", query: "default kind" },
   ])
     assert.ok(Value.Check(tool.parameters, params));
   for (const params of [
     { query: "missing source" },
     { source: "unknown", query: "test" },
     { source: "web", kind: "code", query: "test" },
-    { source: "github", query: "missing kind" },
     { source: "github", kind: "unknown", query: "test" },
     { source: "github", kind: "code", query: "test", domains: [] },
     { source: "github", kind: "code", query: "test", recency_days: 1 },
@@ -91,12 +91,45 @@ test("runtime tool validation rejects invalid branches even without harness vali
   for (const params of [
     { query: "test" },
     { source: "web", kind: "code", query: "test" },
-    { source: "github", query: "test" },
+    { source: "github", kind: "unknown", query: "test" },
   ]) {
     await assert.rejects(
       tool.execute("invalid", params, undefined, undefined, context),
       { code: "request" },
     );
+  }
+});
+
+test("GitHub tool defaults omitted kind and preserves explicit kinds", async () => {
+  for (const kind of [undefined, "code"] as const) {
+    const expectedKind = kind ?? "repositories";
+    const tool = capture({}, async (request) => {
+      assert.equal(request.source, "github");
+      assert.ok("kind" in request);
+      assert.equal(request.kind, expectedKind);
+      return {
+        source: "github",
+        kind: expectedKind,
+        provider: "github-gh",
+        query: request.query,
+        results: [],
+      };
+    });
+    const params = {
+      source: "github",
+      query: "pi",
+      ...(kind === undefined ? {} : { kind }),
+    };
+    const output = await tool.execute(
+      "github-kind",
+      params,
+      undefined,
+      undefined,
+      context,
+    );
+    assert.ok(Value.Check(SearchOutputSchema, output.structuredContent));
+    assert.equal(output.structuredContent?.kind, expectedKind);
+    assert.equal("kind" in params, kind !== undefined);
   }
 });
 

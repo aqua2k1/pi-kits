@@ -23,7 +23,7 @@
 | 参数 | 说明 |
 |---|---|
 | `source` | 必填，`web` 或 `github`；入口仅暴露已启用能力，运行时也拒绝禁用能力 |
-| `kind` | `source=github` 时必填：`repositories`、`code`、`issues`、`pull-requests`、`commits`；网页搜索不传 |
+| `kind` | 仅 `source=github`：`repositories`、`code`、`issues`、`pull-requests`、`commits`；省略时默认 `repositories`；网页搜索不传 |
 | `query` | 必填，去除首尾空白后为 1–2000 字符 |
 | `max_results` | 整数 1–10；省略时取 `pi-web-kits.search.maxResults`，默认 5 |
 | `domains` | 仅 `source=web`；最多 20 个主机名，每项最多 253 字符；去除首尾空白、忽略大小写；`example.com` 包含自身及子域，`*.example.org` 仅含子域 |

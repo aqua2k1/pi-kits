@@ -59,8 +59,9 @@ function searchParameters(config: ResolvedWebSearchConfig) {
       kind: Type.Optional(
         Type.Enum(GITHUB_SEARCH_KINDS, {
           type: "string",
+          default: "repositories",
           description:
-            "Required for GitHub searches. Select the resource type to search.",
+            "GitHub searches only. Resource type to search; defaults to repositories when omitted.",
         }),
       ),
       query: Type.String({
@@ -106,7 +107,6 @@ function searchParameters(config: ResolvedWebSearchConfig) {
         },
         {
           properties: { source: { const: "github" } },
-          required: ["kind"],
           not: {
             anyOf: [{ required: ["domains"] }, { required: ["recency_days"] }],
           },
@@ -212,12 +212,9 @@ export function registerWebSearchTool(
         });
         let request: SearchCapabilityRequest;
         if (params.source === "github") {
-          if (params.kind === undefined) {
-            throw new WebSearchError("request", "GitHub search requires kind.");
-          }
           request = {
             source: "github",
-            kind: params.kind,
+            kind: params.kind ?? "repositories",
             query: params.query,
             maxResults: params.max_results ?? searchConfig.maxResults,
           };
