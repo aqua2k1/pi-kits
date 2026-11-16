@@ -83,14 +83,14 @@ test("Codex sends the fixed endpoint, required headers and alpha/search payload"
   assert.equal(headers.get("originator"), "pi");
   const payload = {
     id: "search-id",
-    model: "gpt-5.4",
+    model: "gpt-6-luna",
     commands: {
       search_query: [{ q: "OpenAI news", recency: 7, domains: ["openai.com"] }],
     },
     settings: { allowed_callers: ["direct"], external_web_access: true },
   };
   assert.deepEqual(
-    buildCodexSearchPayload(request, "gpt-5.4", "search-id"),
+    buildCodexSearchPayload(request, "gpt-6-luna", "search-id"),
     payload,
   );
   assert.deepEqual(JSON.parse(String(calledInit?.body)), payload);

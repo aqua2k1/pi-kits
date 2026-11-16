@@ -98,6 +98,7 @@ test("provider truncation is preserved even for no-results output", () => {
   });
   assert.deepEqual(output.details, {
     query: "nothing",
+    source: "web",
     backend: "codex-alpha-search",
     resultCount: 0,
     results: [],
@@ -121,6 +122,7 @@ test("summary-only machine output includes the actual summary without changing l
   assert.equal(output.content[0].text, "**Summary:**\nSummary");
   assert.deepEqual(output.details, {
     query: "test",
+    source: "web",
     backend: "codex-alpha-search",
     resultCount: 0,
     results: [],

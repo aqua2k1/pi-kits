@@ -1,7 +1,7 @@
 import type { SearchDetails, SearchMachineOutput } from "../schema.ts";
 import { MAX_OUTPUT_BYTES } from "../shared/limits.ts";
 import { WebSearchError } from "./errors.ts";
-import type { RoutedSearchResponse } from "./types.ts";
+import type { SearchExecutionResponse } from "./types.ts";
 
 export type { SearchDetails } from "../schema.ts";
 
@@ -10,7 +10,7 @@ function markdownText(text: string): string {
 }
 
 /** Input is already sanitized by the provider; text and details use the same data. */
-export function buildSearchOutput(response: RoutedSearchResponse): {
+export function buildSearchOutput(response: SearchExecutionResponse): {
   content: { type: "text"; text: string }[];
   details: SearchDetails;
   structuredContent: SearchMachineOutput;
@@ -39,6 +39,8 @@ export function buildSearchOutput(response: RoutedSearchResponse): {
       sections.push("[Output truncated; omitted provider data was not saved.]");
     const details: SearchDetails = {
       query: response.query,
+      source: response.source ?? "web",
+      ...(response.kind ? { kind: response.kind } : {}),
       backend: response.provider,
       resultCount: results.length,
       results: results.map((result) => ({ ...result })),

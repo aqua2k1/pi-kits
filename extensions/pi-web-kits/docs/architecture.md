@@ -10,13 +10,13 @@ flowchart LR
   entry --> commands["commands.ts<br/>诊断命令"]
   entry --> composition["composition.ts<br/>组装搜索与抓取"]
   commands --> composition
-  composition --> search["search/router.ts<br/>搜索主备路由"]
+  composition --> search["search/router.ts<br/>网页搜索主备路由"]
+  composition --> github["search/github/<br/>GitHub 搜索与 gh API"]
   composition --> fetch["fetch/router.ts<br/>抓取路由"]
   search --> providers["search/providers/<br/>认证与搜索请求"]
   fetch --> handlers["fetch/document.ts 与 fetch/github.ts<br/>文档与仓库内容获取"]
   providers --> transport["shared/request.ts<br/>统一 HTTP 请求"]
   handlers -->|普通 HTTP 文档| transport
-  entry --> output["schema.ts 与两份 format.ts<br/>输出契约与预算"]
 ```
 
 ## 文件地图
@@ -24,13 +24,14 @@ flowchart LR
 | 文件 | 职责 |
 |---|---|
 | `index.ts` | 工具注册、参数 schema（结构契约）、启动快照、进度及错误边界 |
-| `commands.ts` | 状态展示、搜索服务连接测试及参数补全 |
-| `composition.ts` | 具体搜索服务工厂与抓取入口组装 |
+| `commands.ts` | 能力开关、路由来源与认证状态展示，网页／GitHub 连接测试及参数补全 |
+| `composition.ts` | `search` 按来源分派；保留 `searchWeb` 网页入口，组装具体服务与抓取入口 |
 | `config.ts` | 扩展配置读取、服务名归一化、搜索与抓取配置解析 |
 | `schema.ts` | 公开机器输出及派生类型 |
 | `search/format.ts`、`renderers.ts` | 搜索文本／机器输出与工具界面渲染 |
 | `search/types.ts`、`search/validation.ts` | 搜索内部契约及请求归一化 |
-| `search/router.ts`、`search/routing.ts`、`search/errors.ts` | 主备搜索路由、回退选择与分类错误 |
+| `search/router.ts`、`search/routing.ts`、`search/errors.ts` | 网页主备搜索路由、回退选择与分类错误 |
+| `search/github/types.ts`、`search/github/service.ts`、`search/github/index.ts` | GitHub 类型、查询校验、只读搜索 API 与结果归一化 |
 | `search/providers/searxng/config.ts`、`search/providers/searxng/provider.ts` | SearXNG 地址、认证和搜索请求转换 |
 | `search/providers/codex/config.ts`、`search/providers/codex/auth.ts`、`search/providers/codex/provider.ts` | Codex 模型配置、Pi 认证及搜索请求转换 |
 | `shared/request.ts` | 原生 fetch 的统一入口，负责截止时间、取消、重定向、有界 JSON 读取与文件下载 |
@@ -52,25 +53,28 @@ flowchart LR
 sequenceDiagram
   actor caller as 调用方
   participant entry as index.ts
-  participant router as search/router.ts
-  participant provider as 搜索服务适配器
-  participant transport as shared/request.ts
-  participant results as search/results.ts
+  participant composition as composition.ts
+  participant web as search/router.ts
+  participant github as search/github/service.ts
+  participant gh as shared/gh-request.ts
   participant output as search/format.ts
-  caller->>entry: web_search 参数
-  entry->>router: 通过 composition.ts 传入请求与配置
-  router->>provider: 归一化请求并构造主服务
-  provider->>transport: 认证后发送请求并读取 JSON
-  transport-->>provider: 响应数据
-  provider->>results: 过滤、去重、脱敏与限长
-  results-->>provider: 安全搜索响应
-  provider-->>router: 搜索响应
-  router-->>entry: 响应与实际服务名
+  caller->>entry: source、query 与来源专属参数
+  entry->>composition: search(request, config, runtime, signal)
+  alt source=web
+    composition->>web: searchWeb 与网页路由
+    web-->>composition: 网页服务响应
+  else source=github
+    composition->>github: kind 与 GitHub 查询
+    github->>gh: 只读搜索 API
+    gh-->>github: JSON 响应
+    github-->>composition: 归一化搜索响应
+  end
+  composition-->>entry: 响应与执行来源
   entry->>output: 构造文本、详情和机器输出
   output-->>caller: 搜索结果
 ```
 
-符合分类策略的失败按配置尝试备用服务；取消结束调用，空结果直接返回。
+仅网页搜索的分类失败按路由顺序尝试备用服务；GitHub 搜索无路由回退。取消结束调用，空结果直接返回。
 
 ### 抓取
 
@@ -106,7 +110,11 @@ sequenceDiagram
 
 ## 约束
 
-- `web_search` 与 `web_fetch` 共享 `web-kits` namespace，保持 Codemode 分组与发现入口一致；工具名称与默认 direct 暴露保持不变；主备搜索服务只由配置决定，工具参数仅描述搜索需求，避免模型覆盖路由策略。
+- `web_search` 与 `web_fetch` 共享 `web-kits` namespace，保持发现入口一致；单一 `web_search` 必填 `source=web|github`，GitHub 必填 `kind=repositories|code|issues|pull-requests|commits`；`domains`／`recency_days` 仅用于网页，避免混淆查询语义。
+- 入口 schema 仅暴露启用的来源，执行边界和 composition 同时拒绝禁用来源，防止参数或诊断测试绕过开关；网页主备仅由配置决定。
+- resolved search 保留派生兼容字段 `provider`／`fallback`／`fallbackProvider`／`codexModel`，新增 `sources.web.enabled/routing` 和 `sources.github.enabled`；新 `sources.web` 与旧 `search.routing/codex` 互斥，避免两套路由冲突。默认网页路由仅 `searxng`，GitHub 无路由字段；请求无 `defaultSource/defaultKind`。
+- 命令保留 `search: typeof searchWeb` 注入，GitHub 通过 `searchCapabilities: typeof search` 分派并固定测试 `repositories` 与 `repo:github/docs`；网页测试同步覆盖派生字段和 `sources.web.routing` 为单服务，避免误触备用。status 从原始快照判断新旧路由／模型来源，从有效路由确定备用，避免默认值或旧备用字段误报。
+- `composition.search` 的 runtime 保留 `modelRegistry`／`fetch` 并支持 `ghRequest` 注入，使 GitHub 测试与执行复用只读传输边界。
 - `index.ts` 将同一文件与环境快照交给工具和诊断命令，保持状态展示与实际请求一致；`index.test.ts` 和 `commands.test.ts` 检查启动后读取次数。
 - `composition.ts` 负责具体服务组装，`search/router.ts` 仅调用工厂与路由，保证未使用的服务不会触发认证或配置检查；`composition.test.ts` 覆盖惰性构造与凭据隔离。
 - 搜索路由保留服务返回的脱敏查询，防止原始输入覆盖清理结果；`search/router.test.ts` 检查返回查询，`composition.test.ts` 检查回退中的凭据反射。
@@ -122,7 +130,8 @@ sequenceDiagram
 - `fetch/spool.ts` 串行写入并在写前预留容量，最终化后拒绝重复保存，保证并发写入与短写处理仍满足存储边界；`fetch/spool.test.ts` 覆盖状态和容量竞争。
 - GitHub 引用解析只接受唯一分支／标签划分，避免把含 `/` 的引用误当目录；`fetch/github-refs.test.ts` 和 `fetch/github-url.test.ts` 覆盖歧义与显式编码。
 - GitHub 处理器无状态且不使用处理器缓存，直接调用 `gh api`，不进行 `--version` 探测或自动克隆；根仅获取描述、默认分支和 README，目录通过 contents API 非递归读取，避免隐式仓库副本及多余请求。
-- `shared/gh-request.ts` 校验相对端点、固定 GET 与 github.com 并关闭 shell，避免绝对 URL 或命令参数绕过只读主机边界；`shared/gh-request.test.ts` 覆盖参数、有界输出、取消、超时与进程组 TERM→KILL 清理。
+- GitHub Issue／PR 查询启用 advanced search，并将完整用户表达式分组后与资源类型求交；响应再次校验资源类型，避免 OR 分支绕过 `kind`。代码搜索显式请求 text-match JSON，缺少片段时返回路径摘要。
+- `shared/gh-request.ts` 校验相对端点、固定 GET 与 github.com 并关闭 shell，仅允许固定的 text-match JSON Accept 类型，避免绝对 URL、任意头部或命令参数绕过只读主机边界；`shared/gh-request.test.ts` 覆盖参数、有界输出、取消、超时与进程组 TERM→KILL 清理。
 - gh 传输只返回 JSON 值并抛出脱敏的 `GhRequestError`；`fetch/github.ts` 提取仓库元数据，根 README 的 404 保留概览，其余资源的 404 拒绝抓取，引用发现的 404 返回未解析，避免传输层依赖抓取策略。
 - 工具与诊断边界重建分类错误消息，避免上游正文、凭据和原始子进程诊断进入返回值；依据见两份 `errors.ts` 及 `commands.test.ts`、`index.test.ts`。
 
@@ -137,7 +146,8 @@ npm run typecheck --workspace=pi-web-kits
 
 | 测试文件（相对扩展目录） | 覆盖模块 |
 |---|---|
-| `index.test.ts`、`commands.test.ts`、`composition.test.ts`、`config.test.ts` | 工具注册、启动快照、开关、参数、命令、服务组装与配置 |
+| `index.test.ts`、`commands.test.ts`、`composition.test.ts`、`config.test.ts`、`search-capabilities.test.ts` | 工具注册、启动快照、能力分派、开关、参数、命令、服务组装与配置 |
+| `search/github/service.test.ts` | GitHub 各类查询、布尔表达式范围、响应校验、截断、取消及错误脱敏 |
 | `search/format.test.ts`、`fetch/format.test.ts` | 文本／机器契约、脱敏、布局与完整输出预算 |
 | `search/{errors,router,routing,validation}.test.ts` | 搜索分类、回退、取消和归一化 |
 | `shared/{request,url}.test.ts`、`search/results.test.ts` | HTTP JSON／文件流边界、截止时间、取消、重定向、清理、过滤和脱敏 |

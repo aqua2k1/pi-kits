@@ -26,6 +26,96 @@ function invalidConfig(error: unknown): boolean {
   return error instanceof WebSearchError && error.code === "invalid-config";
 }
 
+test("new sources survive parsing, file loading and shared resolution", async () => {
+  const search = {
+    enabled: true,
+    maxResults: 3,
+    timeoutMs: 4000,
+    sources: {
+      web: {
+        enabled: true,
+        routing: ["codex-alpha-search", "searxng"] as (
+          | "codex-alpha-search"
+          | "searxng"
+        )[],
+        codex: { model: "custom-model" },
+      },
+      github: { enabled: false },
+    },
+  };
+  const parsed = parseConfig(JSON.stringify({ search }));
+  assert.deepEqual(parsed.search, search);
+  const resolved = resolveSearchConfig(search, {});
+  assert.deepEqual(resolved.sources, {
+    web: { enabled: true, routing: ["codex-alpha-search", "searxng"] },
+    github: { enabled: false },
+  });
+  assert.equal(resolved.provider, "codex-alpha-search");
+  assert.equal(resolved.fallback, true);
+  assert.equal(resolved.fallbackProvider, "searxng");
+  assert.equal(resolved.codexModel, "custom-model");
+  await withConfigDirectory(async (directory) => {
+    await writeFile(
+      getConfigPath(directory),
+      JSON.stringify({ "web-kits": { search } }),
+    );
+    const raw = await readConfig(getConfigPath(directory));
+    assert.deepEqual(raw, { search });
+    assert.deepEqual(resolveConfig(raw, {}).search, resolved);
+  });
+  assert.deepEqual(resolveSearchConfig({}, {}).sources, {
+    web: { enabled: true, routing: ["searxng"] },
+    github: { enabled: true },
+  });
+});
+
+test("new sources reject invalid and mixed settings through all extension entries", async () => {
+  for (const search of [
+    { sources: { web: { routing: [] } } },
+    { sources: { web: { routing: ["searxng", "searxng"] } } },
+    { sources: { web: { routing: ["unknown"] } } },
+    { sources: { web: { enabled: "false" } } },
+    { sources: { github: false } },
+    { sources: { web: {} }, routing: {} },
+    { sources: { web: {} }, codex: {} },
+    { sources: { web: { enabled: false }, github: { enabled: false } } },
+    { sources: { web: { codex: { model: "bad model" } } } },
+    { sources: { web: { searxng: { apiKey: "synthetic-secret" } } } },
+  ]) {
+    assert.throws(() => parseConfig(JSON.stringify({ search })), invalidConfig);
+    assert.throws(
+      () => resolveSearchConfig(search as never, {}),
+      invalidConfig,
+    );
+    await withConfigDirectory(async (directory) => {
+      await writeFile(
+        getConfigPath(directory),
+        JSON.stringify({ "web-kits": { search } }),
+      );
+      await assert.rejects(readConfig(getConfigPath(directory)), invalidConfig);
+    });
+  }
+  assert.equal(
+    resolveSearchConfig(
+      {
+        enabled: false,
+        sources: { web: { enabled: false }, github: { enabled: false } },
+      },
+      {},
+    ).enabled,
+    false,
+  );
+  assert.equal(
+    resolveSearchConfig(
+      {
+        sources: { web: { enabled: false } },
+      },
+      {},
+    ).sources.github.enabled,
+    true,
+  );
+});
+
 test("parseConfig: separates search and fetch settings", () => {
   assert.deepEqual(
     parseConfig(
@@ -150,6 +240,10 @@ test("resolveSearchConfig: reads search settings and secrets only from env", () 
   );
   assert.deepEqual(config, {
     enabled: true,
+    sources: {
+      web: { enabled: true, routing: ["codex-alpha-search", "searxng"] },
+      github: { enabled: true },
+    },
     provider: "codex-alpha-search",
     fallback: true,
     fallbackProvider: "searxng",

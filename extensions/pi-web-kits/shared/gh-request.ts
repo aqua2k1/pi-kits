@@ -16,6 +16,8 @@ type CommandResult = {
 type GhRequestOptions = {
   timeoutMs: number;
   signal?: AbortSignal;
+  /** Fixed JSON media type for search excerpts; arbitrary headers are not accepted. */
+  accept?: "application/vnd.github.text-match+json";
   /** Internal effect seam; production uses node:child_process. */
   spawn?: typeof spawn;
 };
@@ -92,7 +94,15 @@ function execute(
     try {
       child = (options.spawn ?? spawn)(
         "gh",
-        ["api", "--method", "GET", "--hostname", "github.com", endpoint],
+        [
+          "api",
+          "--method",
+          "GET",
+          "--hostname",
+          "github.com",
+          ...(options.accept ? ["--header", `Accept: ${options.accept}`] : []),
+          endpoint,
+        ],
         {
           env: { ...process.env, GH_PROMPT_DISABLED: "1" },
           detached: process.platform !== "win32",
@@ -221,6 +231,8 @@ export async function ghRequest(
   checkCancelled(options.signal);
   // Only relative REST paths: gh accepts absolute URLs despite --hostname.
   if (
+    (options.accept !== undefined &&
+      options.accept !== "application/vnd.github.text-match+json") ||
     !/^[A-Za-z0-9]/.test(endpoint) ||
     /[^A-Za-z0-9_./?%=&~+,!()*'-]/.test(endpoint)
   ) {

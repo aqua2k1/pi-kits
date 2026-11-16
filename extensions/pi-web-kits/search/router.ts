@@ -22,6 +22,8 @@ export interface SearchRoute {
   readonly provider: WebSearchProviderName;
   readonly fallback: boolean;
   readonly fallbackProvider?: WebSearchProviderName;
+  /** Explicit capability-local execution order. */
+  readonly providers?: readonly WebSearchProviderName[];
 }
 
 /** Only routing policy lives here. Factories own configuration and credentials. */
@@ -38,8 +40,10 @@ export class WebSearchRouter {
     signal?: AbortSignal,
   ): Promise<RoutedSearchResponse> {
     const request = normalizeSearchRequest(input);
-    const order: WebSearchProviderName[] = [route.provider];
-    if (route.fallback) {
+    const order: WebSearchProviderName[] = route.providers
+      ? [...route.providers]
+      : [route.provider];
+    if (!route.providers && route.fallback) {
       const fallbackProvider = resolveFallbackProvider(
         route.provider,
         route.fallbackProvider,

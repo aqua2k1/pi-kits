@@ -19,7 +19,10 @@ function assertType<T extends true>(value: T) {
 
 test("output enums infer literal unions with TypeBox", () => {
   assertType<
-    Equal<SearchMachineOutput["backend"], "searxng" | "codex-alpha-search">
+    Equal<
+      SearchMachineOutput["backend"],
+      "searxng" | "codex-alpha-search" | "github-gh"
+    >
   >(true);
   assertType<Equal<FetchMachineOutput["source"], "native-http" | "github-gh">>(
     true,
@@ -29,7 +32,7 @@ test("output enums infer literal unions with TypeBox", () => {
 test("output enums serialize as explicit string JSON Schemas", () => {
   const backend = SearchOutputSchema.properties.backend;
   for (const [schema, values] of [
-    [backend, ["searxng", "codex-alpha-search"]],
+    [backend, ["searxng", "codex-alpha-search", "github-gh"]],
     [FetchSourceSchema, ["native-http", "github-gh"]],
   ] as const) {
     assert.deepEqual(JSON.parse(JSON.stringify(schema)), {

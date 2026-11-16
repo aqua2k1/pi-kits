@@ -8,6 +8,14 @@ export const WEB_SEARCH_PROVIDER_NAMES = [
 
 export type WebSearchProviderName = (typeof WEB_SEARCH_PROVIDER_NAMES)[number];
 
+// Execution provenance is not an inventory of interchangeable web adapters.
+export const SEARCH_BACKEND_NAMES = [
+  ...WEB_SEARCH_PROVIDER_NAMES,
+  "github-gh",
+] as const;
+export type SearchBackendName = (typeof SEARCH_BACKEND_NAMES)[number];
+export type SearchSource = "web" | "github";
+
 export interface SearchRequest {
   readonly query: string;
   readonly maxResults: number;
@@ -32,4 +40,11 @@ export interface SearchProvider {
 
 export interface RoutedSearchResponse extends SearchResponse {
   readonly provider: WebSearchProviderName;
+}
+
+/** The tool boundary combines results, not capability-specific input contracts. */
+export interface SearchExecutionResponse extends SearchResponse {
+  readonly provider: SearchBackendName;
+  readonly source?: SearchSource;
+  readonly kind?: import("./github/types.ts").GitHubSearchKind;
 }

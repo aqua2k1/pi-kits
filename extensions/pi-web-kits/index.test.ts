@@ -110,7 +110,7 @@ test("search and fetch share the web-kits namespace without changing exposure", 
   assert.deepEqual(search.namespace, {
     name: "web-kits",
     description:
-      "Search the web and fetch URL content into local files for reading.",
+      "Search the web or GitHub and fetch URL content into local files for reading.",
   });
   assert.equal(fetch.namespace, search.namespace);
   for (const tool of [search, fetch]) {
@@ -197,8 +197,10 @@ test("web_search registers the public parameter schema", () => {
   const tool = captureSearch();
   assert.equal(tool.name, "web_search");
   const schema = JSON.parse(JSON.stringify(tool.parameters));
-  assert.deepEqual(schema.required, ["query"]);
+  assert.deepEqual(schema.required, ["source", "query"]);
   assert.deepEqual(Object.keys(schema.properties), [
+    "source",
+    "kind",
     "query",
     "max_results",
     "domains",
@@ -237,7 +239,7 @@ test("registered search tool uses its resolved config", async () => {
   assert.equal(schema.properties.max_results.default, 7);
   await tool.execute(
     "search-call",
-    { query: "test" },
+    { source: "web", query: "test" },
     undefined,
     undefined,
     context,
@@ -264,7 +266,7 @@ test("tool arguments cannot override configured search routing", async () => {
   });
   const output = await tool.execute(
     "configured-provider",
-    { query: "test", provider: "searxng" },
+    { source: "web", query: "test" },
     undefined,
     undefined,
     context,
@@ -342,7 +344,7 @@ for (const provider of ["searxng", "codex-alpha-search"] as const) {
     const updates: unknown[] = [];
     const output = await tool.execute(
       "test-call",
-      { query: credential, max_results: 1 },
+      { source: "web", query: credential, max_results: 1 },
       undefined,
       (update) => updates.push(update),
       context,
@@ -512,7 +514,7 @@ test("search parameter schemas are per-registration and preserve an explicit cou
   assert.equal(secondSchema.properties.max_results.default, 9);
   await second.execute(
     "explicit-count",
-    { query: "test", max_results: 3 },
+    { source: "web", query: "test", max_results: 3 },
     undefined,
     undefined,
     context,
@@ -522,7 +524,10 @@ test("search parameter schemas are per-registration and preserve an explicit cou
 test("declarative validation rejects blank queries and unsupported URL schemes without rejecting trimmed input", () => {
   const search = captureSearch();
   for (const query of ["", " ", "\t\n", "\u00a0"]) {
-    assert.equal(Value.Check(search.parameters, { query }), false);
+    assert.equal(
+      Value.Check(search.parameters, { source: "web", query }),
+      false,
+    );
   }
   for (const domains of [
     ["example.com"],
@@ -530,7 +535,11 @@ test("declarative validation rejects blank queries and unsupported URL schemes w
     ["  EXAMPLE.com  ", "\t*.Example.COM\n"],
   ]) {
     assert.ok(
-      Value.Check(search.parameters, { query: "  current news  ", domains }),
+      Value.Check(search.parameters, {
+        source: "web",
+        query: "  current news  ",
+        domains,
+      }),
     );
   }
   const fetch = captureFetch();
@@ -589,7 +598,7 @@ test("tool failures still throw classified errors, without a machine error envel
   await assert.rejects(
     search.execute(
       "search-error",
-      { query: "test" },
+      { source: "web", query: "test" },
       undefined,
       undefined,
       context,
@@ -619,8 +628,13 @@ test("guidance keeps routing and security, while descriptions carry provider and
   const fetch = captureFetch();
   const searchGuidance = search.promptGuidelines?.join("\n") ?? "";
   const fetchGuidance = fetch.promptGuidelines?.join("\n") ?? "";
-  assert.match(searchGuidance, /focused queries.*current external/);
-  assert.match(searchGuidance, /Sources.*Do not claim a search succeeded/);
+  assert.match(searchGuidance, /focused queries/);
+  assert.match(
+    searchGuidance,
+    /Cite relevant result URLs.*Do not claim a search succeeded/,
+  );
+  assert.match(searchGuidance, /source="github"/);
+  assert.match(searchGuidance, /empty results as proof/);
   assert.doesNotMatch(searchGuidance, /Domain filtering/);
   assert.match(
     fetchGuidance,
@@ -763,7 +777,7 @@ test("registered search supplies summary-only content to machine callers", async
   });
   const output = await tool.execute(
     "summary-only",
-    { query: "current release" },
+    { source: "web", query: "current release" },
     undefined,
     undefined,
     context,

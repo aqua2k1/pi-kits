@@ -27,6 +27,23 @@ const provider = () =>
     Type.Literal("codex"),
   ]);
 
+const searxng = () =>
+  section({
+    url: Type.Optional(Type.Never()),
+    apiKey: Type.Optional(Type.Never()),
+  });
+const codex = () =>
+  section({
+    model: Type.Optional(
+      Type.String({
+        pattern: "^[a-zA-Z0-9._-]+$",
+        minLength: 1,
+        maxLength: 128,
+        default: "gpt-6-luna",
+      }),
+    ),
+  });
+
 const extensionSource = () =>
   Type.String({
     minLength: 1,
@@ -155,15 +172,25 @@ export const PI_KITS_SCHEMA = Type.Object(
         }),
         timeoutMs: integer(1_000, 120_000, 15_000),
         maxResults: integer(1, 10, 5),
-        codex: section({
-          model: Type.Optional(
-            Type.String({
-              pattern: "^[a-zA-Z0-9._-]+$",
-              minLength: 1,
-              maxLength: 128,
-              default: "gpt-5.4",
-            }),
-          ),
+        searxng: searxng(),
+        // Legacy routing/codex remain readable; sources.web is the current format.
+        codex: codex(),
+        sources: section({
+          web: section({
+            enabled,
+            searxng: searxng(),
+            routing: Type.Optional(
+              Type.Array(
+                Type.Union([
+                  Type.Literal("searxng"),
+                  Type.Literal("codex-alpha-search"),
+                ]),
+                { minItems: 1, uniqueItems: true, default: ["searxng"] },
+              ),
+            ),
+            codex: codex(),
+          }),
+          github: feature(),
         }),
       }),
       fetch: section({

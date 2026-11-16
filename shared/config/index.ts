@@ -26,7 +26,7 @@ export const WEB_DEFAULTS = {
   provider: "searxng" as const,
   searchTimeoutMs: 15_000,
   maxResults: 5,
-  codexModel: "gpt-5.4",
+  codexModel: "gpt-6-luna",
   fetchTimeoutMs: 15_000,
   githubEnabled: true,
 };
@@ -64,7 +64,25 @@ export function parsePiKitsFile(text: string): PiKitsFileConfig {
     throw new Error(
       "Invalid pi-kits.json: canvas-note.portRange must be ordered [minimum, maximum].",
     );
-  const routing = value["web-kits"]?.search?.routing;
+  const search = value["web-kits"]?.search;
+  if (
+    search?.sources?.web !== undefined &&
+    (search.routing !== undefined || search.codex !== undefined)
+  ) {
+    throw new Error(
+      "Invalid pi-kits.json: search.sources.web cannot be mixed with legacy routing/codex.",
+    );
+  }
+  if (
+    search?.enabled !== false &&
+    search?.sources?.web?.enabled === false &&
+    search?.sources?.github?.enabled === false
+  ) {
+    throw new Error(
+      "Invalid pi-kits.json: enabled search requires at least one enabled source.",
+    );
+  }
+  const routing = search?.routing;
   const provider =
     normalizeProvider(routing?.provider) ?? WEB_DEFAULTS.provider;
   if (provider === normalizeProvider(routing?.fallbackProvider)) {
@@ -177,7 +195,35 @@ function normalizeLegacyConfig(raw: PiKitsFileConfig): PiKitsFileConfig {
 }
 
 export function resolvePiKitsConfig(raw: PiKitsFileConfig = {}) {
-  raw = normalizeLegacyConfig(raw);
+  raw = normalizeLegacyConfig(parsePiKitsFile(JSON.stringify(raw)));
+  const search = raw["web-kits"]?.search;
+  const legacy = search?.routing;
+  const provider = normalizeProvider(legacy?.provider) ?? WEB_DEFAULTS.provider;
+  const fallbackProvider = normalizeProvider(legacy?.fallbackProvider);
+  const routing = search?.sources?.web?.routing ?? [
+    provider,
+    ...(legacy?.fallback
+      ? [
+          fallbackProvider ??
+            (provider === "searxng"
+              ? ("codex-alpha-search" as const)
+              : ("searxng" as const)),
+        ]
+      : []),
+  ];
+  const sources = {
+    web: {
+      enabled: search?.sources?.web?.enabled ?? true,
+      routing: [...routing],
+      codex: {
+        model:
+          search?.sources?.web?.codex?.model ??
+          search?.codex?.model ??
+          WEB_DEFAULTS.codexModel,
+      },
+    },
+    github: { enabled: search?.sources?.github?.enabled ?? true },
+  };
   return {
     terminal: {
       enabled: raw.terminal?.enabled ?? true,
@@ -234,22 +280,19 @@ export function resolvePiKitsConfig(raw: PiKitsFileConfig = {}) {
       enabled: raw["web-kits"]?.enabled ?? true,
       search: {
         enabled: raw["web-kits"]?.search?.enabled ?? true,
+        sources,
+        /** @internal Derived compatibility fields. */
         routing: {
-          provider:
-            normalizeProvider(raw["web-kits"]?.search?.routing?.provider) ??
-            WEB_DEFAULTS.provider,
-          fallback: raw["web-kits"]?.search?.routing?.fallback ?? false,
-          fallbackProvider: normalizeProvider(
-            raw["web-kits"]?.search?.routing?.fallbackProvider,
-          ),
+          provider: routing[0] ?? WEB_DEFAULTS.provider,
+          fallback: routing.length > 1,
+          fallbackProvider: routing[1] ?? fallbackProvider,
         },
         timeoutMs:
           raw["web-kits"]?.search?.timeoutMs ?? WEB_DEFAULTS.searchTimeoutMs,
         maxResults:
           raw["web-kits"]?.search?.maxResults ?? WEB_DEFAULTS.maxResults,
         codex: {
-          model:
-            raw["web-kits"]?.search?.codex?.model ?? WEB_DEFAULTS.codexModel,
+          model: sources.web.codex.model,
         },
       },
       fetch: {

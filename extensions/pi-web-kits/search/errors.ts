@@ -1,5 +1,6 @@
 import { RequestError } from "../shared/request.ts";
 import {
+  SEARCH_BACKEND_NAMES,
   WEB_SEARCH_PROVIDER_NAMES,
   type WebSearchProviderName,
 } from "./types.ts";
@@ -116,7 +117,7 @@ export function toWebSearchError(
   provider?: string,
 ): WebSearchError {
   const classified = error instanceof WebSearchError ? error : undefined;
-  const safeProvider = WEB_SEARCH_PROVIDER_NAMES.find(
+  const safeProvider = SEARCH_BACKEND_NAMES.find(
     (name) => name === (provider ?? classified?.provider),
   );
   let code: WebSearchErrorCode = "network";

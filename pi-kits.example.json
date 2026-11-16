@@ -52,9 +52,17 @@
     "enabled": true,
     "search": {
       "enabled": true,
-      "routing": {
-        "provider": "searxng",
-        "fallback": false
+      "sources": {
+        "web": {
+          "enabled": true,
+          "routing": ["searxng"],
+          "codex": {
+            "model": "gpt-6-luna"
+          }
+        },
+        "github": {
+          "enabled": true
+        }
       },
       "timeoutMs": 15000,
       "maxResults": 5

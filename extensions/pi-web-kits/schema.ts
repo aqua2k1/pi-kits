@@ -1,5 +1,6 @@
 import { type Static, Type } from "typebox";
-import { WEB_SEARCH_PROVIDER_NAMES } from "./search/types.ts";
+import { GITHUB_SEARCH_KINDS } from "./search/github/types.ts";
+import { SEARCH_BACKEND_NAMES } from "./search/types.ts";
 
 // Shared by the response contracts and output schemas to avoid shape drift.
 export const SearchResultSchema = Type.Object({
@@ -10,7 +11,9 @@ export const SearchResultSchema = Type.Object({
 
 export const SearchDetailsSchema = Type.Object({
   query: Type.String(),
-  backend: Type.Enum(WEB_SEARCH_PROVIDER_NAMES, { type: "string" }),
+  source: Type.Enum(["web", "github"], { type: "string" }),
+  kind: Type.Optional(Type.Enum(GITHUB_SEARCH_KINDS, { type: "string" })),
+  backend: Type.Enum(SEARCH_BACKEND_NAMES, { type: "string" }),
   resultCount: Type.Integer({ minimum: 0 }),
   results: Type.Array(SearchResultSchema),
   hasSummary: Type.Boolean(),

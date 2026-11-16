@@ -4,9 +4,14 @@ import {
   record,
 } from "../../shared/ui/renderers.ts";
 
-export const renderSearchCall = compactCall("Web Search", (args) => {
-  const query = record(args).query;
-  return typeof query === "string" ? query : "";
+export const renderSearchCall = compactCall("Search", (args) => {
+  const data = record(args);
+  if (typeof data.query !== "string") return "";
+  const scope =
+    data.source === "github"
+      ? `github/${typeof data.kind === "string" ? data.kind : "unknown"}`
+      : "web";
+  return `[${scope}] ${data.query}`;
 });
 export const renderSearchResult = compactResult((details) => {
   const data = record(details);

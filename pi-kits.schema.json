@@ -546,6 +546,18 @@
               "maximum": 10,
               "default": 5
             },
+            "searxng": {
+              "type": "object",
+              "properties": {
+                "url": {
+                  "not": {}
+                },
+                "apiKey": {
+                  "not": {}
+                }
+              },
+              "additionalProperties": true
+            },
             "codex": {
               "type": "object",
               "properties": {
@@ -554,7 +566,76 @@
                   "pattern": "^[a-zA-Z0-9._-]+$",
                   "minLength": 1,
                   "maxLength": 128,
-                  "default": "gpt-5.4"
+                  "default": "gpt-6-luna"
+                }
+              },
+              "additionalProperties": true
+            },
+            "sources": {
+              "type": "object",
+              "properties": {
+                "web": {
+                  "type": "object",
+                  "properties": {
+                    "enabled": {
+                      "type": "boolean",
+                      "default": true
+                    },
+                    "searxng": {
+                      "type": "object",
+                      "properties": {
+                        "url": {
+                          "not": {}
+                        },
+                        "apiKey": {
+                          "not": {}
+                        }
+                      },
+                      "additionalProperties": true
+                    },
+                    "routing": {
+                      "type": "array",
+                      "items": {
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "const": "searxng"
+                          },
+                          {
+                            "type": "string",
+                            "const": "codex-alpha-search"
+                          }
+                        ]
+                      },
+                      "minItems": 1,
+                      "uniqueItems": true,
+                      "default": ["searxng"]
+                    },
+                    "codex": {
+                      "type": "object",
+                      "properties": {
+                        "model": {
+                          "type": "string",
+                          "pattern": "^[a-zA-Z0-9._-]+$",
+                          "minLength": 1,
+                          "maxLength": 128,
+                          "default": "gpt-6-luna"
+                        }
+                      },
+                      "additionalProperties": true
+                    }
+                  },
+                  "additionalProperties": true
+                },
+                "github": {
+                  "type": "object",
+                  "properties": {
+                    "enabled": {
+                      "type": "boolean",
+                      "default": true
+                    }
+                  },
+                  "additionalProperties": true
                 }
               },
               "additionalProperties": true

@@ -15,7 +15,37 @@
 - 顶层设置覆盖同名旧字段。
 - 未指定字段保留旧值，再应用默认值。
 - 旧分组的 `enabled: false` 关闭子项，除非子项显式设置顶层 `enabled` 覆盖。
-- `web-kits` 的内部配置结构不变。
+- `web-kits.search.routing` 和 `search.codex` 继续兼容；新配置使用 `search.sources.web`，两种网页配置不能混用。
+
+## 搜索能力配置
+
+`web-kits.search` 的公共设置为 `enabled`（默认 `true`）、`maxResults`（默认 5，1–10）和 `timeoutMs`（默认 15000，1000–120000）。
+
+- `sources.web.enabled` 默认 `true`；`sources.web.routing` 默认 `["searxng"]`，可按顺序填写 `searxng`、`codex-alpha-search`，1–2 项且不重复。两个服务依序主备，单服务无备用。
+- `sources.web.codex.model` 默认 `gpt-6-luna`。
+- `sources.github.enabled` 默认 `true`，通过本地只读 `gh api` 搜索，无路由字段。
+- 搜索总开关开启时，至少保留一个启用的来源。
+- 旧 `search.routing.provider/fallback/fallbackProvider` 转换为网页路由顺序，`search.codex.model` 转换为网页 Codex 模型；旧 provider 接受 `codex` 别名。新 `sources.web` 与任一旧 `routing`／`codex` 同时出现时校验失败；`sources.github` 可与旧网页配置共存。
+
+```json
+{
+  "web-kits": {
+    "search": {
+      "enabled": true,
+      "maxResults": 5,
+      "timeoutMs": 15000,
+      "sources": {
+        "web": {
+          "enabled": true,
+          "routing": ["searxng"],
+          "codex": { "model": "gpt-6-luna" }
+        },
+        "github": { "enabled": true }
+      }
+    }
+  }
+}
+```
 
 ## 写入
 

@@ -2,28 +2,15 @@ import { readFile } from "node:fs/promises";
 import {
   getPiKitsConfigPath,
   parsePiKitsFile,
-  WEB_DEFAULTS,
+  resolvePiKitsConfig,
 } from "@pi-kits/config";
 import { errorMessageForCode, WebSearchError } from "./search/errors.ts";
-import { CODEX_DEFAULT_MODEL } from "./search/providers/codex/config.ts";
 import { SEARXNG_DEFAULT_URL } from "./search/providers/searxng/config.ts";
 import { isRecord } from "./search/results.ts";
 import {
   WEB_SEARCH_PROVIDER_NAMES,
   type WebSearchProviderName,
 } from "./search/types.ts";
-import {
-  DEFAULT_FETCH_TIMEOUT_MS,
-  DEFAULT_GITHUB_ENABLED,
-  DEFAULT_MAX_RESULTS,
-  DEFAULT_SEARCH_TIMEOUT_MS,
-  MAX_FETCH_TIMEOUT_MS,
-  MAX_MAX_RESULTS,
-  MAX_SEARCH_TIMEOUT_MS,
-  MIN_FETCH_TIMEOUT_MS,
-  MIN_MAX_RESULTS,
-  MIN_SEARCH_TIMEOUT_MS,
-} from "./shared/limits.ts";
 
 export interface WebSearchRouteConfig {
   provider?: string;
@@ -37,6 +24,14 @@ export interface WebSearchFileConfig {
   timeoutMs?: number;
   maxResults?: number;
   codex?: { model?: string };
+  sources?: {
+    web?: {
+      enabled?: boolean;
+      routing?: WebSearchProviderName[];
+      codex?: { model?: string };
+    };
+    github?: { enabled?: boolean };
+  };
 }
 
 export interface GitHubFileConfig {
@@ -57,6 +52,11 @@ export interface WebToolsFileConfig {
 
 export interface ResolvedWebSearchConfig {
   enabled: boolean;
+  sources: {
+    web: { enabled: boolean; routing: WebSearchProviderName[] };
+    github: { enabled: boolean };
+  };
+  /** @internal Derived compatibility field. */
   provider: WebSearchProviderName;
   fallback: boolean;
   fallbackProvider?: WebSearchProviderName;
@@ -152,6 +152,34 @@ function parseSearchConfig(
     const model = readField<string>(source.codex, "model", "string");
     config.codex = model === undefined ? {} : { model };
   }
+  if (isRecord(source.sources)) {
+    config.sources = {};
+    if (isRecord(source.sources.web)) {
+      const web = source.sources.web;
+      config.sources.web = {
+        ...(web.enabled !== undefined
+          ? { enabled: web.enabled as boolean }
+          : {}),
+        ...(web.routing !== undefined
+          ? { routing: [...(web.routing as WebSearchProviderName[])] }
+          : {}),
+        ...(isRecord(web.codex)
+          ? {
+              codex:
+                web.codex.model === undefined
+                  ? {}
+                  : { model: web.codex.model as string },
+            }
+          : {}),
+      };
+    }
+    if (isRecord(source.sources.github)) {
+      config.sources.github =
+        source.sources.github.enabled === undefined
+          ? {}
+          : { enabled: source.sources.github.enabled as boolean };
+    }
+  }
   return config;
 }
 
@@ -181,6 +209,11 @@ export function parseConfig(text: string): WebToolsFileConfig {
   if (!isRecord(raw))
     return invalid("Web tools configuration must be an object.");
 
+  try {
+    parsePiKitsFile(JSON.stringify({ "web-kits": raw }));
+  } catch {
+    return invalid("Web tools configuration is invalid.");
+  }
   const config: WebToolsFileConfig = {};
   const enabled = readField<boolean>(raw, "enabled", "boolean");
   if (enabled !== undefined) config.enabled = enabled;
@@ -236,18 +269,14 @@ export async function readConfig(
   return (await readConfigSnapshot(path)).rawConfig;
 }
 
-function parseInteger(
-  value: number,
-  name: string,
-  minimum: number,
-  maximum: number,
-): number {
-  if (!Number.isInteger(value) || value < minimum || value > maximum) {
-    return invalid(
-      `${INVALID_CONFIG} ${name} must be an integer between ${minimum} and ${maximum}.`,
-    );
+function resolveShared(config: WebToolsFileConfig) {
+  try {
+    return resolvePiKitsConfig(
+      parsePiKitsFile(JSON.stringify({ "web-kits": config })),
+    )["web-kits"];
+  } catch {
+    return invalid("Web tools configuration is invalid.");
   }
-  return value;
 }
 
 function stringValue(value: string | undefined): string | undefined {
@@ -270,79 +299,35 @@ export function resolveSearchConfig(
   config: WebSearchFileConfig = {},
   env: NodeJS.ProcessEnv = process.env,
 ): ResolvedWebSearchConfig {
-  const routing = config.routing ?? {};
-  const configuredProvider = stringValue(routing.provider);
-  const provider = configuredProvider
-    ? normalizeProviderName(configuredProvider)
-    : WEB_DEFAULTS.provider;
-  if (!provider) {
-    return invalid(
-      `${INVALID_CONFIG} search.routing.provider must be searxng or codex-alpha-search.`,
-    );
-  }
-
-  const configuredFallbackProvider = stringValue(routing.fallbackProvider);
-  const fallbackProvider = configuredFallbackProvider
-    ? normalizeProviderName(configuredFallbackProvider)
-    : undefined;
-  if (configuredFallbackProvider && !fallbackProvider) {
-    return invalid(
-      `${INVALID_CONFIG} search.routing.fallbackProvider must be searxng or codex-alpha-search.`,
-    );
-  }
-  if (fallbackProvider === provider) {
-    return invalid(
-      `${INVALID_CONFIG} search.routing.fallbackProvider must differ from search.routing.provider.`,
-    );
-  }
-
-  const timeoutMs = parseInteger(
-    config.timeoutMs ?? DEFAULT_SEARCH_TIMEOUT_MS,
-    "search.timeoutMs",
-    MIN_SEARCH_TIMEOUT_MS,
-    MAX_SEARCH_TIMEOUT_MS,
-  );
-  const maxResults = parseInteger(
-    config.maxResults ?? DEFAULT_MAX_RESULTS,
-    "search.maxResults",
-    MIN_MAX_RESULTS,
-    MAX_MAX_RESULTS,
-  );
+  const search = resolveShared({ search: config }).search;
   const searxngUrl = stringValue(env.SEARXNG_URL) ?? SEARXNG_DEFAULT_URL;
   const searxngApiKey = stringValue(env.SEARXNG_API_KEY);
-  const codexModel = stringValue(config.codex?.model) ?? CODEX_DEFAULT_MODEL;
-
   return {
-    enabled: config.enabled ?? true,
-    provider,
-    fallback: routing.fallback ?? false,
-    ...(fallbackProvider ? { fallbackProvider } : {}),
-    timeoutMs,
-    maxResults,
+    enabled: search.enabled,
+    sources: {
+      web: {
+        enabled: search.sources.web.enabled,
+        routing: [...search.sources.web.routing],
+      },
+      github: { ...search.sources.github },
+    },
+    provider: search.routing.provider,
+    fallback: search.routing.fallback,
+    ...(search.routing.fallbackProvider
+      ? { fallbackProvider: search.routing.fallbackProvider }
+      : {}),
+    timeoutMs: search.timeoutMs,
+    maxResults: search.maxResults,
     searxngUrl,
     ...(searxngApiKey ? { searxngApiKey } : {}),
-    codexModel,
+    codexModel: search.codex.model,
   };
 }
 
 export function resolveFetchConfig(
   config: WebFetchFileConfig = {},
 ): ResolvedWebFetchConfig {
-  const timeoutMs = parseInteger(
-    config.timeoutMs ?? DEFAULT_FETCH_TIMEOUT_MS,
-    "fetch.timeoutMs",
-    MIN_FETCH_TIMEOUT_MS,
-    MAX_FETCH_TIMEOUT_MS,
-  );
-  const github = config.github ?? {};
-
-  return {
-    enabled: config.enabled ?? true,
-    timeoutMs,
-    github: {
-      enabled: github.enabled ?? DEFAULT_GITHUB_ENABLED,
-    },
-  };
+  return resolveShared({ fetch: config }).fetch;
 }
 
 export function resolveConfig(
@@ -350,7 +335,7 @@ export function resolveConfig(
   env: NodeJS.ProcessEnv = process.env,
 ): ResolvedWebToolsConfig {
   return {
-    enabled: config.enabled ?? true,
+    enabled: resolveShared(config).enabled,
     search: resolveSearchConfig(config.search, env),
     fetch: resolveFetchConfig(config.fetch),
   };

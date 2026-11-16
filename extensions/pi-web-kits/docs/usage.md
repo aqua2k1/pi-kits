@@ -4,6 +4,7 @@
 
 ```json
 {
+  "source": "web",
   "query": "<检索主题>",
   "max_results": 5,
   "domains": ["example.com", "*.example.org"],
@@ -11,14 +12,22 @@
 }
 ```
 
-工具按配置选择 SearXNG 或 Codex 搜索，主服务由 `search.routing.provider` 指定，返回标题、URL 和片段。
+网页搜索按 `search.sources.web.routing` 顺序选择 SearXNG 或 Codex，返回标题、URL 和片段。GitHub 搜索使用本地 `gh api`，例如：
+
+```json
+{ "source": "github", "kind": "repositories", "query": "org:github topic:documentation", "max_results": 5 }
+```
+
+`repositories` 用于发现项目，`code` 用于定位实现，`issues`／`pull-requests` 用于查找讨论和变更，`commits` 用于检索提交；查询使用对应 GitHub 搜索语法。Issue／PR 支持布尔表达式，并对整个查询施加类型限制；代码搜索使用 REST 搜索引擎，语法与 GitHub 网页新版搜索存在差异。认证交给本地 `gh`。
 
 | 参数 | 说明 |
 |---|---|
+| `source` | 必填，`web` 或 `github`；入口仅暴露已启用能力，运行时也拒绝禁用能力 |
+| `kind` | `source=github` 时必填：`repositories`、`code`、`issues`、`pull-requests`、`commits`；网页搜索不传 |
 | `query` | 必填，去除首尾空白后为 1–2000 字符 |
 | `max_results` | 整数 1–10；省略时取 `search.maxResults`，默认 5 |
-| `domains` | 最多 20 个主机名，每项最多 253 字符；去除首尾空白、忽略大小写；`example.com` 包含自身及子域，`*.example.org` 仅含子域 |
-| `recency_days` | 整数 1–3650；近期筛选由服务执行，SearXNG 按 1、7、31 天边界映射为日、周、月，其余映射为年 |
+| `domains` | 仅 `source=web`；最多 20 个主机名，每项最多 253 字符；去除首尾空白、忽略大小写；`example.com` 包含自身及子域，`*.example.org` 仅含子域 |
+| `recency_days` | 仅 `source=web`；整数 1–3650；近期筛选由服务执行，SearXNG 按 1、7、31 天边界映射为日、周、月，其余映射为年 |
 
 SearXNG 使用启动前设置的环境变量，服务须返回 JSON 搜索结果：
 
@@ -29,9 +38,9 @@ export SEARXNG_API_KEY="<api-key>"
 
 地址默认 `http://localhost:8080`，认证密钥可省略。Codex 使用 Pi 的 `openai-codex` OAuth 认证；凭据由 Pi 提供和刷新。配置及默认值见[配置](configuration.md)。
 
-搜索结果先按域名过滤、去重和脱敏，再限制数量。返回字段为 `query`、`backend`、`resultCount`、`results`、`hasSummary`，以及有值时的 `summary` 和截断时的 `truncated`；每项结果含 `title`、`url`、`snippet`。
+搜索结果经过去重、脱敏和数量限制；网页结果另外按域名过滤。返回字段为 `source`、`query`、`backend`、`resultCount`、`results`、`hasSummary`，GitHub 结果另含 `kind`，以及有值时的 `summary` 和截断时的 `truncated`；每项结果含 `title`、`url`、`snippet`。`backend` 为实际执行的 `searxng`、`codex-alpha-search` 或 `github-gh`。
 
-启用回退后，认证、能力、限流、网络、超时、无效响应和服务端错误触发备用搜索；配置、请求或取消错误结束调用。返回空结果按成功处理。
+网页路由包含两个服务时，认证、能力、限流、网络、超时、无效响应和服务端错误触发备用搜索；配置、请求或取消错误结束调用。单服务路由无备用，GitHub 独立执行且无路由回退。返回空结果按成功处理。
 
 输出超限时减少结果并标记 `truncated`。基于搜索回答时附上 `Sources` 来源链接；执行失败时按错误处理。
 
@@ -102,22 +111,23 @@ git clone https://github.com/<owner>/<repo>.git <local-directory>
 /web-tools status
 ```
 
-命令显示启动配置快照中的工具开关、搜索主备服务、超时、配置来源及认证状态；状态页隐藏 SearXNG 地址、密钥和 Codex 模型的具体值。修改文件或环境变量后重新加载扩展以更新快照。
+命令显示启动配置快照中的工具和网页／GitHub 能力开关、网页路由及其来源（默认、新配置或旧配置）、超时及认证状态；状态页隐藏 SearXNG 地址、密钥和 Codex 模型的具体值。修改文件或环境变量后重新加载扩展以更新快照。
 
 ## /web-tools test
 
 ```text
 /web-tools test searxng
 /web-tools test codex-alpha-search
+/web-tools test github
 ```
 
-命令使用固定查询请求一个结果，显示结果数量或分类错误；每次仅测试指定服务，回退关闭。
+命令使用固定查询请求一个结果，显示结果数量或分类错误；网页测试仅调用指定服务，回退关闭。GitHub 测试固定使用 `repositories` 类型和 `repo:github/docs` 查询。
 
 | 参数 | 说明 |
 |---|---|
-| 服务名 | 必填，`searxng`、`codex-alpha-search`；`codex` 是后者别名 |
+| 测试目标 | 必填，`searxng`、`codex-alpha-search`、`github`；`codex` 是 `codex-alpha-search` 别名 |
 
-`search.enabled` 关闭时命令返回禁用提示。
+`enabled` 或 `search.enabled` 关闭时所有搜索测试返回禁用提示；`search.sources.web.enabled` 和 `search.sources.github.enabled` 分别控制网页和 GitHub 测试。
 
 ## 相关文档
 

@@ -74,6 +74,45 @@ test("ghRequest fixes read-only arguments, host, environment and shell settings"
   }
 });
 
+test("ghRequest permits only the fixed JSON text-match Accept header", async () => {
+  const spawnResponse = response("{}");
+  const injected = ((...args: Parameters<typeof spawn>) => {
+    assert.deepEqual(args[1], [
+      "api",
+      "--method",
+      "GET",
+      "--hostname",
+      "github.com",
+      "--header",
+      "Accept: application/vnd.github.text-match+json",
+      endpoint,
+    ]);
+    return spawnResponse(...args);
+  }) as typeof spawn;
+  assert.deepEqual(
+    await ghRequest(endpoint, {
+      timeoutMs: 5000,
+      accept: "application/vnd.github.text-match+json",
+      spawn: injected,
+    }),
+    {},
+  );
+  for (const accept of [
+    "text/html",
+    "application/json\r\nAuthorization: secret",
+    "",
+  ]) {
+    await assert.rejects(
+      ghRequest(endpoint, {
+        timeoutMs: 5000,
+        accept: accept as "application/vnd.github.text-match+json",
+        spawn: (() => assert.fail("must not spawn")) as typeof spawn,
+      }),
+      { code: "request" },
+    );
+  }
+});
+
 for (const invalid of [
   "https://evil.example/repos/acme/project",
   "http://github.com/user",

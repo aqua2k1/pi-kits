@@ -7,14 +7,15 @@ const request = { query: "test", maxResults: 1 };
 
 test("SearXNG composition neither requires a registry nor validates unused Codex settings", async () => {
   const config = resolveConfig(
-    {
-      search: { codex: { model: "x".repeat(1_000) } },
-    },
+    {},
     {
       SEARXNG_URL: "http://your-searxng-host",
       SEARXNG_API_KEY: "fixture-searx-key",
     },
   );
+  // File validation is shared and strict; the runtime still constructs only the
+  // selected adapter, so an unused adapter is never consulted for auth/settings.
+  config.search.codexModel = "x".repeat(1_000);
   const result = await searchWeb(request, config.search, {
     fetch: async () => Response.json({ results: [] }),
   });

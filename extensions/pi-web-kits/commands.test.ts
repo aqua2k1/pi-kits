@@ -76,7 +76,7 @@ test("registerWebToolsCommand: exposes status and provider test arguments", () =
   const command = capture();
   assert.deepEqual(
     command.getArgumentCompletions?.("")?.map((completion) => completion.value),
-    ["status", "test searxng", "test codex-alpha-search"],
+    ["status", "test searxng", "test codex-alpha-search", "test github"],
   );
   assert.deepEqual(
     command
@@ -127,7 +127,7 @@ test("/web-tools configure: is intentionally unavailable", async () => {
   await command.handler("configure", ctx);
 
   assert.deepEqual(notifications, [
-    "/web-tools status\n/web-tools test <searxng|codex-alpha-search>",
+    "/web-tools status\n/web-tools test <searxng|codex-alpha-search|github>",
   ]);
 });
 
@@ -140,6 +140,8 @@ test("/web-tools test codex: accepts the alias and injects the runtime", async (
     search: async (_request, config, runtime) => {
       observedProvider = config.provider;
       observedFallback = config.fallback;
+      assert.deepEqual(config.sources.web.routing, ["codex-alpha-search"]);
+      assert.equal(config.fallbackProvider, undefined);
       observedRegistry = runtime?.modelRegistry;
       return {
         query: "synthetic-query",
@@ -261,4 +263,169 @@ test("/web-tools status: reports defaults when the unified file is missing", asy
   assert.match(notifications[0] ?? "", /config source: defaults/);
   assert.match(notifications[0] ?? "", /web_search: enabled/);
   assert.match(notifications[0] ?? "", /web_fetch: enabled/);
+});
+
+test("/web-tools test github: dispatches a safe repository query with runtime and signal", async () => {
+  const { ctx, notifications } = context();
+  const controller = new AbortController();
+  Object.assign(ctx, { signal: controller.signal });
+  let calls = 0;
+  const command = capture({
+    readConfig: async () => ({
+      search: { sources: { web: { enabled: false } } },
+    }),
+    search: async () => assert.fail("GitHub must not use web adapters"),
+    searchCapabilities: async (request, config, runtime, signal) => {
+      calls += 1;
+      assert.deepEqual(request, {
+        source: "github",
+        kind: "repositories",
+        query: "repo:github/docs",
+        maxResults: 1,
+      });
+      assert.equal(config.sources.web.enabled, false);
+      assert.equal(runtime?.modelRegistry, ctx.modelRegistry);
+      assert.equal(signal, controller.signal);
+      return {
+        query: request.query,
+        results: [],
+        provider: "github-gh",
+        source: "github",
+        kind: "repositories",
+      };
+    },
+  });
+  await command.handler("test github ignored input", ctx);
+  assert.equal(calls, 1);
+  assert.deepEqual(notifications, ["GitHub test succeeded (0 results)."]);
+});
+
+test("/web-tools: all disable layers block tests and hide disabled completions", async () => {
+  for (const rawConfig of [
+    { enabled: false },
+    { search: { enabled: false } },
+    {
+      search: {
+        enabled: false,
+        sources: { web: { enabled: false }, github: { enabled: false } },
+      },
+    },
+  ]) {
+    const command = capture({
+      config: { rawConfig, resolvedConfig: resolveConfig(rawConfig, {}) },
+      search: async () => assert.fail("disabled web must not run"),
+      searchCapabilities: async () =>
+        assert.fail("disabled GitHub must not run"),
+    });
+    const { ctx, notifications } = context();
+    assert.deepEqual(command.getArgumentCompletions?.(""), [
+      { value: "status", label: "status" },
+    ]);
+    for (const target of ["searxng", "codex", "github"])
+      await command.handler(`test ${target}`, ctx);
+    assert.equal(notifications.length, 3);
+    for (const text of notifications)
+      assert.match(text, /disabled by configuration/);
+  }
+});
+
+test("/web-tools: independent capability switches and cached completions", async () => {
+  for (const enabled of ["web", "github"] as const) {
+    const command = capture({
+      readConfig: async () => ({
+        search: {
+          sources: {
+            web: { enabled: enabled === "web" },
+            github: { enabled: enabled === "github" },
+          },
+        },
+      }),
+    });
+    const { ctx, notifications } = context();
+    await command.handler("status", ctx);
+    assert.match(
+      notifications[0] ?? "",
+      enabled === "web" ? /GitHub search: disabled/ : /Web search: disabled/,
+    );
+    const values = command
+      .getArgumentCompletions?.("")
+      ?.map(({ value }) => value);
+    assert.deepEqual(
+      values,
+      enabled === "web"
+        ? ["status", "test searxng", "test codex-alpha-search"]
+        : ["status", "test github"],
+    );
+  }
+});
+
+test("/web-tools status: reports routing origins and no phantom fallback", async () => {
+  const cases: Array<[WebToolsFileConfig, RegExp, RegExp, RegExp]> = [
+    [
+      {},
+      /search routing: searxng \(default\)/,
+      /search fallback provider: none/,
+      /Codex model: configured \(default\)/,
+    ],
+    [
+      {
+        search: {
+          routing: {
+            provider: "codex",
+            fallback: false,
+            fallbackProvider: "searxng",
+          },
+          codex: { model: "private-model" },
+        },
+      },
+      /search routing: codex-alpha-search \(search.routing \(legacy\)\)/,
+      /search fallback provider: none/,
+      /Codex model: configured \(config\)/,
+    ],
+    [
+      {
+        search: {
+          sources: {
+            web: {
+              routing: ["searxng", "codex-alpha-search"],
+              codex: { model: "private-model" },
+            },
+          },
+        },
+      },
+      /search routing: searxng -> codex-alpha-search \(search.sources.web.routing\)/,
+      /search fallback provider: Codex alpha\/search \(config\)/,
+      /Codex model: configured \(config\)/,
+    ],
+    [
+      { search: { sources: { web: {} } } },
+      /search routing: searxng \(default\)/,
+      /search fallback provider: none/,
+      /Codex model: configured \(default\)/,
+    ],
+  ];
+  for (const [rawConfig, routing, fallback, model] of cases) {
+    const command = capture({
+      config: { rawConfig, resolvedConfig: resolveConfig(rawConfig, {}) },
+    });
+    const { ctx, notifications } = context();
+    await command.handler("status", ctx);
+    const status = notifications[0] ?? "";
+    assert.match(status, routing);
+    assert.match(status, fallback);
+    assert.match(status, model);
+    assert.doesNotMatch(status, /private-model/);
+  }
+});
+
+test("/web-tools test github: errors are classified and sanitized", async () => {
+  const command = capture({
+    searchCapabilities: async () => {
+      throw new Error("private-gh-diagnostic");
+    },
+  });
+  const { ctx, notifications } = context();
+  await command.handler("test github", ctx);
+  assert.match(notifications[0] ?? "", /\[network\]/);
+  assert.doesNotMatch(notifications[0] ?? "", /private-gh-diagnostic/);
 });

@@ -14,7 +14,7 @@
     ]
   },
   "scripts": {
-    "test": "node --import tsx --test '*.test.ts' 'search/*.test.ts' 'shared/*.test.ts' 'fetch/*.test.ts' 'search/providers/*/*.test.ts'",
+    "test": "node --import tsx --test '*.test.ts' 'search/*.test.ts' 'shared/*.test.ts' 'fetch/*.test.ts' 'search/providers/*/*.test.ts' 'search/github/*.test.ts'",
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {

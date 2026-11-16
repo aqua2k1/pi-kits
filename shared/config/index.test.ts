@@ -22,6 +22,93 @@ import {
   updatePiKitsConfig,
 } from "./index.ts";
 
+test("search sources default, derive legacy routes, and isolate routing arrays", () => {
+  const defaults = resolvePiKitsConfig()["web-kits"].search;
+  assert.deepEqual(defaults.sources, {
+    web: {
+      enabled: true,
+      routing: ["searxng"],
+      codex: { model: "gpt-6-luna" },
+    },
+    github: { enabled: true },
+  });
+  const current = {
+    sources: {
+      web: {
+        routing: ["codex-alpha-search", "searxng"],
+        codex: { model: "custom" },
+      },
+      github: { enabled: false },
+    },
+  };
+  const config = parsePiKitsConfig(
+    JSON.stringify({ "web-kits": { search: current } }),
+  )["web-kits"].search;
+  assert.deepEqual(config.routing, {
+    provider: "codex-alpha-search",
+    fallback: true,
+    fallbackProvider: "searxng",
+  });
+  assert.equal(config.codex.model, "custom");
+  assert.equal(config.sources.github.enabled, false);
+  config.sources.web.routing.length = 0;
+  assert.deepEqual(current.sources.web.routing, [
+    "codex-alpha-search",
+    "searxng",
+  ]);
+  defaults.sources.web.routing.length = 0;
+  assert.deepEqual(
+    resolvePiKitsConfig()["web-kits"].search.sources.web.routing,
+    ["searxng"],
+  );
+
+  for (const provider of ["searxng", "codex"] as const) {
+    const legacy = resolvePiKitsConfig({
+      "web-kits": { search: { routing: { provider, fallback: true } } },
+    })["web-kits"].search;
+    assert.equal(legacy.sources.web.routing.length, 2);
+    assert.notEqual(...(legacy.sources.web.routing as [string, string]));
+  }
+});
+
+test("search rejects malformed sources and mixed web formats at every shared entry", () => {
+  const invalidSearches = [
+    { sources: null },
+    { sources: { web: false } },
+    { sources: { github: { enabled: 1 } } },
+    ...[[], ["searxng", "searxng"], ["unknown"], ["codex"], "searxng"].map(
+      (routing) => ({ sources: { web: { routing } } }),
+    ),
+    { sources: { web: { codex: { model: "bad model" } } } },
+    { sources: { web: {} }, routing: {} },
+    { sources: { web: {} }, codex: {} },
+    { sources: { web: { enabled: false }, github: { enabled: false } } },
+    { enabled: false, sources: { web: {} }, routing: {} },
+  ];
+  for (const search of invalidSearches) {
+    const text = JSON.stringify({ "web-kits": { search } });
+    assert.throws(() => parsePiKitsFile(text), /Invalid pi-kits.json/);
+    assert.throws(() => parsePiKitsConfig(text), /Invalid pi-kits.json/);
+    assert.throws(
+      () => resolvePiKitsConfig(JSON.parse(text)),
+      /Invalid pi-kits.json/,
+    );
+  }
+  for (const search of [
+    { sources: { web: { enabled: false } } },
+    { sources: { github: { enabled: false } } },
+    {
+      enabled: false,
+      sources: { web: { enabled: false }, github: { enabled: false } },
+    },
+    { routing: { provider: "codex" }, sources: { github: { enabled: false } } },
+  ]) {
+    assert.doesNotThrow(() =>
+      parsePiKitsConfig(JSON.stringify({ "web-kits": { search } })),
+    );
+  }
+});
+
 test("absent config uses defaults without creating a file", (t) => {
   const dir = mkdtempSync(join(tmpdir(), "pi-kits-config-"));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
@@ -44,7 +131,7 @@ test("absent config uses defaults without creating a file", (t) => {
   assert.equal(config["web-kits"].search.routing.provider, "searxng");
   assert.equal(config["web-kits"].search.timeoutMs, 15_000);
   assert.equal(config["web-kits"].search.maxResults, 5);
-  assert.equal(config["web-kits"].search.codex.model, "gpt-5.4");
+  assert.equal(config["web-kits"].search.codex.model, "gpt-6-luna");
   assert.equal(config["web-kits"].fetch.timeoutMs, 15_000);
   assert.deepEqual(config["web-kits"].fetch.github, { enabled: true });
   assert.equal(readPiKitsFile(dir), undefined);
@@ -76,6 +163,13 @@ test("canvas defaults, overrides and port-range validation", () => {
       /Invalid pi-kits.json/,
     );
   }
+});
+
+test("explicit Codex model overrides the default", () => {
+  const config = parsePiKitsConfig(
+    '{"web-kits":{"search":{"codex":{"model":"gpt-5.4"}}}}',
+  );
+  assert.equal(config["web-kits"].search.codex.model, "gpt-5.4");
 });
 
 test("web-kits is the sole web configuration key", () => {
