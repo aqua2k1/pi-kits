@@ -35,7 +35,7 @@ import { SubagentStatusWidget } from "./ui/status-widget.ts";
 import { showSubagentViews } from "./ui/views.ts";
 
 const namespace = {
-  name: "subagent",
+  name: "pi-subagent",
   description:
     "Delegate tasks to independent agent sessions and manage their lifecycle and results.",
 };

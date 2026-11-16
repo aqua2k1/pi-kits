@@ -15,7 +15,7 @@ pi install https://github.com/aqua2k1/pi-kits.git
 /canvas-note-server
 ```
 
-`/skill:canvas-note <请求>` 手动加载 Canvas Note 工作流；不带参数时先询问需求。该 skill 仅手动加载，不加入模型的自动选择列表。`/canvas-note-server` 启动或复用当前会话的画布服务，地址只显示在状态栏；恢复会话后沿用原文档，空会话展示空画布。更新安装后运行 `/reload` 加载命令与 skill。
+`/skill:canvas-note <请求>` 手动加载 Canvas Note 工作流；不带参数时先询问需求。该 skill 仅手动加载，不加入模型的自动选择列表。四个工具归于 `pi-canvas-note` namespace，工具名称不变。`/canvas-note-server` 启动或复用当前会话的画布服务，地址只显示在状态栏；恢复会话后沿用原文档，空会话展示空画布。更新安装后运行 `/reload` 加载命令与 skill。
 
 让 Pi 创建一份包含 Markdown、ECharts 图表和 LaTeX 公式的报告。文档固定保存到当前项目的 `docs/canvas-notes/<UTC时间>-<UUID>/doc.json`，重载后沿用同一文档。首次插入内容时启动服务，工具返回访问地址和 JSON 文件路径。
 

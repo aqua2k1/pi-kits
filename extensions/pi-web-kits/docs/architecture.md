@@ -110,7 +110,7 @@ sequenceDiagram
 
 ## 约束
 
-- `web_search` 与 `web_fetch` 共享 `web-kits` namespace，保持发现入口一致；单一 `web_search` 必填 `source=web|github`，GitHub 必填 `kind=repositories|code|issues|pull-requests|commits`；`domains`／`recency_days` 仅用于网页，避免混淆查询语义。
+- `web_search` 与 `web_fetch` 共享与扩展目录同名的 `pi-web-kits` namespace，保持发现入口一致；单一 `web_search` 必填 `source=web|github`，GitHub 必填 `kind=repositories|code|issues|pull-requests|commits`；`domains`／`recency_days` 仅用于网页，避免混淆查询语义。
 - 入口 schema 仅暴露启用的来源，执行边界和 composition 同时拒绝禁用来源，防止参数或诊断测试绕过开关；网页主备仅由配置决定。
 - resolved search 保留派生兼容字段 `provider`／`fallback`／`fallbackProvider`／`codexModel`，新增 `sources.web.enabled/routing` 和 `sources.github.enabled`；新 `sources.web` 与旧 `search.routing/codex` 互斥，避免两套路由冲突。默认网页路由仅 `searxng`，GitHub 无路由字段；请求无 `defaultSource/defaultKind`。
 - 命令保留 `search: typeof searchWeb` 注入，GitHub 通过 `searchCapabilities: typeof search` 分派并固定测试 `repositories` 与 `repo:github/docs`；网页测试同步覆盖派生字段和 `sources.web.routing` 为单服务，避免误触备用。status 从原始快照判断新旧路由／模型来源，从有效路由确定备用，避免默认值或旧备用字段误报。

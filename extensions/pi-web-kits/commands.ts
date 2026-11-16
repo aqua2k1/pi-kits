@@ -196,8 +196,8 @@ export function registerWebToolsCommand(
     });
     return snapshotPromise;
   };
-  pi.registerCommand("web-tools", {
-    description: "Inspect or test web-tools search configuration.",
+  pi.registerCommand("pi-web-kits", {
+    description: "Inspect or test pi-web-kits search configuration.",
     getArgumentCompletions: (prefix) => {
       const values = COMMAND_ARGUMENTS.filter((value) => {
         if (!value.startsWith(prefix.trimStart())) return false;
@@ -262,7 +262,7 @@ export function registerWebToolsCommand(
           }
         } else {
           ctx.ui.notify(
-            "/web-tools status\n/web-tools test <searxng|codex-alpha-search|github>",
+            "/pi-web-kits status\n/pi-web-kits test <searxng|codex-alpha-search|github>",
             "info",
           );
         }

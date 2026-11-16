@@ -141,8 +141,8 @@ Block 类型在 `core/contracts.js` 的 `BlockKind` 与 `blockDefinitions` 中�
 
 ## 约束
 
+- 四个工具共享与扩展目录同名的 `pi-canvas-note` namespace，skill 使用同名发现入口，避免按需发现失败；工具名称和 deferred 暴露保持不变。
 - 消息构造、文档解析、变更计划与浏览器派生视图使用显式输入的纯函数；副作用函数只编排计算结果与持久化、网络、DOM 操作，防止格式化或校验意外改变运行状态。
-
 - 工具成功结果的 `content` 使用固定提示，动态 ID、URL、文档路径与版本放在 `structuredContent` 和 `details`，避免重复序列化到文本。
 - `index.ts` 是唯一扩展入口，`core/` 不依赖 `server/` 或 `web/`，跨层反馈类型放在 `core/types.ts`，避免循环依赖。
 - `core/contracts.js` 是前后端共享的类型来源，不访问 DOM 或注册生命周期；Block 的内容校验与摘要只定义一次，浏览器只补充渲染行为，防止新增类型后前后端接受范围不一致。

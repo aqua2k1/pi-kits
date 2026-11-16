@@ -333,13 +333,13 @@ for (const failures of [1, 3]) {
   });
 }
 
-test("all six tools share the subagent namespace without changing exposure", () => {
+test("all six tools share the pi-subagent namespace without changing exposure", () => {
   const capture = registrations();
   registerSubagents(capture.pi, {} as MuxAdapter);
   assert.equal(capture.definitions.size, 6);
   const namespace = capture.definitions.get("subagent")?.namespace;
   assert.deepEqual(namespace, {
-    name: "subagent",
+    name: "pi-subagent",
     description:
       "Delegate tasks to independent agent sessions and manage their lifecycle and results.",
   });

@@ -31,6 +31,10 @@ export default function askUserQuestionExtension(pi: ExtensionAPI): void {
 
   pi.registerTool({
     name: "ask_user_question",
+    namespace: {
+      name: "pi-ask",
+      description: "Collect structured user choices and clarification answers.",
+    },
     label: "Ask User Question",
     renderCall: compactCall("Ask User Question", (args) => {
       const questions = record(args).questions;

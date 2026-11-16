@@ -11,7 +11,7 @@ Present the main result of the user's request in a Canvas Note document. If no r
 ## Discover tool contracts
 
 - Use the Canvas Note tools available in the current environment.
-- If the tools are not listed directly, discover them through Codemode's `searchTools("canvas-note")`, then use `describeNamespace("canvas-note")` and `describeTool()` to retrieve the guidance and parameter declarations needed for this operation.
+- If the tools are not listed directly, discover them through Codemode's `searchTools("pi-canvas-note")`, then use `describeNamespace("pi-canvas-note")` and `describeTool()` to retrieve the guidance and parameter declarations needed for this operation.
 - If the environment provides `tool_search`, you can also use it to discover and load Canvas Note tools.
 - Follow the actual tool schemas when constructing arguments. If the tools are unavailable, explain that the Canvas Note extension must be enabled.
 

@@ -78,7 +78,7 @@ sequenceDiagram
 
 ## 约束
 
-- 六个工具共享 `subagent` namespace 元数据，保持 Codemode 分组与发现入口一致；工具名称、参数和默认 direct 暴露保持不变。
+- 六个工具共享与扩展目录同名的 `pi-subagent` namespace 元数据，保持 Codemode 分组与发现入口一致；工具名称、参数和默认 direct 暴露保持不变。
 - `index.ts` 在 worker 标记为 `1` 时直接返回；Pi 后端显式加载通信桥，防止子 Pi 递归注册父协调工具。
 - 各 mux 模块自行调用 `registerMux` 加入内部列表；`providers.ts` 先导入 `herdr-app` 再导入 `herdr`，启动时按注册顺序取首个环境匹配项，防止双环境标记改变选择优先级。
 - 新版 `herdr-app` 以 `HC_TERMINAL_ID` 非空为匹配条件，通过 `hc connect` 的 JSONL RPC 管理终端，完整传递 argv、目录和环境；旧版 `herdr` 以 `HERDR_ENV === "1"` 为条件。`pi-subagent.enabled` 默认 `true`，均未匹配时不注册扩展，配置不参与适配器选择。

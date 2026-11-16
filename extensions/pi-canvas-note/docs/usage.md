@@ -8,7 +8,7 @@
 /skill:canvas-note 修改报告中的代码示例
 ```
 
-命令手动加载 Canvas Note skill，并将后续文字作为用户请求；主要结果呈现在文档中，修改时优先更新已有 Block。不带参数时先询问需求。skill 仅手动加载，不加入模型的自动选择列表。运行 `/reload` 后使用 `/skill:canvas-note`；工具由已启用的 Canvas Note 扩展提供，参数声明按需发现，不预加载。运行环境需提供 Codemode 或 `tool_search`。
+命令手动加载 Canvas Note skill，并将后续文字作为用户请求；主要结果呈现在文档中，修改时优先更新已有 Block。不带参数时先询问需求。skill 仅手动加载，不加入模型的自动选择列表。运行 `/reload` 后使用 `/skill:canvas-note`；工具由已启用的 Canvas Note 扩展提供，四个工具归于 `pi-canvas-note` namespace，参数声明按需发现，不预加载。运行环境需提供 Codemode 或 `tool_search`。
 
 ## /canvas-note-server
 
@@ -72,13 +72,10 @@ Markdown 使用 `$...$` 渲染行内公式，使用 `$$...$$` 渲染展示公式
 ## 表格
 
 ```js
-await tools.insert_blocks({ blocks: [{
-  type: "table",
-  spec: {
-    columns: ["**符号**", "含义", "数值"],
-    rows: [["$A_t$", "第 t 时刻的值", 42]]
-  }
-}] });
+await tools.insert_blocks({ blocks: [{ type: "table", spec: {
+  columns: ["**符号**", "含义", "数值"],
+  rows: [["$A_t$", "第 t 时刻的值", 42]]
+} }] });
 ```
 
 表头与各行组合成 Markdown 表格统一渲染，支持公式、加粗、代码和链接；单元格按文字与公式展示，竖线保留在当前单元格内，换行转换为 `<br>`。数字和布尔值转换为文本，对象与数组转换为 JSON，`null` 转换为空白；转换后的文本参与 Markdown 渲染。复制保留原始值，以制表符分隔表头和各行。PDF 与离线 HTML 使用相同的表格渲染。
@@ -91,9 +88,7 @@ const { blockIds } = await tools.insert_blocks({ blocks: [
   { type: "code", spec: { code: "<自定义内容>", language: "unknown-language" } },
   { type: "code", spec: { code: "" } }
 ] });
-await tools.update_blocks({ blocks: [
-  { blockId: blockIds[0], spec: { code: "console.log(42);" } }
-] });
+await tools.update_blocks({ blocks: [{ blockId: blockIds[0], spec: { code: "console.log(42);" } }] });
 ```
 
 `code` 必须是字符串，可为空；`language` 可省略或为任意字符串，包括空字符串和未知语言。显式指定本地高亮资源支持的语言时按 Gruvbox 配色高亮；省略、空或未知语言均显示纯文本，不自动猜测语言。高亮资源随扩展安装，浏览器无需访问 CDN。代码块只读展示，不执行代码，HTML 也作为代码文字显示。
@@ -120,9 +115,7 @@ await tools.update_page({ pageId: "<另一个 Page ID>", change: { kind: "delete
 
 `pageId` 必须存在；`change` 按 `kind` 严格区分两个分支：`rename` 必须携带非空白且不同于原标题的 `title`；`delete` 删除整页及其全部 Block，只接受 `kind` 字段。额外字段、未知分支或缺少有效修改时报错，不写文件或增加版本。
 
-返回 `pageId`、`deleted`、`documentPath` 和 `version`。重命名同步正文、目录和反馈中的页标题；删除清理对应选择和图表，不影响其他页。最后一页也可删除，文档保留为空。删除当前页后，下次省略 `pageId` 插入会创建“输出”页。
-
-页修改只同步正在运行的服务，不启动或重启服务。
+返回 `pageId`、`deleted`、`documentPath` 和 `version`。重命名同步正文、目录和反馈中的页标题；删除清理对应选择和图表，不影响其他页。最后一页也可删除，文档保留为空。删除当前页后，下次省略 `pageId` 插入会创建“输出”页。页修改只同步正在运行的服务，不启动或重启服务。
 
 ## 保存 PDF
 

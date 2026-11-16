@@ -54,6 +54,11 @@ export default function (pi: ExtensionAPI) {
   // ── Tool ──
   pi.registerTool({
     name: "open",
+    namespace: {
+      name: "pi-open",
+      description:
+        "Open files, URLs, and directories with their default application.",
+    },
     label: "Open",
     renderCall: compactCall("Open", (args) => {
       const target = record(args).target;

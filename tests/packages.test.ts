@@ -212,7 +212,8 @@ test("Canvas Note skill loads manually from root and independent packages withou
     assert.deepEqual(loader.getPrompts().prompts, []);
     const instructions = readFileSync(skill.filePath, "utf8");
     assert.match(instructions, /searchTools/);
-    assert.match(instructions, /describeNamespace/);
+    assert.ok(instructions.includes('describeNamespace("pi-canvas-note")'));
+    assert.ok(!instructions.includes('describeNamespace("canvas-note")'));
     assert.match(instructions, /snapshotPath/);
     assert.match(instructions, /documentPath/);
     assert.equal(instructions.includes("$ARGUMENTS"), false);

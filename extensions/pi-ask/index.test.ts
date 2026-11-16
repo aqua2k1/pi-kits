@@ -85,6 +85,7 @@ test("registers a sequential model-only tool and reconciles UI availability", (t
   assert.equal(captured.tool?.name, "ask_user_question");
   assert.equal(captured.tool?.executionMode, "sequential");
   assert.equal(captured.tool?.exposure, "model-only");
+  assert.equal(captured.tool?.namespace?.name, "pi-ask");
   for (const hasUI of [false, false, true, true]) {
     captured.handler?.({}, { hasUI } as ExtensionContext);
     assert.deepEqual(

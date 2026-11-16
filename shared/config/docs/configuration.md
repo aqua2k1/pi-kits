@@ -28,7 +28,7 @@
 
 归档扩展的旧键（如 `terminal`、`commit`、`stats`、`providerUsage`、`notify`、`contextPreview`）仅作为未知字段留在 raw 中，不进入 resolved。`pi-subagent.mux` 也作为未知字段忽略，终端适配器按环境自动选择。
 
-迁移只改变配置键；工具、命令、namespace 和运行时事件名称不变。
+配置键迁移与工具 namespace 独立：工具 namespace 与扩展目录同名，使用 `pi-canvas-note`、`pi-subagent`、`pi-web-kits`、`pi-ask`、`pi-open`；工具名称和运行时事件名称不变。
 
 ## 旧搜索字段兼容
 

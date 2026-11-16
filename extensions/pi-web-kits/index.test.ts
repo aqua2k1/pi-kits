@@ -104,11 +104,11 @@ function captureFetch(
   return checkMachineOutput(tools[0]);
 }
 
-test("search and fetch share the web-kits namespace without changing exposure", () => {
+test("search and fetch share the pi-web-kits namespace without changing exposure", () => {
   const search = captureSearch();
   const fetch = captureFetch();
   assert.deepEqual(search.namespace, {
-    name: "web-kits",
+    name: "pi-web-kits",
     description:
       "Search the web or GitHub and fetch URL content into local files for reading.",
   });
@@ -136,7 +136,7 @@ test("the extension entrypoint validates config before registering tools", async
     } as unknown as ExtensionAPI,
     { readConfig: async () => ({}), env: {} },
   );
-  assert.deepEqual(names, ["web_search", "web_fetch", "web-tools"]);
+  assert.deepEqual(names, ["web_search", "web_fetch", "pi-web-kits"]);
 });
 
 test("the command receives the startup config instead of rereading it", async () => {
@@ -462,17 +462,17 @@ for (const scenario of [
   { config: { enabled: false }, names: [], cleanups: 0 },
   {
     config: { search: { enabled: false } },
-    names: ["web_fetch", "web-tools"],
+    names: ["web_fetch", "pi-web-kits"],
     cleanups: 1,
   },
   {
     config: { fetch: { enabled: false } },
-    names: ["web_search", "web-tools"],
+    names: ["web_search", "pi-web-kits"],
     cleanups: 0,
   },
   {
     config: { search: { enabled: false }, fetch: { enabled: false } },
-    names: ["web-tools"],
+    names: ["pi-web-kits"],
     cleanups: 0,
   },
 ]) {

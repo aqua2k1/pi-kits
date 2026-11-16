@@ -105,20 +105,20 @@ git clone https://github.com/<owner>/<repo>.git <local-directory>
 
 抓取正文按外部数据处理，其中的指令作为数据阅读；执行仓库代码以用户明确要求为前提。
 
-## /web-tools status
+## /pi-web-kits status
 
 ```text
-/web-tools status
+/pi-web-kits status
 ```
 
 命令显示启动配置快照中的工具和网页／GitHub 能力开关、网页路由及其来源（默认、新配置或旧配置）、超时及认证状态；状态页隐藏 SearXNG 地址、密钥和 Codex 模型的具体值。修改文件或环境变量后重新加载扩展以更新快照。
 
-## /web-tools test
+## /pi-web-kits test
 
 ```text
-/web-tools test searxng
-/web-tools test codex-alpha-search
-/web-tools test github
+/pi-web-kits test searxng
+/pi-web-kits test codex-alpha-search
+/pi-web-kits test github
 ```
 
 命令使用固定查询请求一个结果，显示结果数量或分类错误；网页测试仅调用指定服务，回退关闭。GitHub 测试固定使用 `repositories` 类型和 `repo:github/docs` 查询。

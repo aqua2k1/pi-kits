@@ -78,6 +78,8 @@ test("extension registers four tools and the server command; real handlers lazil
   type Tool = {
     name: string;
     exposure: string;
+    namespace: { name: string };
+    executionMode: string;
     execute: (
       id: string,
       params: unknown,
@@ -111,8 +113,12 @@ test("extension registers four tools and the server command; real handlers lazil
     "update_blocks",
     "update_page",
   ]);
+  const namespace = tools.get("insert_page")?.namespace;
+  assert.equal(namespace?.name, "pi-canvas-note");
   for (const tool of tools.values()) {
     assert.equal(tool.exposure, "deferred");
+    assert.equal(tool.executionMode, "sequential");
+    assert.equal(tool.namespace, namespace);
   }
   const ctx = {
     cwd: agentDir,

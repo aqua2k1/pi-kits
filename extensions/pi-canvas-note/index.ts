@@ -124,7 +124,7 @@ export default function canvasNoteExtension(pi: ExtensionAPI) {
   const common = {
     exposure: "deferred" as const,
     namespace: {
-      name: "canvas-note",
+      name: "pi-canvas-note",
       description:
         "Canvas Note: Present charts, plans, designs, math, and code as interactive documents with page- and block-level user feedback.",
       instructions:

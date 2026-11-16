@@ -40,7 +40,7 @@ import {
 } from "./shared/limits.ts";
 
 const namespace = {
-  name: "web-kits",
+  name: "pi-web-kits",
   description:
     "Search the web or GitHub and fetch URL content into local files for reading.",
 };

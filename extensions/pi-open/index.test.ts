@@ -23,7 +23,13 @@ for (const [config, enabled] of [
       registerCommand(name: string) {
         commands.push(name);
       },
-      registerTool(tool: { name: string }) {
+      registerTool(tool: {
+        name: string;
+        namespace?: { name: string };
+        exposure?: string;
+      }) {
+        assert.equal(tool.namespace?.name, "pi-open");
+        assert.equal(tool.exposure, undefined);
         tools.push(tool.name);
       },
     } as unknown as ExtensionAPI);

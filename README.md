@@ -39,7 +39,7 @@ pi install https://github.com/aqua2k1/pi-kits.git
 
 配置文件为 agent 目录下的 `pi-kits.json`，默认位于 `~/.pi/agent/`，可由 `PI_CODING_AGENT_DIR` 调整。修改后执行 `/reload`。
 
-扩展资源名、包名与目录名一致；`extensionAllowlist[].extensions` 填写 `pi-web-kits`、`pi-ask` 等完整名称。生效的配置顶层键仅有 `pi-canvas-note`、`pi-open`、`pi-output-viewer`、`pi-ask`、`pi-subagent`、`pi-web-kits`；工具、命令与 namespace 名称不变。
+扩展资源名、包名与目录名一致；`extensionAllowlist[].extensions` 填写 `pi-web-kits`、`pi-ask` 等完整名称。生效的配置顶层键仅有 `pi-canvas-note`、`pi-open`、`pi-output-viewer`、`pi-ask`、`pi-subagent`、`pi-web-kits`。工具 namespace 与扩展目录同名：`pi-canvas-note`、`pi-subagent`、`pi-web-kits`、`pi-ask`、`pi-open`；工具名称不变。
 
 `pi-output-viewer.editor` 设置只读预览编辑器，默认 `nvim`。旧顶层键、归档扩展键及旧分组仅作为未知字段保留在原始配置中，生效配置忽略它们；已有设置须显式迁移到新键，见[共享配置](shared/config/docs/configuration.md)。
 

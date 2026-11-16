@@ -22,7 +22,13 @@ function capture(
 ): CapturedCommand {
   let command: CapturedCommand | undefined;
   const pi = {
-    registerCommand(_name: string, options: CapturedCommand) {
+    registerCommand(name: string, options: CapturedCommand) {
+      assert.equal(name, "pi-web-kits");
+      assert.equal(
+        command,
+        undefined,
+        "Only one diagnostic command is registered",
+      );
       command = options;
     },
   } as unknown as ExtensionAPI;
@@ -87,7 +93,7 @@ test("registerWebToolsCommand: exposes status and provider test arguments", () =
   assert.deepEqual(command.getArgumentCompletions?.("configure"), null);
 });
 
-test("/web-tools status: reports separate search and fetch settings", async () => {
+test("/pi-web-kits status: reports separate search and fetch settings", async () => {
   const command = capture({
     readConfig: async () => currentConfig(),
     env: {
@@ -120,18 +126,18 @@ test("/web-tools status: reports separate search and fetch settings", async () =
   );
 });
 
-test("/web-tools configure: is intentionally unavailable", async () => {
+test("/pi-web-kits configure: is intentionally unavailable", async () => {
   const command = capture();
   const { ctx, notifications } = context();
 
   await command.handler("configure", ctx);
 
   assert.deepEqual(notifications, [
-    "/web-tools status\n/web-tools test <searxng|codex-alpha-search|github>",
+    "/pi-web-kits status\n/pi-web-kits test <searxng|codex-alpha-search|github>",
   ]);
 });
 
-test("/web-tools test codex: accepts the alias and injects the runtime", async () => {
+test("/pi-web-kits test codex: accepts the alias and injects the runtime", async () => {
   let observedProvider = "";
   let observedFallback = true;
   let observedRegistry: unknown;
@@ -168,7 +174,7 @@ test("/web-tools test codex: accepts the alias and injects the runtime", async (
   ]);
 });
 
-test("/web-tools uses startup snapshots without rereading config", async () => {
+test("/pi-web-kits uses startup snapshots without rereading config", async () => {
   let reads = 0;
   let observedMaxResults = 0;
   const rawConfig = currentConfig();
@@ -204,7 +210,7 @@ test("/web-tools uses startup snapshots without rereading config", async () => {
   assert.match(notifications[1] ?? "", /SearXNG test succeeded \(0 results\)/);
 });
 
-test("/web-tools command errors remain classified and safe", async () => {
+test("/pi-web-kits command errors remain classified and safe", async () => {
   const command = capture({
     readConfig: async () => {
       throw new Error("synthetic-raw-config-error");
@@ -219,7 +225,7 @@ test("/web-tools command errors remain classified and safe", async () => {
   assert.doesNotMatch(notifications[0] ?? "", /synthetic-raw-config-error/);
 });
 
-test("/web-tools status: shows unified source and disabled tools; tests cannot bypass disable", async () => {
+test("/pi-web-kits status: shows unified source and disabled tools; tests cannot bypass disable", async () => {
   const rawConfig: WebToolsFileConfig = {
     search: { enabled: false, routing: { fallback: true } },
     fetch: { enabled: false, github: { enabled: true } },
@@ -249,7 +255,7 @@ test("/web-tools status: shows unified source and disabled tools; tests cannot b
   assert.equal(notifications[1], "Web search is disabled by configuration.");
 });
 
-test("/web-tools status: reports defaults when the unified file is missing", async () => {
+test("/pi-web-kits status: reports defaults when the unified file is missing", async () => {
   const command = capture({
     config: {
       rawConfig: {},
@@ -265,7 +271,7 @@ test("/web-tools status: reports defaults when the unified file is missing", asy
   assert.match(notifications[0] ?? "", /web_fetch: enabled/);
 });
 
-test("/web-tools test github: dispatches a safe repository query with runtime and signal", async () => {
+test("/pi-web-kits test github: dispatches a safe repository query with runtime and signal", async () => {
   const { ctx, notifications } = context();
   const controller = new AbortController();
   Object.assign(ctx, { signal: controller.signal });
@@ -300,7 +306,7 @@ test("/web-tools test github: dispatches a safe repository query with runtime an
   assert.deepEqual(notifications, ["GitHub test succeeded (0 results)."]);
 });
 
-test("/web-tools: all disable layers block tests and hide disabled completions", async () => {
+test("/pi-web-kits: all disable layers block tests and hide disabled completions", async () => {
   for (const rawConfig of [
     { enabled: false },
     { search: { enabled: false } },
@@ -329,7 +335,7 @@ test("/web-tools: all disable layers block tests and hide disabled completions",
   }
 });
 
-test("/web-tools: independent capability switches and cached completions", async () => {
+test("/pi-web-kits: independent capability switches and cached completions", async () => {
   for (const enabled of ["web", "github"] as const) {
     const command = capture({
       readConfig: async () => ({
@@ -359,7 +365,7 @@ test("/web-tools: independent capability switches and cached completions", async
   }
 });
 
-test("/web-tools status: reports routing origins and no phantom fallback", async () => {
+test("/pi-web-kits status: reports routing origins and no phantom fallback", async () => {
   const cases: Array<[WebToolsFileConfig, RegExp, RegExp, RegExp]> = [
     [
       {},
@@ -418,7 +424,7 @@ test("/web-tools status: reports routing origins and no phantom fallback", async
   }
 });
 
-test("/web-tools test github: errors are classified and sanitized", async () => {
+test("/pi-web-kits test github: errors are classified and sanitized", async () => {
   const command = capture({
     readConfig: async () => ({}),
     searchCapabilities: async () => {
