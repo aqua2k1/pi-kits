@@ -71,7 +71,7 @@ RPC 改由 `core.ts` 逐题收集并在最后一题后返回；取消保留已�
 在仓库根目录执行：
 
 ```sh
-npm test --workspace=pi-ask-user-question
+npm test --workspace=pi-ask
 ```
 
 | 测试 | 覆盖 |

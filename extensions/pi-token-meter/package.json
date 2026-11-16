@@ -6,7 +6,7 @@
     "pi-package"
   ],
   "extensionResources": {
-    "token-meter": "./index.ts"
+    "pi-token-meter": "./index.ts"
   },
   "pi": {
     "extensions": [

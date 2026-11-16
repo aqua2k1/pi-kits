@@ -1,4 +1,4 @@
-# web-kits
+# pi-web-kits
 
 `web_search` 按必填 `source` 搜索网页或 GitHub；网页使用 SearXNG 或 Codex，GitHub 使用本地 `gh api`。`web_fetch` 获取网页与 GitHub 仓库内容并保存为本地文本。
 

@@ -1,4 +1,4 @@
-# token-meter
+# pi-token-meter
 
 在 Pi 编辑器下方的共享信息行显示最近一次模型请求的首字延迟和输出吞吐率。
 
@@ -14,7 +14,7 @@ pi install https://github.com/aqua2k1/pi-kits.git
 pi config
 ```
 
-启用 token-meter，在 Pi 交互界面正常发送消息。模型响应结束后，信息行显示：
+启用 pi-token-meter，在 Pi 交互界面正常发送消息。模型响应结束后，信息行显示：
 
 ```text
 TTFT 0.8s · TPS 63 token/s

@@ -6,14 +6,14 @@
     "pi-package"
   ],
   "extensionResources": {
-    "canvas-note": "./extensions/pi-canvas-note/index.ts",
-    "open": "./extensions/pi-open/index.ts",
-    "preview": "./extensions/pi-output-viewer/index.ts",
-    "token-meter": "./extensions/pi-token-meter/index.ts",
-    "handoff": "./extensions/pi-handoff/index.ts",
-    "ask-user-question": "./extensions/pi-ask-user-question/index.ts",
-    "subagent": "./extensions/pi-subagent/index.ts",
-    "web-kits": "./extensions/pi-web-kits/index.ts"
+    "pi-canvas-note": "./extensions/pi-canvas-note/index.ts",
+    "pi-open": "./extensions/pi-open/index.ts",
+    "pi-output-viewer": "./extensions/pi-output-viewer/index.ts",
+    "pi-token-meter": "./extensions/pi-token-meter/index.ts",
+    "pi-handoff": "./extensions/pi-handoff/index.ts",
+    "pi-ask": "./extensions/pi-ask/index.ts",
+    "pi-subagent": "./extensions/pi-subagent/index.ts",
+    "pi-web-kits": "./extensions/pi-web-kits/index.ts"
   },
   "pi": {
     "extensions": [
@@ -22,7 +22,7 @@
       "./extensions/pi-output-viewer/index.ts",
       "./extensions/pi-token-meter/index.ts",
       "./extensions/pi-handoff/index.ts",
-      "./extensions/pi-ask-user-question/index.ts",
+      "./extensions/pi-ask/index.ts",
       "./extensions/pi-subagent/index.ts",
       "./extensions/pi-web-kits/index.ts"
     ],

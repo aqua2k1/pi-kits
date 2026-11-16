@@ -14,14 +14,14 @@ pi install https://github.com/aqua2k1/pi-kits.git
 
 | 扩展 | 功能 |
 | --- | --- |
-| [canvas-note](extensions/pi-canvas-note/README.md) | 浏览器纸张式文档、图表公式和多选回复 |
-| [open](extensions/pi-open/README.md) | 用默认应用打开文件、URL 和目录 |
-| [output-viewer](extensions/pi-output-viewer/README.md) | 只读预览会话回复 |
-| [token-meter](extensions/pi-token-meter/README.md) | 编辑器下方信息行显示最近请求的 TTFT 和 TPS |
-| [handoff](extensions/pi-handoff/README.md) | 克隆会话并生成交接摘要 |
-| [ask-user-question](extensions/pi-ask-user-question/README.md) | 单选、多选和自定义回答 |
-| [subagent](extensions/pi-subagent/README.md) | Pi/Codex 独立任务与原生终端视图；在 Herdr 内按环境自动启用 |
-| [web-kits](extensions/pi-web-kits/README.md) | Web 搜索、网页与 GitHub 内容获取 |
+| [pi-canvas-note](extensions/pi-canvas-note/README.md) | 浏览器纸张式文档、图表公式和多选回复 |
+| [pi-open](extensions/pi-open/README.md) | 用默认应用打开文件、URL 和目录 |
+| [pi-output-viewer](extensions/pi-output-viewer/README.md) | 只读预览会话回复 |
+| [pi-token-meter](extensions/pi-token-meter/README.md) | 编辑器下方信息行显示最近请求的 TTFT 和 TPS |
+| [pi-handoff](extensions/pi-handoff/README.md) | 克隆会话并生成交接摘要 |
+| [pi-ask](extensions/pi-ask/README.md) | 单选、多选和自定义回答 |
+| [pi-subagent](extensions/pi-subagent/README.md) | Pi/Codex 独立任务与原生终端视图；在 Herdr 内按环境自动启用 |
+| [pi-web-kits](extensions/pi-web-kits/README.md) | Web 搜索、网页与 GitHub 内容获取 |
 
 `terminal` 扩展已从主线移除，原实现保留在 `archive/terminal` 分支；`/vim`、`/lg`、`/fm` 不再注册，建议通过 mux 启动相应程序。
 
@@ -38,6 +38,8 @@ pi install https://github.com/aqua2k1/pi-kits.git
 ## 配置
 
 配置文件为 agent 目录下的 `pi-kits.json`，默认位于 `~/.pi/agent/`，可由 `PI_CODING_AGENT_DIR` 调整。修改后执行 `/reload`。
+
+扩展资源名、包名与目录名一致；`extensionAllowlist[].extensions` 填写 `pi-web-kits`、`pi-ask` 等完整名称。工具、命令与配置键保持独立命名。
 
 `terminal.editor` 仍用于 `output-viewer`，默认 `nvim`。旧配置中的 `terminal.enabled`、`gitUI`、`fileManager` 仅为兼容保留，不再控制扩展或启动程序。
 

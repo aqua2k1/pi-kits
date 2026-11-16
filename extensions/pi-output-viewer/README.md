@@ -1,4 +1,4 @@
-# output-viewer
+# pi-output-viewer
 
 `/output-viewer` 选择当前会话分支的一轮回复进行只读预览，`Alt+P` 直接预览最新回复。
 

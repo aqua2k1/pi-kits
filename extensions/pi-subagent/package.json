@@ -6,7 +6,7 @@
     "pi-package"
   ],
   "extensionResources": {
-    "subagent": "./index.ts"
+    "pi-subagent": "./index.ts"
   },
   "pi": {
     "extensions": [

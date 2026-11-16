@@ -1,12 +1,12 @@
 {
-  "name": "pi-ask-user-question",
+  "name": "pi-ask",
   "private": true,
   "type": "module",
   "keywords": [
     "pi-package"
   ],
   "extensionResources": {
-    "ask-user-question": "./index.ts"
+    "pi-ask": "./index.ts"
   },
   "pi": {
     "extensions": [

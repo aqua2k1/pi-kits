@@ -9,7 +9,7 @@ import {
   type Theme,
   type ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
-import askExtension from "../extensions/pi-ask-user-question/index.ts";
+import askExtension from "../extensions/pi-ask/index.ts";
 import openExtension from "../extensions/pi-open/index.ts";
 import { registerSubagents } from "../extensions/pi-subagent/index.ts";
 import type { MuxAdapter } from "../extensions/pi-subagent/mux/index.ts";

@@ -6,7 +6,7 @@
     "pi-package"
   ],
   "extensionResources": {
-    "preview": "./index.ts"
+    "pi-output-viewer": "./index.ts"
   },
   "pi": {
     "extensions": [

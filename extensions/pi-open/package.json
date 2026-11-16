@@ -6,7 +6,7 @@
     "pi-package"
   ],
   "extensionResources": {
-    "open": "./index.ts"
+    "pi-open": "./index.ts"
   },
   "pi": {
     "extensions": [

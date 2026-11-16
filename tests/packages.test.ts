@@ -103,6 +103,11 @@ test("repository and independent extension manifests declare the same explicit e
     );
     const declared = resourceEntries(dir, manifest.extensionResources);
     assert.deepEqual(
+      declared.map(([resource]) => resource),
+      [name],
+      `${name}: resource, folder and package names must match`,
+    );
+    assert.deepEqual(
       [...new Set(declared.flatMap(([, paths]) => paths))].sort(),
       manifest.pi.extensions.map((entry: string) => resolve(dir, entry)).sort(),
       `${name}: named resources must cover exactly the explicit entries`,
@@ -214,22 +219,23 @@ test("Canvas Note skill loads manually from root and independent packages withou
   }
 });
 
-test("flat resource declarations select web-kits without legacy aliases", async () => {
+test("directory-named resource declarations select extensions without legacy aliases", async () => {
   const { resolveWorkerExtensions } = await import(
     "../extensions/pi-subagent/runtime/pi/extensions.ts"
   );
   assert.deepEqual(
     await resolveWorkerExtensions([
-      { source: root, extensions: ["open", "web-kits"] },
+      { source: root, extensions: ["pi-open", "pi-web-kits", "pi-ask"] },
     ]),
     [
       join(root, "extensions/pi-open/index.ts"),
       join(root, "extensions/pi-web-kits/index.ts"),
+      join(root, "extensions/pi-ask/index.ts"),
     ],
   );
   assert.deepEqual(
     await resolveWorkerExtensions([
-      { source: join(root, "extensions/pi-open"), extensions: ["open"] },
+      { source: join(root, "extensions/pi-open"), extensions: ["pi-open"] },
     ]),
     [join(root, "extensions/pi-open/index.ts")],
   );
@@ -237,12 +243,21 @@ test("flat resource declarations select web-kits without legacy aliases", async 
     await resolveWorkerExtensions([
       {
         source: join(root, "extensions/pi-web-kits"),
-        extensions: ["web-kits"],
+        extensions: ["pi-web-kits"],
       },
     ]),
     [join(root, "extensions/pi-web-kits/index.ts")],
   );
   for (const name of [
+    "canvas-note",
+    "open",
+    "preview",
+    "token-meter",
+    "handoff",
+    "ask-user-question",
+    "pi-ask-user-question",
+    "subagent",
+    "web-kits",
     "stats",
     "provider-usage",
     "notify",

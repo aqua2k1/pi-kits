@@ -13,17 +13,6 @@
   "preview": {
     "enabled": true
   },
-  "contextPreview": {
-    "enabled": true
-  },
-  "providerUsage": {
-    "enabled": true,
-    "intervalMs": 600000,
-    "timeoutMs": 15000
-  },
-  "stats": {
-    "enabled": true
-  },
   "askUserQuestion": {
     "enabled": true
   },
@@ -38,15 +27,6 @@
         "extensions": []
       }
     ]
-  },
-  "commit": {
-    "enabled": true,
-    "timeoutMs": 120000,
-    "rememberModel": true
-  },
-  "notify": {
-    "enabled": true,
-    "quietPeriodMs": 1000
   },
   "web-kits": {
     "enabled": true,

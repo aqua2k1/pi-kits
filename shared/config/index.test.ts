@@ -194,7 +194,7 @@ test("unknown fields are preserved in raw config but ignored in resolved config"
     subagent: {
       unknown: null,
       extensionAllowlist: [
-        { source: "package", extensions: ["web-kits"], unknown: true },
+        { source: "package", extensions: ["pi-web-kits"], unknown: true },
       ],
     },
     "web-kits": { fetch: { github: { future: ["anything"] } } },
@@ -206,7 +206,9 @@ test("unknown fields are preserved in raw config but ignored in resolved config"
     config,
     resolvePiKitsConfig({
       subagent: {
-        extensionAllowlist: [{ source: "package", extensions: ["web-kits"] }],
+        extensionAllowlist: [
+          { source: "package", extensions: ["pi-web-kits"] },
+        ],
       },
     }),
   );
@@ -378,7 +380,7 @@ test("explicit subagent extension allowlists replace defaults, including empty",
     [],
     ["builtin:mcp", "/trusted/custom.ts"],
     ["npm:@narumitw/pi-chrome-devtools", "git:github.com/example/tools"],
-    [{ source: "git:github.com/aqua2k1/pi-kits", extensions: ["web-kits"] }],
+    [{ source: "git:github.com/aqua2k1/pi-kits", extensions: ["pi-web-kits"] }],
     [{ source: "package", extensions: [] }],
   ]) {
     const config = parsePiKitsConfig(
@@ -399,7 +401,7 @@ test("explicit subagent extension allowlists replace defaults, including empty",
     ["x\n"],
     [{ source: "x" }],
     [{ source: "x", extensions: [""] }],
-    [{ source: "x", extensions: ["web-kits", "web-kits"] }],
+    [{ source: "x", extensions: ["pi-web-kits", "pi-web-kits"] }],
   ]) {
     assert.throws(
       () =>
@@ -415,14 +417,14 @@ test("explicit subagent extension allowlists replace defaults, including empty",
 
 test("package selection arrays are isolated from parsed file configuration", () => {
   const raw = parsePiKitsFile(
-    '{"workflow":{"subagent":{"extensionAllowlist":[{"source":"package","extensions":["web-kits"]}]}}}',
+    '{"workflow":{"subagent":{"extensionAllowlist":[{"source":"package","extensions":["pi-web-kits"]}]}}}',
   );
   const config = resolvePiKitsConfig(raw);
   const selected = config.subagent.extensionAllowlist[0];
   assert.ok(typeof selected !== "string");
   selected.extensions.length = 0;
   assert.deepEqual(raw.workflow?.subagent?.extensionAllowlist, [
-    { source: "package", extensions: ["web-kits"] },
+    { source: "package", extensions: ["pi-web-kits"] },
   ]);
 });
 
@@ -550,12 +552,24 @@ test("published JSON schema and example match runtime validation", () => {
     ),
     JSON.parse(JSON.stringify(PI_KITS_SCHEMA)),
   );
-  const example = parsePiKitsConfig(
+  const rawExample = parsePiKitsFile(
     readFileSync(
       new URL("../../pi-kits.example.json", import.meta.url),
       "utf8",
     ),
   );
+  for (const archived of [
+    "contextPreview",
+    "providerUsage",
+    "stats",
+    "commit",
+    "notify",
+  ]) {
+    assert.equal(Object.hasOwn(rawExample, archived), false, archived);
+  }
+  // The preview extension still uses the editor setting after terminal archival.
+  assert.deepEqual(rawExample.terminal, { editor: "nvim" });
+  const example = resolvePiKitsConfig(rawExample);
   assert.deepEqual(example.subagent, {
     enabled: true,
     maxConcurrent: 4,

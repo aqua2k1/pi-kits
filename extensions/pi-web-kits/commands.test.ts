@@ -420,6 +420,7 @@ test("/web-tools status: reports routing origins and no phantom fallback", async
 
 test("/web-tools test github: errors are classified and sanitized", async () => {
   const command = capture({
+    readConfig: async () => ({}),
     searchCapabilities: async () => {
       throw new Error("private-gh-diagnostic");
     },

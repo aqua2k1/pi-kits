@@ -1,4 +1,4 @@
-# canvas-note
+# pi-canvas-note
 
 Canvas Note 将 Pi 生成的文字、图表、公式和代码展示为浏览器中的纸张式文档，并把多选内容的回复交回 Pi。
 

@@ -1,4 +1,4 @@
-# handoff
+# pi-handoff
 
 `/handoff` 将当前会话整理为 Markdown 交接文档，`/handoff-open` 在新会话中加载交接上下文。
 

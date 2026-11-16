@@ -1,4 +1,4 @@
-# subagent
+# pi-subagent
 
 `subagent` 把任务交给独立的 Pi 或 Codex 会话，返回结果，并通过 Herdr 打开可交互的原生终端视图。
 

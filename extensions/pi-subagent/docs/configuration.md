@@ -9,7 +9,7 @@
 | `subagent.extensionAllowlist` | array | `["builtin:codemode", "builtin:tool-search"]` | Pi 子会话显式加载的扩展；整体替换，空数组只保留任务通信扩展；条目唯一 |
 | `subagent.extensionAllowlist[]` | string 或 object | 未设置 | 字符串为扩展源；对象同时包含 `source`、`extensions` |
 | `subagent.extensionAllowlist[].source` | string | 未设置 | 非空白、无控制字符；相对路径基于 agent 目录；Pi 解析本地路径、内置源及包源 |
-| `subagent.extensionAllowlist[].extensions` | string[] | 未设置 | 唯一的非空白、无控制字符资源名；按包声明的 `extensionResources` 选择，空数组跳过该源 |
+| `subagent.extensionAllowlist[].extensions` | string[] | 未设置 | 唯一的非空白、无控制字符资源名；按包声明的 `extensionResources` 选择；本仓库与目录同名，如 `pi-web-kits`、`pi-ask`，空数组跳过该源 |
 | `HC_TERMINAL_ID` | 环境变量 | 未设置 | 新版 Herdr app 提供；非空时优先选择新版适配器，通过 PATH 中的 `hc` 管理终端，相对视图操作仅警告 |
 | `HERDR_ENV` | 环境变量 | 未设置 | 旧版 Herdr 提供；新版环境未匹配且值为 `1` 时选择旧版适配器 |
 | `HERDR_PANE_ID` | 环境变量 | 未设置 | 旧版 Herdr 提供的父窗格标识；打开视图时使用 |
@@ -48,7 +48,7 @@
     "extensionAllowlist": [
       "builtin:codemode",
       "builtin:tool-search",
-      { "source": "<扩展包路径>", "extensions": ["<资源名>"] }
+      { "source": "<pi-kits 包路径>", "extensions": ["pi-web-kits", "pi-ask"] }
     ]
   }
 }

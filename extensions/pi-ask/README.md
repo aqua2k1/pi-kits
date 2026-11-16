@@ -1,4 +1,4 @@
-# ask-user-question
+# pi-ask
 
 `ask_user_question` 让模型向用户收集单选、多选和自定义回答，返回结构化问卷结果。
 
