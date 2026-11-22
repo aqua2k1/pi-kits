@@ -150,12 +150,23 @@ export function loadAgentDefinitions(
     let text: string;
     try {
       const info = statSync(path);
-      if (!info.isFile() || info.size > MAX_FILE_BYTES) {
-        throw new Error("size");
+      if (!info.isFile()) {
+        throw new Error(`Agent path is not a regular file: ${path}`);
+      }
+      if (info.size > MAX_FILE_BYTES) {
+        throw new Error(`Agent file exceeds 64 KiB: ${path}`);
       }
       text = readFileSync(path, "utf8");
-    } catch {
-      throw new Error(`Cannot read agent file ${path} (limit 64 KiB)`);
+    } catch (cause) {
+      if (
+        cause instanceof Error &&
+        (cause.message.includes("exceeds 64 KiB") ||
+          cause.message.includes("not a regular file"))
+      ) {
+        throw cause;
+      }
+      const detail = cause instanceof Error ? cause.message : String(cause);
+      throw new Error(`Cannot read agent file ${path}: ${detail}`, { cause });
     }
     agents.set(key, parseAgentDefinition(text, path, source));
   }

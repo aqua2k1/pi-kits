@@ -445,5 +445,8 @@ test("malformed project overrides are errors, not fallback to the global definit
   f.file("project", "review.md", "---\nruntime_config: 123\n---\nProject");
   assert.throws(() => loadAgentDefinitions(f.cwd, f.agentDir), /Invalid agent/);
   f.file("project", "review.md", "x".repeat(65 * 1024));
-  assert.throws(() => loadAgentDefinitions(f.cwd, f.agentDir), /limit 64 KiB/);
+  assert.throws(
+    () => loadAgentDefinitions(f.cwd, f.agentDir),
+    /exceeds 64 KiB/,
+  );
 });

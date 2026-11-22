@@ -13,7 +13,6 @@ export type PiConfig = {
   inherit_context?: boolean;
 };
 
-const objectSchema = Type.Object({});
 const toolListSchema = Type.Union([Type.String(), Type.Array(Type.String())]);
 const configSchema = Type.Object({
   tools: Type.Optional(toolListSchema),
@@ -39,8 +38,8 @@ function toolNames(value: string | string[], field: string): string[] {
   return [...new Set(names)];
 }
 
-function checkRecord(config: Record<string, unknown>): void {
-  if (!Value.Check(objectSchema, config)) {
+function checkRecord(config: unknown): void {
+  if (!config || typeof config !== "object" || Array.isArray(config)) {
     throw new Error("Pi runtime configuration must be an object");
   }
 }

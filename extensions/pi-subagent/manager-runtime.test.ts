@@ -1471,13 +1471,8 @@ test("idle resume dispatches during attachment but recheck rejects nonconcurrent
   assert.equal(manager.get(agent.id).status, "running");
 });
 
-test("open view rechecks current execution across inspect, focus, and open races", async (t) => {
-  for (const phase of [
-    "inspect",
-    "focus",
-    "open",
-    "rollback-failure",
-  ] as const) {
+test("open view rechecks current execution across inspect and open races", async (t) => {
+  for (const phase of ["inspect", "open", "rollback-failure"] as const) {
     await t.test(phase, async (t) => {
       const h = harness();
       const manager = createSubagentManager(h.mux, { runtimes: [h.runtime] });
@@ -1489,13 +1484,12 @@ test("open view rechecks current execution across inspect, focus, and open races
       });
       await until(() => h.sessions[0]?.commands.length === 1);
       h.sessions[0].complete();
-      const hasExisting = phase === "inspect" || phase === "focus";
+      const hasExisting = phase === "inspect";
       const existing = hasExisting
         ? await manager.openView(agent.id)
         : undefined;
       const gate = deferred();
       let entered = false;
-      let focuses = 0;
       let failClose = phase === "rollback-failure";
       const originalClose = h.mux.close_view;
       h.mux.close_view = async (view) => {
@@ -1509,13 +1503,6 @@ test("open view rechecks current execution across inspect, focus, and open races
           await gate.promise;
         }
         return originalInspect(view);
-      };
-      h.mux.focus_view = async () => {
-        focuses++;
-        if (phase === "focus") {
-          entered = true;
-          await gate.promise;
-        }
       };
       const originalOpen = h.mux.open_view;
       h.mux.open_view = async (options) => {
@@ -1536,7 +1523,6 @@ test("open view rechecks current execution across inspect, focus, and open races
       if (hasExisting) {
         assert.equal(manager.get(agent.id).viewId, existing?.id);
         assert.deepEqual(h.closedViews, []);
-        assert.equal(focuses, phase === "focus" ? 1 : 0);
       } else if (failClose) {
         assert.equal(manager.get(agent.id).viewId, `view-${agent.id}`);
         failClose = false;

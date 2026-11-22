@@ -19,6 +19,7 @@ import {
   type SessionUpdate,
 } from "../index.ts";
 import {
+  type CodexConfig,
   codexConfig,
   codexNativeArgs,
   parseCodexCallConfig,
@@ -161,8 +162,10 @@ type ManagedTurn = {
   baseline: Record<string, number>;
 };
 
-function validateCodexOptions(options: RuntimeOptions): void {
-  codexConfig(options);
+function validateCodexOptions(
+  options: RuntimeOptions,
+  _config = codexConfig(options),
+): void {
   if (options.parentSession) {
     throw new Error(
       "Codex cannot clone a Pi parentSession; use an explicit prompt",
@@ -184,7 +187,7 @@ function validateCodexOptions(options: RuntimeOptions): void {
 function buildAppServerArgv(
   url: string,
   tokenFile: string,
-  options: RuntimeOptions,
+  config: CodexConfig,
 ): string[] {
   return [
     "app-server",
@@ -194,12 +197,13 @@ function buildAppServerArgv(
     "capability-token",
     "--ws-token-file",
     tokenFile,
-    ...codexNativeArgs(codexConfig(options)),
+    ...codexNativeArgs(config),
   ];
 }
 
 function buildThreadStartParams(
   options: RuntimeOptions,
+  codexCfg: CodexConfig,
   systemPrompt: string,
 ): Record<string, unknown> {
   const configuredEffort = effort(options);
@@ -209,7 +213,7 @@ function buildThreadStartParams(
     config.model_reasoning_effort = configuredEffort;
   }
   // Native review delegates disable web search even when the thread enables it.
-  if (codexConfig(options).runtime_args.includes("search")) {
+  if (codexCfg.runtime_args.includes("search")) {
     config.web_search = "live";
   }
   return {
@@ -373,6 +377,7 @@ const defaults: CodexDependencies = {
 
 function createCodexSession(
   options: RuntimeOptions,
+  config: CodexConfig,
   host: RuntimeHost,
   deps: CodexDependencies,
 ): RuntimeSession {
@@ -620,9 +625,6 @@ function createCodexSession(
   const cacheItem = (turn: ManagedTurn, item: NativeItem | undefined): void => {
     if (!item || typeof item.id !== "string") return;
     if (!turn.items.has(item.id)) {
-      if (turn.items.size >= 4096) {
-        throw new Error("Codex managed item limit exceeded");
-      }
       turn.items.add(item.id);
       if (TOOL_ITEM_TYPES.has(item.type)) turn.tools++;
       if (item.type === "contextCompaction") turn.compactions++;
@@ -860,7 +862,7 @@ function createCodexSession(
       remaining();
       child = deps.spawn(
         options.executable ?? "codex",
-        buildAppServerArgv(url, tokenFile, options),
+        buildAppServerArgv(url, tokenFile, config),
         options.cwd,
       );
       // Drain diagnostics without retaining or forwarding secrets/unbounded output.
@@ -872,6 +874,7 @@ function createCodexSession(
       child.on("exit", (code, signal) =>
         disconnect(new Error(`Codex app-server exited (${code ?? signal})`)),
       );
+      let lastConnectError: unknown;
       while (!rpc) {
         try {
           rpc = await deps.connect({
@@ -883,8 +886,18 @@ function createCodexSession(
             requestTimeoutMs: CODEX_REQUEST_TIMEOUT_MS,
             shouldRejectServerRequest,
           });
-        } catch {
-          remaining();
+        } catch (error) {
+          lastConnectError = error;
+          if (closed || lost) throw new Error("Codex startup aborted");
+          if (deadline - Date.now() <= 0) {
+            const detail =
+              lastConnectError instanceof Error
+                ? `: ${lastConnectError.message}`
+                : "";
+            throw new Error(`Codex startup timed out${detail}`, {
+              cause: lastConnectError,
+            });
+          }
           await new Promise((resolve) => setTimeout(resolve, 40));
         }
       }
@@ -938,7 +951,7 @@ function createCodexSession(
       }
       const started = await startupRequest(
         "thread/start",
-        buildThreadStartParams(options, systemPrompt),
+        buildThreadStartParams(options, config, systemPrompt),
         remaining(),
       );
       if (typeof started?.thread?.id !== "string") {
@@ -1115,17 +1128,6 @@ function createCodexSession(
         });
         return;
       }
-      if (
-        command.instructions?.systemPrompt !== undefined &&
-        command.instructions.systemPrompt !== systemPrompt
-      ) {
-        throw new RuntimeTaskRejectedError(
-          "Codex developerInstructions are fixed at thread creation; supply agent.systemPrompt",
-        );
-      }
-      if (Buffer.byteLength(command.prompt) > MAX_RESULT_BYTES) {
-        throw new RuntimeTaskRejectedError("Codex task exceeds 64 KiB");
-      }
       if (managed) {
         throw new RuntimeTaskRejectedError(
           "Codex managed task already in progress",
@@ -1150,7 +1152,7 @@ function createCodexSession(
         finishing: false,
         early: [],
         final: "",
-        review: codexConfig(options).runtime_args.includes("review"),
+        review: config.runtime_args.includes("review"),
         fallback: "",
         truncated: false,
         items: new Set(),
@@ -1285,9 +1287,11 @@ export function createCodexRuntime(
     parseTask: parseCodexTask,
     validate: validateCodexOptions,
     create(options: RuntimeOptions, host: RuntimeHost): RuntimeSession {
-      validateCodexOptions(options);
+      const config = codexConfig(options);
+      validateCodexOptions(options, config);
       return createCodexSession(
-        { ...options, runtimeConfig: codexConfig(options) },
+        { ...options, runtimeConfig: config },
+        config,
         host,
         deps,
       );

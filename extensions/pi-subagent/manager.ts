@@ -561,7 +561,9 @@ export function createSubagentManager(
     }
   };
 
-  const closeSession = async (record: AgentRecord): Promise<boolean> => {
+  const closeSession = async (
+    record: AgentRecord,
+  ): Promise<unknown | undefined> => {
     try {
       const session = record.session;
       if (session && !closedSessions.has(session)) {
@@ -573,16 +575,17 @@ export function createSubagentManager(
         sessionState: "closed",
         sessionActivity: undefined,
       };
-      return true;
-    } catch {
+      return undefined;
+    } catch (error) {
       // Retain ownership and the concurrency slot until cleanup can be retried.
+      const detail = error instanceof Error ? error.message : String(error);
       record.snapshot = {
         ...record.snapshot,
         sessionState: "disconnected",
-        sessionActivity: "Worker cleanup failed; retry stop_subagent.",
+        sessionActivity: `Worker cleanup failed (${detail}); retry stop_subagent.`,
       };
       changed();
-      return false;
+      return error;
     }
   };
 
@@ -626,25 +629,29 @@ export function createSubagentManager(
     record.releaseRequested = true;
     clearViewTimer(record);
     const operation = viewOperation(async () => {
-      let viewClosed = true;
+      let viewError: unknown;
       if (record.view) {
         try {
           await adapter.close_view(record.view);
           forgetView(record);
-        } catch {
-          viewClosed = false;
+        } catch (error) {
+          viewError = error;
         }
       }
-      const sessionClosed = await closeSession(record);
-      if (!viewClosed || !sessionClosed) {
+      const sessionError = await closeSession(record);
+      if (viewError || sessionError) {
+        const cause = sessionError ?? viewError;
+        const detail = cause instanceof Error ? cause.message : String(cause);
         record.snapshot = {
           ...record.snapshot,
           sessionState: "disconnected",
-          sessionActivity:
-            "Worker cleanup failed; retry release or stop_subagent.",
+          sessionActivity: `Worker cleanup failed (${detail}); retry release or stop_subagent.`,
         };
         changed();
-        throw new Error(`Could not release subagent ${id}; retry release.`);
+        throw new Error(
+          `Could not release subagent ${id} (${detail}); retry release.`,
+          { cause },
+        );
       }
       record.snapshot = {
         ...record.snapshot,
@@ -723,29 +730,30 @@ export function createSubagentManager(
     if (record.terminating) return record.terminating;
     const operation = viewOperation(async () => {
       // View ownership is independent from the runtime's execution resources.
-      let viewClosed = true;
+      let viewError: unknown;
       if (record.view) {
         try {
           await adapter.close_view(record.view);
           forgetView(record);
-        } catch {
+        } catch (cause) {
           // Runtime cleanup must still run if a detached view cannot be closed.
-          viewClosed = false;
+          viewError = cause;
         }
       }
-      const sessionClosed = await closeSession(record);
-      if (sessionClosed && viewClosed) {
+      const sessionError = await closeSession(record);
+      if (!sessionError && !viewError) {
         finish(record, status, error);
       } else {
+        const cause = sessionError ?? viewError;
+        const detail = cause instanceof Error ? cause.message : String(cause);
         record.snapshot = {
           ...record.snapshot,
           sessionState: "disconnected",
-          sessionActivity: "Worker cleanup failed; retry stop_subagent.",
+          sessionActivity: `Worker cleanup failed (${detail}); retry stop_subagent.`,
           ...(!record.execution.finished
             ? {
                 status: "disconnected" as const,
-                error:
-                  "Worker cleanup failed; concurrency slot retained. Retry stop_subagent.",
+                error: `Worker cleanup failed (${detail}); concurrency slot retained. Retry stop_subagent.`,
               }
             : {}),
         };
@@ -815,14 +823,16 @@ export function createSubagentManager(
     if (!record.session?.connected) {
       throw new Error("Subagent runtime is not connected.");
     }
-    // Tasks are already parsed and stamped on acceptance; stamp control frames too.
+    // Tasks are already parsed and stamped on acceptance; stamp and validate control frames too.
     if (
       record.execution.round > 1 &&
       command.round !== record.execution.round
     ) {
       command = { ...command, round: record.execution.round };
     }
-    validateCommand(command);
+    if (command.type !== "task") {
+      validateCommand(command);
+    }
     return record.session.send(command);
   };
 
@@ -1124,18 +1134,21 @@ export function createSubagentManager(
     await Promise.allSettled([...launches, ...pendingCloses]);
     const cleanup = await Promise.allSettled(
       [...records.values()].map(async (record) => {
-        const viewClosed = await closeView(record.snapshot.id).then(
-          () => true,
-          () => false,
-        );
-        const terminalClosed = await closeSession(record);
-        if (!viewClosed || !terminalClosed) {
+        let viewError: unknown;
+        try {
+          await closeView(record.snapshot.id);
+        } catch (error) {
+          viewError = error;
+        }
+        const sessionError = await closeSession(record);
+        if (viewError || sessionError) {
           const resources = [
-            ...(!viewClosed ? ["view"] : []),
-            ...(!terminalClosed ? ["runtime"] : []),
+            ...(viewError ? ["view"] : []),
+            ...(sessionError ? ["runtime"] : []),
           ].join(" and ");
           throw new Error(
             `Could not clean up subagent ${record.snapshot.id}: ${resources}.`,
+            { cause: sessionError ?? viewError },
           );
         }
       }),
@@ -1233,9 +1246,6 @@ export function createSubagentManager(
         description: resumeOpts.description ?? record.options.description,
       };
       const round = record.execution.round + 1;
-      if (!Number.isSafeInteger(round)) {
-        throw new Error("Subagent round limit reached.");
-      }
       const command = parseRuntimeTask(
         record.runtime,
         { ...taskCommand(next), round },
@@ -1343,11 +1353,11 @@ export function createSubagentManager(
         }
         const terminal = await record.session.attachment();
         checkNativeView(record);
+        const hadView = Boolean(record.view);
         const existing = await liveView(record);
-        checkNativeView(record);
+        if (hadView) checkNativeView(record);
         if (existing) {
           await adapter.focus_view(existing);
-          checkNativeView(record);
           return existing;
         }
         const view = await adapter.open_view({ terminal });
@@ -1403,8 +1413,16 @@ export function createSubagentManager(
           await adapter.close_view(record.view);
           forgetView(record);
         }
-        if (!(await closeSession(record))) {
-          throw new Error(`Could not delete subagent ${id}; retry deletion.`);
+        const sessionError = await closeSession(record);
+        if (sessionError) {
+          const detail =
+            sessionError instanceof Error
+              ? sessionError.message
+              : String(sessionError);
+          throw new Error(
+            `Could not delete subagent ${id} (${detail}); retry deletion.`,
+            { cause: sessionError },
+          );
         }
         finish(record, "stopped");
         records.delete(id);

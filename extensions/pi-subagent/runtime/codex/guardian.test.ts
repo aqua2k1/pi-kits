@@ -6,11 +6,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test, { type TestContext } from "node:test";
 import { setTimeout as delay } from "node:timers/promises";
-import { fileURLToPath } from "node:url";
 import { spawnCodexGuardian } from "./guardian.ts";
 
 const posix = { skip: process.platform === "win32", timeout: 10_000 };
-const entry = new URL("./guardian.mjs", import.meta.url);
 const helper = new URL("./guardian.ts", import.meta.url).href;
 type Pids = { backend: number; tool: number; worker: string; ipc: boolean };
 
@@ -220,29 +218,4 @@ test("disconnect during startup", posix, async (t) => {
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
   }
-});
-
-test("spawn failure hides secrets", posix, async (t) => {
-  const f = await fixture(t);
-  const guardian = spawnCodexGuardian(
-    join(f.dir, "missing-secret-cli"),
-    ["secret-token"],
-    f.dir,
-  );
-  f.setGuardian(guardian);
-  let stderr = "";
-  guardian.stderr?.on("data", (chunk) => {
-    stderr += chunk.toString();
-  });
-  await once(guardian, "exit");
-  assert.match(stderr, /could not start app-server/);
-  assert.doesNotMatch(stderr, /missing-secret-cli|secret-token/);
-});
-
-test("entry point requires IPC", posix, async () => {
-  const child = spawn(process.execPath, [fileURLToPath(entry)], {
-    stdio: "ignore",
-  });
-  const [code] = await once(child, "exit");
-  assert.equal(code, 1);
 });

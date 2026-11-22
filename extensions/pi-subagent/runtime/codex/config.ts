@@ -39,7 +39,6 @@ export function codexReviewTargetSchema() {
 }
 
 export type CodexConfig = { runtime_args: string[] };
-const objectSchema = Type.Object({});
 const configSchema = Type.Object({
   runtime_args: Type.Optional(
     Type.Union([Type.String(), Type.Array(Type.String())]),
@@ -47,7 +46,7 @@ const configSchema = Type.Object({
 });
 
 function record(value: unknown, name: string): Record<string, unknown> {
-  if (!Value.Check(objectSchema, value))
+  if (!value || typeof value !== "object" || Array.isArray(value))
     throw new Error(`Codex ${name} must be an object`);
   return value as Record<string, unknown>;
 }

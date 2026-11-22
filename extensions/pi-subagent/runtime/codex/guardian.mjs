@@ -10,9 +10,7 @@ let stopping = false;
 let timer;
 
 function signalGroup(signal) {
-  // Never target the parent's group or a recycled backend PID. The only group
-  // we signal is named by our own, still-live PID (> 1).
-  if (process.pid <= 1) process.exit(1);
+  // Signal only our own isolated process group (PGID === our PID).
   try {
     process.kill(-process.pid, signal);
   } catch {

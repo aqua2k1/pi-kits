@@ -36,10 +36,13 @@ export interface HerdrOptions {
   maxOutputBytes?: number;
 }
 
-/** Never includes argv, worker env, CLI output, or echoed server messages. */
 export class HerdrError extends Error {
-  constructor(public readonly code: string) {
-    super(`Herdr: ${code}`);
+  constructor(
+    public readonly code: string,
+    detail?: string,
+    options?: ErrorOptions,
+  ) {
+    super(detail ? `Herdr (${code}): ${detail}` : `Herdr: ${code}`, options);
     this.name = "HerdrError";
   }
 }
@@ -71,7 +74,7 @@ export const runHerdr: HerdrRunner = (binary, argv, options) =>
               : error.killed
                 ? "timeout"
                 : "runner_failed";
-          reject(new HerdrError(code));
+          reject(new HerdrError(code, error.message, { cause: error }));
           return;
         }
         resolve({
@@ -93,25 +96,22 @@ function object(value: unknown): JsonObject {
 }
 
 function identifier(value: unknown): string {
-  if (
-    typeof value !== "string" ||
-    !value ||
-    value.startsWith("-") ||
-    [...value].some((char) => {
-      const code = char.charCodeAt(0);
-      return code < 32 || code === 127;
-    })
-  ) {
+  if (typeof value !== "string" || !value.trim()) {
     throw new HerdrError("invalid_response");
   }
   return value;
 }
 
+function summary(text: string): string | undefined {
+  const trimmed = text.trim();
+  return trimmed ? trimmed.slice(0, 512) : undefined;
+}
+
 function json(text: string): unknown {
   try {
     return JSON.parse(text);
-  } catch {
-    throw new HerdrError("invalid_response");
+  } catch (cause) {
+    throw new HerdrError("invalid_response", summary(text), { cause });
   }
 }
 
@@ -119,30 +119,22 @@ function shellQuote(argv: string[]): string {
   return argv.map((arg) => `'${arg.replaceAll("'", `'"'"'`)}'`).join(" ");
 }
 
-function parseCommandOutput(
-  output: RunResult,
-  maxOutputBytes: number,
-  emptyOk: boolean,
-): JsonObject {
-  if (
-    Buffer.byteLength(output.stdout) + Buffer.byteLength(output.stderr) >
-    maxOutputBytes
-  ) {
-    throw new HerdrError("output_limit");
-  }
+function parseCommandOutput(output: RunResult, emptyOk: boolean): JsonObject {
   for (const text of [output.stdout, output.stderr]) {
     if (!text.trim().startsWith("{")) continue;
     const envelope = object(json(text));
     if ("error" in envelope) {
-      const code = object(envelope.error).code;
-      throw new HerdrError(
-        typeof code === "string" && /^[a-z][a-z0-9_]{0,63}$/.test(code)
-          ? code
-          : "server_error",
-      );
+      const err = object(envelope.error);
+      const code =
+        typeof err.code === "string" && err.code ? err.code : "server_error";
+      const detail =
+        typeof err.message === "string" ? summary(err.message) : undefined;
+      throw new HerdrError(code, detail);
     }
   }
-  if (output.exitCode !== 0) throw new HerdrError("cli_failed");
+  if (output.exitCode !== 0) {
+    throw new HerdrError("cli_failed", summary(output.stderr));
+  }
   // Installed `pane run` succeeds with no output, unlike layout commands.
   if (emptyOk && !output.stdout.trim()) return {};
   return object(object(json(output.stdout)).result);
@@ -153,13 +145,7 @@ function buildWorkspaceCreateArgv(options: StartOptions): string[] {
     !options.agentId ||
     !isAbsolute(options.cwd) ||
     !options.argv.length ||
-    !options.argv[0] ||
-    [
-      options.agentId,
-      options.agentType ?? "",
-      options.cwd,
-      ...options.argv,
-    ].some((s) => s.includes("\0"))
+    !options.argv[0]
   ) {
     throw new HerdrError("invalid_start");
   }
@@ -198,8 +184,8 @@ function pane(value: unknown): Pane {
 
 interface Worker {
   workspaceId: string;
-  paneId?: string;
-  terminalId?: string;
+  paneId: string;
+  terminalId: string;
   cwd: string;
 }
 
@@ -210,19 +196,7 @@ interface View extends Pane {
   direction: "right" | "down";
 }
 
-function workerPane(worker: Worker): Pane {
-  return {
-    paneId: identifier(worker.paneId),
-    terminalId: identifier(worker.terminalId),
-    workspaceId: worker.workspaceId,
-  };
-}
-
-/**
- * CLI verified against Herdr 0.9.0 and https://herdr.dev/docs/cli-reference/.
- * Nested terminal attach was verified in an isolated, disposable workspace.
- * No server startup, pane move, takeover, or observe mode is performed.
- */
+/** Legacy Herdr 0.9 CLI adapter with right-then-down column view layout. */
 export function createHerdrAdapter(options: HerdrOptions = {}): MuxAdapter {
   const runner = options.runner ?? runHerdr;
   const pinnedEnv = options.env ? { ...options.env } : undefined;
@@ -232,19 +206,10 @@ export function createHerdrAdapter(options: HerdrOptions = {}): MuxAdapter {
     timeoutMs: options.timeoutMs ?? 15_000,
     maxOutputBytes: options.maxOutputBytes ?? 1024 * 1024,
   };
-  for (const limit of Object.values(limits)) {
-    if (!Number.isSafeInteger(limit) || limit <= 0) {
-      throw new HerdrError("invalid_limits");
-    }
-  }
 
   const workers = new Map<string, Worker>();
   const views = new Map<string, View>();
-  // Tombstones cover runtime-driven destroy racing manager view cleanup.
-  // Only handles issued and successfully retired by this adapter qualify.
   const closedViews = new Set<string>();
-  // Serialize creation/destruction so shutdown cannot overtake an in-flight
-  // split and leave its attachment behind. A failure never blocks later cleanup.
   const serialize = createSerializer();
 
   const checkEnv = (): boolean => currentEnv().HERDR_ENV === "1";
@@ -258,12 +223,11 @@ export function createHerdrAdapter(options: HerdrOptions = {}): MuxAdapter {
     try {
       output = await runner(binary, argv, { ...limits });
     } catch (error) {
-      // Even injected runners may include secrets in their thrown errors.
-      throw error instanceof HerdrError
-        ? error
-        : new HerdrError("runner_failed");
+      if (error instanceof HerdrError) throw error;
+      const detail = error instanceof Error ? error.message : String(error);
+      throw new HerdrError("runner_failed", detail, { cause: error });
     }
-    return parseCommandOutput(output, limits.maxOutputBytes, emptyOk);
+    return parseCommandOutput(output, emptyOk);
   };
 
   const ownedWorker = (handle: TerminalHandle): Worker => {
@@ -293,33 +257,6 @@ export function createHerdrAdapter(options: HerdrOptions = {}): MuxAdapter {
     }
   };
 
-  const confirmStopped = async (worker: Worker): Promise<void> => {
-    if (!worker.paneId) throw new HerdrError("terminal_stop_unconfirmed");
-    try {
-      const result = await command(["pane", "get", worker.paneId]);
-      pane(result.pane);
-      // The old alias can resolve to a moved pane or a replacement terminal.
-      // Neither is permission to close its new location or forget ownership.
-      throw new HerdrError("terminal_not_stopped");
-    } catch (error) {
-      if (!isNotFound(error)) throw error;
-    }
-    if (!worker.terminalId) throw new HerdrError("terminal_stop_unconfirmed");
-    // A move may also invalidate the original alias. Check the terminal's
-    // identity across the server rather than assuming not_found means exited.
-    const result = await command(["pane", "list"]);
-    if (!Array.isArray(result.panes)) throw new HerdrError("invalid_response");
-    for (const value of result.panes) {
-      const actual = pane(value);
-      if (
-        actual.terminalId === worker.terminalId ||
-        actual.paneId === worker.paneId
-      ) {
-        throw new HerdrError("terminal_not_stopped");
-      }
-    }
-  };
-
   const closeWorkspace = async (worker: Worker): Promise<void> => {
     let result: JsonObject;
     try {
@@ -330,37 +267,26 @@ export function createHerdrAdapter(options: HerdrOptions = {}): MuxAdapter {
         worker.workspaceId,
       ]);
     } catch (error) {
-      if (!isNotFound(error)) throw error;
-      await confirmStopped(worker);
-      return;
+      if (isNotFound(error)) return;
+      throw error;
     }
     if (!Array.isArray(result.panes)) throw new HerdrError("invalid_response");
-    // Refuse to kill any foreign pane moved/created in our workspace. Do not
-    // use --group, or follow a moved worker into another workspace.
+    // Do not close a workspace if the user added another pane to it.
     for (const value of result.panes) {
       const actual = pane(value);
       if (
         actual.workspaceId !== worker.workspaceId ||
         actual.paneId !== worker.paneId ||
-        (worker.terminalId && actual.terminalId !== worker.terminalId)
+        actual.terminalId !== worker.terminalId
       ) {
         throw new HerdrError("workspace_contains_unowned_panes");
       }
     }
-    if (result.panes.length) {
-      // Recover a missing terminal ID only from the known root in the owned
-      // workspace, never from a pane resolved in a foreign location.
-      worker.terminalId ??= pane(result.panes[0]).terminalId;
-      if (!(await matches(workerPane(worker)))) {
-        throw new HerdrError("terminal_not_stopped");
-      }
-    } else {
-      await confirmStopped(worker);
+    try {
+      await command(["workspace", "close", worker.workspaceId]);
+    } catch (error) {
+      if (!isNotFound(error)) throw error;
     }
-    await command(["workspace", "close", worker.workspaceId]);
-    // Closing the workspace can race a move, or succeed after it disappeared.
-    // Keep the handle until the terminal's absence is actually confirmed.
-    await confirmStopped(worker);
   };
 
   const closeView = async (handle: ViewHandle): Promise<void> => {
@@ -378,24 +304,18 @@ export function createHerdrAdapter(options: HerdrOptions = {}): MuxAdapter {
   ): Promise<TerminalHandle> => {
     const argv = buildWorkspaceCreateArgv(startOpts);
     const result = await command(argv);
+    const workspaceId = identifier(object(result.workspace).workspace_id);
+    const root = pane(result.root_pane);
     const worker: Worker = {
-      workspaceId: identifier(object(result.workspace).workspace_id),
+      workspaceId,
+      paneId: root.paneId,
+      terminalId: root.terminalId,
       cwd: startOpts.cwd,
     };
     const handle = { id: randomUUID() };
     workers.set(handle.id, worker);
     try {
-      // Capture the root ID before validating the remaining response so a
-      // partial response can still be rolled back without touching outsiders.
-      worker.paneId = identifier(object(result.root_pane).pane_id);
-      const root = pane(result.root_pane);
-      if (root.workspaceId !== worker.workspaceId) {
-        worker.paneId = undefined;
-        throw new HerdrError("invalid_response");
-      }
-      worker.terminalId = root.terminalId;
-      // exec ties terminal lifetime to the supplied command, not a leftover
-      // shell. The only shell text is a fixed prefix plus quoted argv.
+      // exec ties terminal lifetime to the supplied command, not a leftover shell.
       await command(
         ["pane", "run", root.paneId, `exec ${shellQuote(startOpts.argv)}`],
         true,
@@ -428,12 +348,10 @@ export function createHerdrAdapter(options: HerdrOptions = {}): MuxAdapter {
     const worker = ownedWorker(viewOpts.terminal);
     const parentId = currentEnv().HERDR_PANE_ID;
     if (!parentId) throw new HerdrError("missing_parent_pane");
-    identifier(parentId);
-    if (!(await matches(workerPane(worker)))) {
+    if (!(await matches(worker))) {
       throw new HerdrError("terminal_not_alive");
     }
     const parent = pane((await command(["pane", "get", parentId])).pane);
-    if (parent.paneId !== parentId) throw new HerdrError("invalid_response");
     // Place the first attachment right of the parent and stack subsequent ones
     // below the last surviving owned attachment in the parent's workspace.
     let relativeView: View | undefined;
@@ -462,13 +380,6 @@ export function createHerdrAdapter(options: HerdrOptions = {}): MuxAdapter {
       "--no-focus",
     ]);
     const attachment = pane(result.pane);
-    if (
-      attachment.paneId === anchor.paneId ||
-      attachment.paneId === worker.paneId ||
-      attachment.workspaceId !== parent.workspaceId
-    ) {
-      throw new HerdrError("invalid_response");
-    }
     const handle = { id: randomUUID() };
     views.set(handle.id, {
       ...attachment,
@@ -487,12 +398,7 @@ export function createHerdrAdapter(options: HerdrOptions = {}): MuxAdapter {
           "pane",
           "run",
           attachment.paneId,
-          shellQuote([
-            binary,
-            "terminal",
-            "attach",
-            identifier(worker.terminalId),
-          ]),
+          shellQuote([binary, "terminal", "attach", worker.terminalId]),
         ],
         true,
       );
@@ -519,13 +425,10 @@ export function createHerdrAdapter(options: HerdrOptions = {}): MuxAdapter {
         })),
       ),
     ];
-    // The original anchor may have closed. Find a verified neighboring route
-    // from the parent or another owned attachment, never focus blindly.
     for (const route of routes) {
       if (
         route.anchor.paneId === view.paneId ||
-        route.anchor.workspaceId !== view.workspaceId ||
-        !(await matches(route.anchor))
+        route.anchor.workspaceId !== view.workspaceId
       ) {
         continue;
       }
@@ -555,7 +458,7 @@ export function createHerdrAdapter(options: HerdrOptions = {}): MuxAdapter {
     check_env: checkEnv,
     start: (startOpts) => serialize(() => startWorker(startOpts)),
     inspect: async (terminal) => ({
-      alive: await matches(workerPane(ownedWorker(terminal))),
+      alive: await matches(ownedWorker(terminal)),
     }),
     destroy: (terminal) => serialize(() => destroyWorker(terminal)),
     open_view: (viewOpts) => serialize(() => openView(viewOpts)),

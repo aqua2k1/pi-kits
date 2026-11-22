@@ -26,6 +26,7 @@ import {
   type ParentSessionSnapshot,
 } from "./clone.ts";
 import {
+  type PiConfig,
   parsePiCallConfig,
   parsePiConfig,
   parsePiTask,
@@ -47,8 +48,10 @@ export interface PiRuntimeOptions {
   executable?: string;
 }
 
-function validatePiOptions(options: RuntimeOptions): void {
-  const config = piConfig(options);
+function validatePiOptions(
+  options: RuntimeOptions,
+  config = piConfig(options),
+): void {
   if (config.prompt_mode !== undefined && !options.agent) {
     throw new Error("Pi prompt_mode requires a named agent body");
   }
@@ -89,6 +92,7 @@ function preparePiSpawn(options: RuntimeOptions): RuntimeOptions {
 
 function buildPiArgv(
   options: RuntimeOptions,
+  config: PiConfig,
   defaults: PiRuntimeOptions,
   extensions: readonly string[],
   sessionFlag: readonly [string, string],
@@ -108,7 +112,6 @@ function buildPiArgv(
   const thinking = options.agent?.thinking ?? options.thinking;
   if (model) argv.push("--model", model);
   if (thinking) argv.push("--thinking", thinking);
-  const config = piConfig(options);
   if (config.tools !== undefined) {
     if (config.tools.length) argv.push("--tools", config.tools.join(","));
     else argv.push("--no-tools");
@@ -122,6 +125,7 @@ function buildPiArgv(
 
 function createPiSession(
   options: RuntimeOptions,
+  config: PiConfig,
   host: RuntimeHost,
   defaults: PiRuntimeOptions,
 ): RuntimeSession {
@@ -271,7 +275,7 @@ function createPiSession(
         promptDirectory = mkdtempSync(join(tmpdir(), "pi-kits-prompt-"));
         const promptPath = join(promptDirectory, "system.md");
         writeFileSync(promptPath, options.agent.systemPrompt, { mode: 0o600 });
-        if (piConfig(options).prompt_mode === "append") {
+        if (config.prompt_mode === "append") {
           promptFlags.push("--append-system-prompt", promptPath);
         } else {
           const emptyPath = join(promptDirectory, "append.md");
@@ -287,6 +291,7 @@ function createPiSession(
 
       const argv = buildPiArgv(
         options,
+        config,
         defaults,
         extensions,
         sessionFlag,
@@ -397,9 +402,11 @@ export function createPiRuntime(defaults: PiRuntimeOptions = {}) {
     validate: validatePiOptions,
     prepareSpawn: preparePiSpawn,
     create(options: RuntimeOptions, host: RuntimeHost): RuntimeSession {
-      validatePiOptions(options);
+      const config = piConfig(options);
+      validatePiOptions(options, config);
       return createPiSession(
-        { ...options, runtimeConfig: piConfig(options) },
+        { ...options, runtimeConfig: config },
+        config,
         host,
         defaults,
       );
