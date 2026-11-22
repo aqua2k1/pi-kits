@@ -1,13 +1,11 @@
 import type { ExtensionUIContext } from "@earendil-works/pi-coding-agent";
 import type { TUI, TuiMouseEvent } from "@earendil-works/pi-tui";
-import { hasDisplayError } from "../policy.ts";
+import { hasDisplayError, isDisplayActive, nativeViewHint } from "../policy.ts";
+import { isWorkingStatus } from "../state.ts";
 import {
   type AgentSource,
   type AgentWidgetHit,
-  isBusy,
-  isWorking,
   layoutAgentWidget,
-  nativeViewAvailable,
 } from "./presentation.ts";
 
 export const SUBAGENT_WIDGET = "pi-kits:subagents";
@@ -61,7 +59,7 @@ export class SubagentStatusWidget {
       .list()
       .filter(
         (agent) =>
-          isBusy(agent) ||
+          isDisplayActive(agent) ||
           agent.status === "queued" ||
           agent.status === "disconnected" ||
           agent.sessionState === "disconnected" ||
@@ -77,7 +75,9 @@ export class SubagentStatusWidget {
       this.clear();
       return;
     }
-    const running = agents.filter((agent) => isWorking(agent.status)).length;
+    const running = agents.filter((agent) =>
+      isWorkingStatus(agent.status),
+    ).length;
     const queued = agents.filter((agent) => agent.status === "queued").length;
     const interactive = agents.filter(
       (agent) => agent.sessionState === "interactive",
@@ -122,11 +122,7 @@ export class SubagentStatusWidget {
               );
               const agent =
                 hit && this.visible().find((item) => item.id === hit.agentId);
-              if (
-                !agent ||
-                agent.status === "queued" ||
-                !nativeViewAvailable(agent)
-              )
+              if (!agent || agent.status === "queued" || !nativeViewHint(agent))
                 return;
               if (event.type === "press")
                 return { handled: true, render: false };
@@ -150,7 +146,7 @@ export class SubagentStatusWidget {
     // short grace period. Disconnected errors remain, without a spinning timer.
     const needsTimer = agents.some(
       (agent) =>
-        isBusy(agent) ||
+        isDisplayActive(agent) ||
         (agent.completedAt !== undefined &&
           this.clock.now() - agent.completedAt < FINISHED_LINGER_MS),
     );

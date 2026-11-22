@@ -12,12 +12,12 @@ import {
   resumeBlocker,
   steerBlocker,
 } from "./policy.ts";
+import { nativeInputPending } from "./runtime/pi/worker.ts";
 import {
   type AgentStatus,
   isBackendSessionState,
   isTerminalStatus,
   isWorkingStatus,
-  nativeInputPending,
   type SessionState,
 } from "./state.ts";
 

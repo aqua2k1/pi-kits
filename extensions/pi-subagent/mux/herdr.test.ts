@@ -2,10 +2,10 @@ import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import type { TestContext } from "node:test";
 import { test } from "node:test";
-import { SubagentManager } from "../manager.ts";
+import { createSubagentManager } from "../manager.ts";
 import type { AgentRuntime, RuntimeSession } from "../runtime/index.ts";
 import {
-  HerdrAdapter,
+  createHerdrAdapter,
   HerdrError,
   type HerdrRunner,
   type RunOptions,
@@ -125,8 +125,8 @@ class FakeHerdr {
     throw new Error(`Unexpected command: ${argv}`);
   };
 
-  adapter(): HerdrAdapter {
-    return new HerdrAdapter({ runner: this.runner });
+  adapter(): MuxAdapter {
+    return createHerdrAdapter({ runner: this.runner });
   }
 
   commands(group: string, action: string): string[][] {
@@ -228,7 +228,7 @@ test("quoted worker argv and attachment binary resist shell injection", async (t
     "exec",
     ...argv,
   ]);
-  await adapter.open_view({ terminal, direction: "right" });
+  await adapter.open_view({ terminal });
   assert.deepEqual(shellWords(fake.commands("pane", "run")[1][3]), [
     binary,
     "terminal",
@@ -242,7 +242,7 @@ test("open/focus/close view only affects the new attachment pane", async (t) => 
   const fake = new FakeHerdr();
   const adapter = fake.adapter();
   const terminal = await adapter.start(startOptions);
-  const view = await adapter.open_view({ terminal, direction: "right" });
+  const view = await adapter.open_view({ terminal });
   assert.deepEqual(Object.keys(view), ["id"]);
   assert.deepEqual(fake.commands("pane", "split"), [
     [
@@ -338,7 +338,7 @@ test("manager and Herdr compose runtime destruction with stale-view cleanup", as
           };
         },
       };
-      const manager = new SubagentManager(adapter, { runtimes: [runtime] });
+      const manager = createSubagentManager(adapter, { runtimes: [runtime] });
       const agent = manager.spawn({
         runtime: runtime.id,
         keepAlive: true,
@@ -378,18 +378,14 @@ test("manager and Herdr compose runtime destruction with stale-view cleanup", as
   }
 });
 
-test("adapter executes the shared placement instruction without choosing layout", async (t) => {
+test("adapter lays out views right of parent then stacked down below surviving attachments", async (t) => {
   environment(t);
   const fake = new FakeHerdr();
   const adapter = fake.adapter();
   const terminal = await adapter.start(startOptions);
-  const first = await adapter.open_view({ terminal, direction: "right" });
-  const second = await adapter.open_view({
-    terminal,
-    direction: "down",
-    relativeTo: first,
-  });
-  await adapter.open_view({ terminal, direction: "down", relativeTo: second });
+  const first = await adapter.open_view({ terminal });
+  const second = await adapter.open_view({ terminal });
+  const third = await adapter.open_view({ terminal });
   assert.deepEqual(
     fake.commands("pane", "split").map((argv) => [argv[3], argv[5]]),
     [
@@ -399,13 +395,27 @@ test("adapter executes the shared placement instruction without choosing layout"
     ],
   );
   assert.deepEqual(await adapter.inspect_view(first), { alive: true });
-  fake.panes.delete("parent:p2");
-  assert.deepEqual(await adapter.inspect_view(first), { alive: false });
-  await assert.rejects(
-    adapter.open_view({ terminal, direction: "down", relativeTo: first }),
-    code("view_not_alive"),
-  );
-  assert.equal(fake.commands("pane", "split").length, 3);
+  // Retiring a dead latest attachment falls back to the previous surviving view.
+  fake.panes.delete("parent:p4");
+  assert.deepEqual(await adapter.inspect_view(third), { alive: false });
+  const fourth = await adapter.open_view({ terminal });
+  assert.deepEqual(fake.commands("pane", "split").at(-1)?.slice(2, 6), [
+    "--pane",
+    "parent:p3",
+    "--direction",
+    "down",
+  ]);
+  // Closing all owned views returns the next attachment to the right of parent.
+  for (const view of [first, second, third, fourth]) {
+    await adapter.close_view(view);
+  }
+  await adapter.open_view({ terminal });
+  assert.deepEqual(fake.commands("pane", "split").at(-1)?.slice(2, 6), [
+    "--pane",
+    "parent:p1",
+    "--direction",
+    "right",
+  ]);
 });
 
 test("stacked attachments remain focusable after preceding panes close", async (t) => {
@@ -413,17 +423,9 @@ test("stacked attachments remain focusable after preceding panes close", async (
   const fake = new FakeHerdr();
   const adapter = fake.adapter();
   const terminal = await adapter.start(startOptions);
-  const first = await adapter.open_view({ terminal, direction: "right" });
-  const second = await adapter.open_view({
-    terminal,
-    direction: "down",
-    relativeTo: first,
-  });
-  const third = await adapter.open_view({
-    terminal,
-    direction: "down",
-    relativeTo: second,
-  });
+  const first = await adapter.open_view({ terminal });
+  const second = await adapter.open_view({ terminal });
+  const third = await adapter.open_view({ terminal });
   await adapter.close_view(second);
   const neighbors = new Map([
     ["parent:p1/right", "parent:p2"],
@@ -464,8 +466,8 @@ test("destroy closes its views and workspace, never the parent or outsiders", as
   const fake = new FakeHerdr();
   const adapter = fake.adapter();
   const terminal = await adapter.start(startOptions);
-  const first = await adapter.open_view({ terminal, direction: "right" });
-  await adapter.open_view({ terminal, direction: "down", relativeTo: first });
+  await adapter.open_view({ terminal });
+  await adapter.open_view({ terminal });
   await adapter.destroy(terminal);
   assert.deepEqual(fake.commands("workspace", "close"), [
     ["workspace", "close", "worker1"],
@@ -500,7 +502,7 @@ test("executed start with a failed response retains ownership through cleanup re
       argv[0] === "workspace" && argv[1] === "close" && !allowClose
         ? failure("unavailable")
         : undefined;
-    const adapter = new HerdrAdapter({
+    const adapter = createHerdrAdapter({
       runner: async (file, argv, options) => {
         const result = await fake.runner(file, argv, options);
         if (argv[0] === "pane" && argv[1] === "run") {
@@ -545,10 +547,7 @@ test("attachment submission failure closes only the attachment", async (t) => {
   const terminal = await adapter.start(startOptions);
   fake.intercept = (argv) =>
     argv[1] === "run" ? failure("terminal_busy") : undefined;
-  await assert.rejects(
-    adapter.open_view({ terminal, direction: "right" }),
-    code("terminal_busy"),
-  );
+  await assert.rejects(adapter.open_view({ terminal }), code("terminal_busy"));
   assert.deepEqual(fake.commands("pane", "close"), [
     ["pane", "close", "parent:p2"],
   ]);
@@ -706,7 +705,7 @@ test("changed terminal identity is never closed; inspect reports false", async (
   const fake = new FakeHerdr();
   const adapter = fake.adapter();
   const terminal = await adapter.start(startOptions);
-  const view = await adapter.open_view({ terminal, direction: "right" });
+  const view = await adapter.open_view({ terminal });
   const replacement = info("parent:p2", "parent");
   replacement.terminal_id = "external-terminal";
   fake.panes.set("parent:p2", replacement);
@@ -741,7 +740,7 @@ test("Herdr 0.9 missing pane/workspace codes allow idempotent cleanup", async (t
   };
   const adapter = fake.adapter();
   const terminal = await adapter.start(startOptions);
-  const view = await adapter.open_view({ terminal, direction: "right" });
+  const view = await adapter.open_view({ terminal });
   fake.panes.delete("parent:p2");
   await adapter.close_view(view);
   fake.panes.delete("worker1:p1");
@@ -768,7 +767,7 @@ test("layout changes prevent directional focus of an unrelated pane", async (t) 
   const fake = new FakeHerdr();
   const adapter = fake.adapter();
   const terminal = await adapter.start(startOptions);
-  const view = await adapter.open_view({ terminal, direction: "right" });
+  const view = await adapter.open_view({ terminal });
   fake.neighbor = "external:p1";
   await assert.rejects(adapter.focus_view(view), code("view_layout_changed"));
   assert.equal(fake.commands("pane", "focus").length, 0);
@@ -785,7 +784,7 @@ test("outside Herdr and missing parent never start/attach implicitly", async (t)
   const terminal = await adapter.start(startOptions);
   delete process.env.HERDR_PANE_ID;
   await assert.rejects(
-    adapter.open_view({ terminal, direction: "right" }),
+    adapter.open_view({ terminal }),
     code("missing_parent_pane"),
   );
   assert.equal(fake.commands("pane", "split").length, 0);
@@ -815,7 +814,7 @@ test("validates argv/env/limits before mutating anything", async (t) => {
   }
   for (const timeoutMs of [0, -1, Number.NaN, Number.POSITIVE_INFINITY]) {
     assert.throws(
-      () => new HerdrAdapter({ timeoutMs }),
+      () => createHerdrAdapter({ timeoutMs }),
       code("invalid_limits"),
     );
   }
@@ -830,7 +829,7 @@ test("malformed responses and nonzero exits are rejected without leaking output"
     { exitCode: 0, stdout: "{broken", stderr: "" },
     { exitCode: 2, stdout: "", stderr: "secret-token" },
   ]) {
-    const adapter = new HerdrAdapter({ runner: async () => response });
+    const adapter = createHerdrAdapter({ runner: async () => response });
     await assert.rejects(adapter.start(startOptions), (error: unknown) => {
       assert.ok(error instanceof HerdrError);
       assert.ok(!String(error).includes("secret-token"));
@@ -945,7 +944,7 @@ test("rollback errors remain visible and do not permit closing foreign panes", a
 
 test("mock runner receives bounds and excessive combined output is rejected", async (t) => {
   environment(t);
-  const adapter = new HerdrAdapter({
+  const adapter = createHerdrAdapter({
     timeoutMs: 100,
     maxOutputBytes: 20,
     runner: async (_file, _argv, options) => {
@@ -954,7 +953,7 @@ test("mock runner receives bounds and excessive combined output is rejected", as
     },
   });
   await assert.rejects(adapter.start(startOptions), code("output_limit"));
-  const throwing = new HerdrAdapter({
+  const throwing = createHerdrAdapter({
     runner: async () => {
       throw new Error("secret-token");
     },
@@ -1002,7 +1001,7 @@ test("shutdown queued during attachment creation cleans the completed split", as
   const gate = new Promise<void>((resolve) => {
     releaseSplit = resolve;
   });
-  const adapter = new HerdrAdapter({
+  const adapter = createHerdrAdapter({
     runner: async (file, argv, options) => {
       const result = await fake.runner(file, argv, options);
       if (argv[1] === "split") {
@@ -1013,7 +1012,7 @@ test("shutdown queued during attachment creation cleans the completed split", as
     },
   });
   const terminal = await adapter.start(startOptions);
-  const opening = adapter.open_view({ terminal, direction: "right" });
+  const opening = adapter.open_view({ terminal });
   await started;
   const shutdown = adapter.destroy(terminal);
   assert.equal(fake.commands("workspace", "close").length, 0);
@@ -1036,7 +1035,7 @@ test("manager shutdown awaiting an in-flight start can destroy its result", asyn
   const gate = new Promise<void>((resolve) => {
     releaseRun = resolve;
   });
-  const adapter = new HerdrAdapter({
+  const adapter = createHerdrAdapter({
     runner: async (file, argv, options) => {
       const result = await fake.runner(file, argv, options);
       if (argv[1] === "run") {

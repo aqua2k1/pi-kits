@@ -6,7 +6,7 @@ import { type TestContext, test } from "node:test";
 import type { AgentDefinition } from "../../agents.ts";
 import type { MuxAdapter, StartOptions } from "../../mux/index.ts";
 import type { RuntimeCommand, RuntimeOptions } from "../index.ts";
-import { PiRuntime } from "./index.ts";
+import { createPiRuntime, type PiRuntimeOptions } from "./index.ts";
 
 const agent: AgentDefinition = {
   name: "test",
@@ -19,7 +19,11 @@ const agent: AgentDefinition = {
   sourcePath: "/agents/test.md",
 };
 
-async function launch(t: TestContext, options: Partial<RuntimeOptions> = {}) {
+async function launch(
+  t: TestContext,
+  options: Partial<RuntimeOptions> = {},
+  runtimeOptions: PiRuntimeOptions = {},
+) {
   let socket: Socket | undefined;
   let started: StartOptions | undefined;
   const mux = {
@@ -42,12 +46,14 @@ async function launch(t: TestContext, options: Partial<RuntimeOptions> = {}) {
       socket?.destroy();
     },
   } as unknown as MuxAdapter;
-  const runtime = new PiRuntime();
+  const runtime = createPiRuntime({
+    extensionAllowlist: [],
+    ...runtimeOptions,
+  });
   const session = runtime.create(
     {
       id: "cli-test",
       cwd: "/tmp",
-      extensionAllowlist: [],
       startupTimeoutMs: 2_000,
       ...options,
     },
@@ -66,18 +72,21 @@ function argument(argv: string[], flag: string): string | undefined {
 }
 
 test("Pi CLI uses normalized session tools, denies, model and thinking for unnamed sessions", async (t) => {
-  const { started } = await launch(t, {
-    executable: "custom-pi",
-    workerPath: "/custom/worker.ts",
-    model: "parent/model",
-    thinking: "max",
-    runtimeConfig: {
-      tools: " read, codemode, read ",
-      disallowed_tools: [" write ", "write", "bash"],
-      runtime_args: [false],
-      review_target: null,
+  const { started } = await launch(
+    t,
+    {
+      executable: "custom-pi",
+      model: "parent/model",
+      thinking: "max",
+      runtimeConfig: {
+        tools: " read, codemode, read ",
+        disallowed_tools: [" write ", "write", "bash"],
+        runtime_args: [false],
+        review_target: null,
+      },
     },
-  });
+    { workerPath: "/custom/worker.ts" },
+  );
   assert.deepEqual(started.argv, [
     "custom-pi",
     "--no-extensions",
@@ -113,7 +122,7 @@ test("Pi CLI sets the native session name when provided", async (t) => {
 });
 
 test("Pi rejects prompt mode for unnamed sessions instead of ignoring it", () => {
-  const runtime = new PiRuntime();
+  const runtime = createPiRuntime();
   for (const prompt_mode of ["replace", "append"]) {
     const options = {
       id: "unnamed",

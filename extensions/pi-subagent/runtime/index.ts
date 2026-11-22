@@ -1,13 +1,24 @@
-import type { WorkerExtensionSource } from "@pi-kits/config";
 import type { AgentDefinition } from "../agents.ts";
 import type { MuxAdapter, TerminalHandle } from "../mux/index.ts";
-import type { ParentSessionSnapshot } from "./pi/clone.ts";
+import type { BackendSessionState } from "../state.ts";
 
-/** Runtime names are resolved by the registry, not the agent parser. */
+/** Shared wire limits enforced across manager and runtime sessions. */
+export const MAX_COMMAND_BYTES = 64 * 1024;
+export const MAX_RESULT_BYTES = 64 * 1024;
+
+/** A task was rejected before dispatch; no native/user work was touched. */
+export class RuntimeTaskRejectedError extends Error {
+  constructor(message: string, options?: ErrorOptions) {
+    super(message, options);
+    this.name = "RuntimeTaskRejectedError";
+  }
+}
+
+/** Runtime names are resolved by the manager, not the agent parser. */
 export type RuntimeId = string;
 
 export interface RuntimeCapabilities {
-  /** Can create an independent session from a native Pi branch snapshot.
+  /** Can create an independent session from a native parent branch snapshot.
    * This does not imply conversion of transcripts from other runtimes.
    */
   nativeClone: boolean;
@@ -28,10 +39,9 @@ export interface RuntimeOptions {
   runtimeConfig?: Record<string, unknown>;
   /** Opaque host context; only the selected runtime may consume it at spawn. */
   context?: unknown;
-  parentSession?: ParentSessionSnapshot;
-  extensionAllowlist?: readonly WorkerExtensionSource[];
+  /** Opaque runtime-owned frozen parent context snapshot (e.g. Pi branch). */
+  parentSession?: unknown;
   executable?: string;
-  workerPath?: string;
   startupTimeoutMs?: number;
 }
 
@@ -59,8 +69,69 @@ export interface SessionUpdate {
   error?: string;
 }
 
+export interface RuntimeEventMeta {
+  id?: string;
+  round?: number;
+  threadId?: string;
+  turnId?: string;
+  runtimeSessionId?: string;
+  sessionPath?: string;
+  model?: string;
+  modelName?: string;
+  provider?: string;
+  thinkingLevel?: string | null;
+}
+
 /** Normalized events; runtime adapters never expose their native transport. */
-export type RuntimeEvent = Record<string, unknown> & { type: string };
+export type RuntimeEvent =
+  | (SessionUpdate & {
+      id?: string;
+      round?: never;
+      threadId?: string;
+      runtimeSessionId?: string;
+    })
+  | (RuntimeEventMeta & { type: "disconnected"; error?: string })
+  | (RuntimeEventMeta & { type: "model_select" })
+  | (RuntimeEventMeta & {
+      type: "session_state";
+      state: BackendSessionState;
+      activity?: string;
+    })
+  | (RuntimeEventMeta & { type: "started" })
+  | (RuntimeEventMeta & {
+      type: "stats";
+      turnCount?: number;
+      toolUses?: number;
+      totalTokens?: number;
+      contextPercent?: number;
+      compactionCount?: number;
+      usage?: unknown;
+    })
+  | (RuntimeEventMeta & {
+      type: "activity";
+      event?: string;
+      toolName?: string;
+      toolCallId?: string;
+      parentToolCallId?: string;
+      role?: string;
+      text?: string;
+      isError?: boolean;
+      truncated?: boolean;
+    })
+  | (RuntimeEventMeta & {
+      type: "completed";
+      result: string;
+      error?: string;
+      canceled?: boolean;
+      truncated?: boolean;
+      resultSequence?: number;
+    })
+  | (RuntimeEventMeta & { type: "error"; error: string })
+  | (RuntimeEventMeta & {
+      type: "blocked";
+      requestMethod?: string;
+      error?: string;
+    });
 
 export interface RuntimeHost {
   mux: MuxAdapter;

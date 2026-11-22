@@ -2,7 +2,11 @@ import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
 import test from "node:test";
 import { WebSocketServer } from "ws";
-import { type CodexSocket, CodexTransport } from "./transport.ts";
+import {
+  type CodexRpc,
+  type CodexSocket,
+  connectCodexTransport,
+} from "./transport.ts";
 
 class FakeSocket extends EventEmitter implements CodexSocket {
   sent: Array<{ id?: unknown; error?: { code: number; message: string } }> = [];
@@ -21,6 +25,7 @@ class FakeSocket extends EventEmitter implements CodexSocket {
     this.emit("message", JSON.stringify(value));
   }
 }
+
 async function fixture(
   timeoutMs = 1000,
   shouldRejectServerRequest: () => boolean | Promise<boolean> = () => true,
@@ -31,20 +36,162 @@ async function fixture(
     params: Record<string, unknown>;
   }> = [];
   const failures: Error[] = [];
-  const connecting = CodexTransport.connect(
-    "ws://127.0.0.1:1",
-    "secret",
-    (method, params) => notifications.push({ method, params }),
-    (error) => failures.push(error),
-    timeoutMs,
-    () => socket,
-    timeoutMs,
+  const connecting = connectCodexTransport({
+    url: "ws://127.0.0.1:1",
+    token: "secret",
+    notification: (method, params) => notifications.push({ method, params }),
+    disconnected: (error) => failures.push(error),
+    connectTimeoutMs: timeoutMs,
+    requestTimeoutMs: timeoutMs,
+    factory: () => socket,
     shouldRejectServerRequest,
-  );
+  });
   socket.emit("open");
   const transport = await connecting;
   return { socket, transport, notifications, failures };
 }
+
+test("open installs listeners before subsequent messages and clears the connect deadline", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const socket = new FakeSocket();
+  const notifications: string[] = [];
+  const connecting = connectCodexTransport({
+    url: "ws://127.0.0.1:1",
+    token: "secret",
+    notification: (method) => notifications.push(method),
+    disconnected: () => {},
+    connectTimeoutMs: 1000,
+    factory: () => socket,
+  });
+  socket.emit("open");
+  socket.message({ method: "turn/started", params: {} });
+  const transport = await connecting;
+  assert.deepEqual(notifications, ["turn/started"]);
+  t.mock.timers.tick(1000);
+  assert.equal(socket.terminated, false);
+  transport.close();
+});
+
+test("pre-open close, error, timeout, and factory failures reject and terminate", async () => {
+  for (const event of ["close", "error"]) {
+    const socket = new FakeSocket();
+    const connecting = connectCodexTransport({
+      url: "ws://127.0.0.1:1",
+      token: "secret",
+      notification: () => {},
+      disconnected: () => {},
+      connectTimeoutMs: 1000,
+      factory: () => socket,
+    });
+    socket.emit(event);
+    await assert.rejects(connecting, /connection failed/);
+    assert.equal(socket.terminated, true);
+  }
+  await assert.rejects(
+    connectCodexTransport({
+      url: "ws://127.0.0.1:1",
+      token: "secret",
+      notification: () => {},
+      disconnected: () => {},
+      connectTimeoutMs: 1000,
+      factory: () => {
+        throw new Error("factory failed");
+      },
+    }),
+    /factory failed/,
+  );
+});
+
+test("notification encoding and write failures preserve fail-closed behavior", async () => {
+  const f = await fixture();
+  f.transport.notify("one");
+  f.transport.notify("two", { value: 2 });
+  assert.deepEqual(f.socket.sent, [
+    { method: "one" },
+    { method: "two", params: { value: 2 } },
+  ]);
+  const pending = f.transport.request("pending", {});
+  const rejected = assert.rejects(pending, /write failed/);
+  f.socket.send = () => {
+    throw new Error("write failed");
+  };
+  assert.throws(() => f.transport.notify("fail"), /write failed/);
+  await rejected;
+  assert.equal(f.socket.terminated, true);
+  assert.equal(f.failures.length, 1);
+  assert.throws(() => f.transport.notify("after"), /disconnected/);
+  f.transport.close();
+  assert.equal(f.failures.length, 1);
+});
+
+test("RPC correlates responses independently of notification/response order", async () => {
+  const f = await fixture();
+  const a = f.transport.request("a", { one: 1 });
+  const b = f.transport.request("b", {});
+  f.socket.message({
+    method: "turn/started",
+    params: { turn: { id: "early" } },
+  });
+  f.socket.message({ id: f.socket.sent[1].id, result: "b" });
+  f.socket.message({ id: f.socket.sent[0].id, result: "a" });
+  assert.deepEqual(await Promise.all([a, b]), ["a", "b"]);
+  assert.equal(f.notifications[0].method, "turn/started");
+  f.transport.close();
+});
+
+test("RPC errors reject only their request and release pending slot", async () => {
+  const f = await fixture();
+  const request = f.transport.request("turn/steer", {});
+  f.socket.message({
+    id: f.socket.sent[0].id,
+    error: { code: -32000, message: "wrong turn" },
+  });
+  await assert.rejects(request, /wrong turn/);
+  const next = f.transport.request("next", {});
+  f.socket.message({ id: f.socket.sent[1].id, result: {} });
+  await next;
+  assert.equal(f.failures.length, 0);
+  f.transport.close();
+});
+
+test("pending RPCs are bounded to 32 and rejected together on disconnect", async () => {
+  const f = await fixture();
+  const requests = Array.from({ length: 32 }, () =>
+    f.transport.request("wait", {}),
+  );
+  const settled = Promise.allSettled(requests);
+  await assert.rejects(f.transport.request("overflow", {}), /pending limit/);
+  assert.equal(f.socket.sent.length, 32);
+  f.socket.emit("close");
+  assert.ok((await settled).every((entry) => entry.status === "rejected"));
+  assert.equal(f.failures.length, 1);
+  await assert.rejects(f.transport.request("after", {}), /disconnected/);
+});
+
+test("timeout fails ambiguous transport and rejects all other pending requests", async () => {
+  const f = await fixture(20);
+  const settled = Promise.allSettled([
+    f.transport.request("mutating", {}),
+    f.transport.request("other", {}),
+  ]);
+  assert.ok((await settled).every((entry) => entry.status === "rejected"));
+  assert.equal(f.socket.terminated, true);
+  assert.equal(f.failures.length, 1);
+});
+
+test("malformed and oversized protocol frames disconnect instead of leaking pending work", async () => {
+  for (const frame of [
+    "{invalid",
+    JSON.stringify(null),
+    "x".repeat(1024 * 1024 + 1),
+  ]) {
+    const f = await fixture();
+    const request = f.transport.request("wait", {});
+    f.socket.emit("message", frame);
+    await assert.rejects(request, /Invalid Codex protocol/);
+    assert.equal(f.failures.length, 1);
+  }
+});
 
 test("approval, user-input and unknown server requests always receive error and blocked notification", async () => {
   const f = await fixture();
@@ -177,14 +324,14 @@ test("async policy failure disconnects and rejects pending RPCs without denying 
 test("connection timeout terminates pre-open socket", async () => {
   const socket = new FakeSocket();
   await assert.rejects(
-    CodexTransport.connect(
-      "ws://127.0.0.1:1",
-      "secret",
-      () => {},
-      () => {},
-      20,
-      () => socket,
-    ),
+    connectCodexTransport({
+      url: "ws://127.0.0.1:1",
+      token: "secret",
+      notification: () => {},
+      disconnected: () => {},
+      connectTimeoutMs: 20,
+      factory: () => socket,
+    }),
     /timed out/,
   );
   assert.equal(socket.terminated, true);
@@ -205,14 +352,14 @@ test("real loopback WS handshake uses bearer header, not query string; no model 
       socket.send(JSON.stringify({ id: value.id, result: { ok: true } }));
     });
   });
-  let transport: CodexTransport | undefined;
+  let transport: CodexRpc | undefined;
   try {
-    transport = await CodexTransport.connect(
-      `ws://127.0.0.1:${address.port}`,
-      "test-token",
-      () => {},
-      () => {},
-    );
+    transport = await connectCodexTransport({
+      url: `ws://127.0.0.1:${address.port}`,
+      token: "test-token",
+      notification: () => {},
+      disconnected: () => {},
+    });
     assert.deepEqual(await transport.request("initialize", {}), { ok: true });
     assert.equal(header, "Bearer test-token");
     assert.equal(path, "/");
@@ -227,14 +374,14 @@ test("connect deadline does not become request deadline; default RPC timeout is 
   t.mock.timers.enable({ apis: ["setTimeout"] });
   const socket = new FakeSocket();
   const failures: Error[] = [];
-  const connecting = CodexTransport.connect(
-    "ws://127.0.0.1:1",
-    "secret",
-    () => {},
-    (error) => failures.push(error),
-    1000,
-    () => socket,
-  );
+  const connecting = connectCodexTransport({
+    url: "ws://127.0.0.1:1",
+    token: "secret",
+    notification: () => {},
+    disconnected: (error) => failures.push(error),
+    connectTimeoutMs: 1000,
+    factory: () => socket,
+  });
   socket.emit("open");
   const transport = await connecting;
   try {
@@ -261,16 +408,16 @@ test("native server requests are left for TUI; dynamic managed policy rejects wi
   const socket = new FakeSocket();
   const notifications: string[] = [];
   let managed = false;
-  const connecting = CodexTransport.connect(
-    "ws://127.0.0.1:1",
-    "secret",
-    (method) => notifications.push(method),
-    () => {},
-    1000,
-    () => socket,
-    60_000,
-    () => managed,
-  );
+  const connecting = connectCodexTransport({
+    url: "ws://127.0.0.1:1",
+    token: "secret",
+    notification: (method) => notifications.push(method),
+    disconnected: () => {},
+    connectTimeoutMs: 1000,
+    requestTimeoutMs: 60_000,
+    factory: () => socket,
+    shouldRejectServerRequest: () => managed,
+  });
   socket.emit("open");
   const transport = await connecting;
   try {

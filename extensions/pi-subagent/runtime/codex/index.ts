@@ -5,16 +5,18 @@ import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { type TerminalHandle, TerminalStartError } from "../../mux/index.ts";
-import { RuntimeTaskRejectedError } from "../errors.ts";
-import type {
-  AgentRuntime,
-  RuntimeCallConfig,
-  RuntimeCapabilities,
-  RuntimeCommand,
-  RuntimeHost,
-  RuntimeOptions,
-  RuntimeSession,
-  SessionUpdate,
+import { createSerializer, truncateUtf8 } from "../../util.ts";
+import {
+  type AgentRuntime,
+  MAX_RESULT_BYTES,
+  type RuntimeCapabilities,
+  type RuntimeCommand,
+  type RuntimeEvent,
+  type RuntimeHost,
+  type RuntimeOptions,
+  type RuntimeSession,
+  RuntimeTaskRejectedError,
+  type SessionUpdate,
 } from "../index.ts";
 import {
   codexConfig,
@@ -26,8 +28,9 @@ import {
 import { spawnCodexGuardian } from "./guardian.ts";
 import {
   CODEX_REQUEST_TIMEOUT_MS,
+  type CodexConnectOptions,
   type CodexRpc,
-  CodexTransport,
+  connectCodexTransport,
 } from "./transport.ts";
 
 const capabilities: RuntimeCapabilities = Object.freeze({
@@ -36,7 +39,6 @@ const capabilities: RuntimeCapabilities = Object.freeze({
   retainedSession: true,
   concurrentNativeInput: true,
 });
-const RESULT_LIMIT = 64 * 1024;
 const INTERACTION_HISTORY_LIMIT = 256;
 const efforts: Record<string, string> = {
   off: "none",
@@ -47,21 +49,32 @@ const efforts: Record<string, string> = {
   high: "high",
   xhigh: "xhigh",
 };
+const TOOL_ITEM_TYPES = new Set([
+  "commandExecution",
+  "fileChange",
+  "mcpToolCall",
+  "dynamicToolCall",
+  "collabAgentToolCall",
+  "webSearch",
+  "imageGeneration",
+]);
+const NON_ACTIVITY_ITEM_TYPES = new Set([
+  "agentMessage",
+  "userMessage",
+  "reasoning",
+  "enteredReviewMode",
+  "exitedReviewMode",
+]);
+
 function effort(options: RuntimeOptions): string | undefined {
   const value = options.agent?.thinking ?? options.thinking;
   return value === undefined ? undefined : efforts[value];
 }
-function bounded(
-  text: string,
-  limit = RESULT_LIMIT,
-): { text: string; truncated: boolean } {
-  const bytes = Buffer.from(text);
-  if (bytes.length <= limit) return { text, truncated: false };
-  let end = limit;
-  while (end > 0 && (bytes[end] & 0xc0) === 0x80) end--;
-  return { text: bytes.subarray(0, end).toString("utf8"), truncated: true };
-}
-const input = (text: string) => [{ type: "text", text, text_elements: [] }];
+
+const bounded = (text: string, limit = MAX_RESULT_BYTES) =>
+  truncateUtf8(text, limit);
+const textInput = (text: string) => [{ type: "text", text, text_elements: [] }];
+
 type NativeItem = {
   id: string;
   type: string;
@@ -115,22 +128,191 @@ type NativeEvent = {
   requestMethod?: string;
 };
 
+type NativeInteraction = {
+  id: string;
+  sequence: number;
+  finishing: boolean;
+  final?: { text: string; truncated: boolean };
+  fallback?: { text: string; truncated: boolean };
+  review?: { text: string; truncated: boolean };
+  reviewing?: boolean;
+};
+
+type ManagedTurn = {
+  round: number;
+  sequence: number;
+  id?: string;
+  submitted: Promise<void>;
+  releaseSubmission(): void;
+  cancel: boolean;
+  interruptSent: boolean;
+  dispatched: boolean;
+  finishing: boolean;
+  early: Array<[string, Record<string, unknown>]>;
+  final: string;
+  review: boolean;
+  reviewResult?: string;
+  fallback: string;
+  truncated: boolean;
+  items: Set<string>;
+  tools: number;
+  compactions: number;
+  usage?: NativeUsage;
+  baseline: Record<string, number>;
+};
+
+function validateCodexOptions(options: RuntimeOptions): void {
+  codexConfig(options);
+  if (options.parentSession) {
+    throw new Error(
+      "Codex cannot clone a Pi parentSession; use an explicit prompt",
+    );
+  }
+  const thinking = options.agent?.thinking ?? options.thinking;
+  if (thinking !== undefined && !Object.hasOwn(efforts, thinking)) {
+    throw new Error(`Unsupported Codex thinking effort: ${thinking}`);
+  }
+  if (
+    options.startupTimeoutMs !== undefined &&
+    (!Number.isFinite(options.startupTimeoutMs) ||
+      options.startupTimeoutMs <= 0)
+  ) {
+    throw new Error("Invalid Codex startup timeout");
+  }
+}
+
+function buildAppServerArgv(
+  url: string,
+  tokenFile: string,
+  options: RuntimeOptions,
+): string[] {
+  return [
+    "app-server",
+    "--listen",
+    url,
+    "--ws-auth",
+    "capability-token",
+    "--ws-token-file",
+    tokenFile,
+    ...codexNativeArgs(codexConfig(options)),
+  ];
+}
+
+function buildThreadStartParams(
+  options: RuntimeOptions,
+  systemPrompt: string,
+): Record<string, unknown> {
+  const configuredEffort = effort(options);
+  const model = options.agent?.model ?? options.model;
+  const config: Record<string, unknown> = {};
+  if (configuredEffort !== undefined) {
+    config.model_reasoning_effort = configuredEffort;
+  }
+  // Native review delegates disable web search even when the thread enables it.
+  if (codexConfig(options).runtime_args.includes("search")) {
+    config.web_search = "live";
+  }
+  return {
+    cwd: options.cwd,
+    model,
+    sandbox: "workspace-write",
+    approvalPolicy: "never",
+    developerInstructions: systemPrompt || undefined,
+    ...(Object.keys(config).length ? { config } : {}),
+  };
+}
+
+function computeUsageDelta(
+  usage: NativeUsage | undefined,
+  baseline: Record<string, number>,
+): { totalTokens: number; delta: Record<string, number> } {
+  const delta: Record<string, number> = {};
+  for (const [key, value] of Object.entries(usage?.total ?? {})) {
+    if (Number.isSafeInteger(value) && value >= 0) {
+      delta[key] = Math.max(0, value - (baseline[key] ?? 0));
+    }
+  }
+  const totalTokens =
+    Math.max(0, (delta.inputTokens ?? 0) - (delta.cachedInputTokens ?? 0)) +
+    (delta.outputTokens ?? 0);
+  return { totalTokens, delta };
+}
+
+function buildStatsEvent(
+  managed: ManagedTurn,
+): Extract<RuntimeEvent, { type: "stats" }> {
+  const { totalTokens, delta } = computeUsageDelta(
+    managed.usage,
+    managed.baseline,
+  );
+  return {
+    type: "stats",
+    round: managed.round,
+    turnId: managed.id,
+    turnCount: managed.finishing ? 1 : 0,
+    toolUses: managed.tools,
+    compactionCount: managed.compactions,
+    totalTokens,
+    usage: managed.usage ? { ...managed.usage, delta } : undefined,
+  };
+}
+
+function buildNativeSessionUpdate(
+  interaction: NativeInteraction,
+  turn: NativeTurn,
+  hydrationError: string | undefined,
+): SessionUpdate {
+  const result =
+    interaction.review ?? interaction.final ?? interaction.fallback;
+  const error =
+    turn.status === "failed"
+      ? String(turn.error?.message ?? "Codex turn failed")
+      : hydrationError;
+  return {
+    type: "session_update",
+    interactionId: interaction.id,
+    sequence: interaction.sequence,
+    response: result?.text ?? "",
+    outcome:
+      turn.status === "interrupted"
+        ? "aborted"
+        : error !== undefined
+          ? "error"
+          : "completed",
+    truncated: result?.truncated ?? false,
+    ...(error === undefined ? {} : { error }),
+  };
+}
+
+function buildTurnCompletion(
+  managed: ManagedTurn,
+  turn: NativeTurn,
+  hydrationError: string | undefined,
+): Extract<RuntimeEvent, { type: "completed" }> {
+  return {
+    type: "completed",
+    round: managed.round,
+    turnId: managed.id,
+    resultSequence: managed.sequence,
+    result: managed.reviewResult ?? (managed.final || managed.fallback),
+    truncated: managed.truncated,
+    canceled: turn.status === "interrupted",
+    error:
+      turn.status === "failed"
+        ? String(turn.error?.message ?? "Codex turn failed")
+        : hydrationError,
+  };
+}
+
 /** Injectable OS/transport boundary: tests never invoke a real model or CLI. */
 export interface CodexDependencies {
   probe(executable: string, cwd: string, timeoutMs: number): Promise<string>;
   address(): Promise<string>;
   removeDirectory(path: string): Promise<void>;
   spawn(executable: string, argv: string[], cwd: string): ChildProcess;
-  connect(
-    url: string,
-    token: string,
-    notification: (method: string, params: Record<string, unknown>) => void,
-    disconnected: (error: Error) => void,
-    connectTimeoutMs: number,
-    requestTimeoutMs: number,
-    shouldRejectServerRequest: () => boolean | Promise<boolean>,
-  ): Promise<CodexRpc>;
+  connect(options: CodexConnectOptions): Promise<CodexRpc>;
 }
+
 const defaults: CodexDependencies = {
   async removeDirectory(path) {
     await rm(path, { recursive: true, force: true });
@@ -186,165 +368,474 @@ const defaults: CodexDependencies = {
     });
   },
   spawn: spawnCodexGuardian,
-  connect: (
-    url,
-    token,
-    notification,
-    disconnected,
-    connectTimeoutMs,
-    requestTimeoutMs,
-    shouldRejectServerRequest,
-  ) =>
-    CodexTransport.connect(
-      url,
-      token,
-      notification,
-      disconnected,
-      connectTimeoutMs,
-      undefined,
-      requestTimeoutMs,
-      shouldRejectServerRequest,
-    ),
+  connect: connectCodexTransport,
 };
 
-export class CodexRuntime implements AgentRuntime {
-  readonly id = "codex" as const;
-  readonly displayName = "Codex";
-  readonly capabilities = capabilities;
-  private dependencies: CodexDependencies;
-  constructor(dependencies: Partial<CodexDependencies> = {}) {
-    this.dependencies = { ...defaults, ...dependencies };
-  }
-  parseConfig(config: Record<string, unknown>): Record<string, unknown> {
-    return parseCodexConfig(config);
-  }
-  parseCallConfig(
-    config: Record<string, unknown>,
-    sessionConfig: Record<string, unknown>,
-    phase: "spawn" | "resume",
-  ): RuntimeCallConfig {
-    return parseCodexCallConfig(config, sessionConfig, phase);
-  }
-  parseTask(command: RuntimeCommand, options: RuntimeOptions): RuntimeCommand {
-    return parseCodexTask(command, options);
-  }
-  validate(options: RuntimeOptions): void {
-    codexConfig(options);
-    if (options.parentSession) {
-      throw new Error(
-        "Codex cannot clone a Pi parentSession; use an explicit prompt",
+function createCodexSession(
+  options: RuntimeOptions,
+  host: RuntimeHost,
+  deps: CodexDependencies,
+): RuntimeSession {
+  const systemPrompt = options.agent?.systemPrompt ?? "";
+  const serializeCleanup = createSerializer();
+  const interactionHistory = new Set<string>();
+
+  let rpc: CodexRpc | undefined;
+  let child: ChildProcess | undefined;
+  let dir: string | undefined;
+  let url = "";
+  let token = "";
+  let threadId: string | undefined;
+  let runtimeSessionId: string | undefined;
+  let ready = false;
+  let closed = false;
+  let lost = false;
+  let startPromise: Promise<void> | undefined;
+  let closePromise: Promise<void> | undefined;
+  let nativeTerminal: TerminalHandle | undefined;
+  let attaching = false;
+  let attachmentPromise: Promise<TerminalHandle> | undefined;
+  let managed: ManagedTurn | undefined;
+  let nativeTurnId: string | undefined;
+  let nativeInteraction: NativeInteraction | undefined;
+  // Start order spans managed and native turns, independent of round numbers.
+  let replySequence = 0;
+  let lastRound = 0;
+  let latestUsage: NativeUsage | undefined;
+
+  const isConnected = (): boolean => ready && !closed && !lost;
+
+  const emit = (event: RuntimeEvent): void => {
+    host.emit({ ...event, threadId, runtimeSessionId });
+  };
+
+  const disconnect = (error: Error): void => {
+    if (closed || lost) return;
+    lost = true;
+    ready = false;
+    emit({
+      type: "disconnected",
+      error: error.message,
+      round: managed?.round,
+    });
+    // The manager owns disconnect cleanup for every session state. Retain
+    // handles until close() succeeds so failures remain retryable.
+  };
+
+  const requireConnected = (): CodexRpc => {
+    if (!isConnected() || !rpc) {
+      throw new Error("Codex session is disconnected; start a new session");
+    }
+    return rpc;
+  };
+
+  const rememberInteraction = (id: string): void => {
+    interactionHistory.add(id);
+    if (interactionHistory.size > INTERACTION_HISTORY_LIMIT) {
+      const oldest = interactionHistory.values().next().value;
+      if (oldest !== undefined) interactionHistory.delete(oldest);
+    }
+  };
+
+  const startupRequest = async (
+    method: string,
+    params: unknown,
+    ms: number,
+  ): Promise<StartupResponse> => {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const currentRpc = rpc;
+    if (!currentRpc) throw new Error("Codex startup transport missing");
+    try {
+      return await Promise.race([
+        currentRpc.request<StartupResponse>(method, params),
+        new Promise<never>((_, reject) => {
+          timer = setTimeout(
+            () => reject(new Error(`Codex startup timeout: ${method}`)),
+            ms,
+          );
+        }),
+      ]);
+    } finally {
+      clearTimeout(timer);
+    }
+  };
+
+  const nativeAlive = async (): Promise<boolean> => {
+    if (attaching) return true;
+    if (!nativeTerminal) return false;
+    const terminal = nativeTerminal;
+    const { alive } = await host.mux.inspect(terminal);
+    if (!alive && nativeTerminal === terminal) {
+      await host.mux.destroy(terminal);
+      if (nativeTerminal === terminal) nativeTerminal = undefined;
+    }
+    return alive;
+  };
+
+  const shouldRejectServerRequest = (): boolean | Promise<boolean> => {
+    const headless = () =>
+      isConnected() && Boolean(managed?.dispatched && !managed.finishing);
+    if (!headless()) return false;
+    if (!nativeTerminal && !attaching) return true;
+    // App-server broadcasts requests to native clients too. Never race their
+    // answer, but resume headless rejection if the native terminal has exited.
+    return nativeAlive().then((alive) => headless() && !alive);
+  };
+
+  const hydrateTurnItems = async (
+    turnId: string | undefined,
+    onItem: (item: NativeItem) => void,
+    isValid: () => boolean = () => true,
+  ): Promise<string | undefined> => {
+    try {
+      let cursor: string | undefined;
+      const cursors = new Set<string>();
+      for (let page = 0; page < 64; page++) {
+        const result = await requireConnected().request<{
+          data: Array<{ item: NativeItem }>;
+          nextCursor?: string | null;
+        }>("thread/items/list", {
+          threadId,
+          turnId,
+          limit: 100,
+          sortDirection: "asc",
+          cursor,
+        });
+        if (!isConnected() || !isValid()) return undefined;
+        if (!Array.isArray(result?.data)) {
+          throw new Error("Invalid Codex item page");
+        }
+        for (const entry of result.data) onItem(entry.item);
+        if (!result.nextCursor) break;
+        if (cursors.has(result.nextCursor) || page === 63) {
+          throw new Error("Codex item pagination limit exceeded");
+        }
+        cursors.add(result.nextCursor);
+        cursor = result.nextCursor;
+      }
+      return undefined;
+    } catch (error) {
+      return error instanceof Error
+        ? error.message
+        : "Codex item hydration failed";
+    }
+  };
+
+  const cacheNativeItem = (
+    interaction: NativeInteraction,
+    item: NativeItem | undefined,
+  ): void => {
+    if (!item) return;
+    if (item.type === "enteredReviewMode") interaction.reviewing = true;
+    if (item.type === "exitedReviewMode" && typeof item.review === "string") {
+      interaction.review = bounded(item.review);
+    }
+    if (item.type === "agentMessage" && typeof item.text === "string") {
+      if (item.phase === "final_answer") interaction.final = bounded(item.text);
+      else interaction.fallback = bounded(item.text);
+    }
+  };
+
+  const completeNative = async (
+    interaction: NativeInteraction,
+    turn: NativeTurn,
+  ): Promise<void> => {
+    for (const item of turn.items ?? []) cacheNativeItem(interaction, item);
+    let hydrationError: string | undefined;
+    if (
+      turn.itemsView !== "full" &&
+      interaction.review === undefined &&
+      (interaction.reviewing || interaction.final === undefined)
+    ) {
+      hydrationError = await hydrateTurnItems(
+        interaction.id,
+        (item) => cacheNativeItem(interaction, item),
+        () => nativeInteraction === interaction,
       );
     }
-    const thinking = options.agent?.thinking ?? options.thinking;
-    if (thinking !== undefined && !Object.hasOwn(efforts, thinking))
-      throw new Error(`Unsupported Codex thinking effort: ${thinking}`);
+    if (!isConnected() || nativeInteraction !== interaction) return;
+    emit(buildNativeSessionUpdate(interaction, turn, hydrationError));
+    interaction.finishing = false;
+    // Emission can synchronously start a new round/turn or close the session.
+    // Never let an old hydration overwrite that newer lifecycle.
     if (
-      options.startupTimeoutMs !== undefined &&
-      (!Number.isFinite(options.startupTimeoutMs) ||
-        options.startupTimeoutMs <= 0)
-    )
-      throw new Error("Invalid Codex startup timeout");
-  }
-  create(options: RuntimeOptions, host: RuntimeHost): RuntimeSession {
-    this.validate(options);
-    return new CodexSession(
-      { ...options, runtimeConfig: codexConfig(options) },
-      host,
-      this.dependencies,
-    );
-  }
-}
+      isConnected() &&
+      nativeInteraction === interaction &&
+      !managed &&
+      !nativeTurnId
+    ) {
+      emit({ type: "session_state", state: "idle" });
+    }
+  };
 
-type NativeInteraction = {
-  id: string;
-  sequence: number;
-  finishing: boolean;
-  final?: { text: string; truncated: boolean };
-  fallback?: { text: string; truncated: boolean };
-  review?: { text: string; truncated: boolean };
-  reviewing?: boolean;
-};
+  const nativeNotification = (method: string, params: NativeEvent): void => {
+    const id = params.turnId ?? params.turn?.id;
+    if (
+      !id ||
+      interactionHistory.has(id) ||
+      ![
+        "turn/started",
+        "turn/completed",
+        "item/started",
+        "item/completed",
+      ].includes(method)
+    ) {
+      return;
+    }
+    // Retry/error notifications are not turn completion. Only terminal turn
+    // statuses can publish a result, even if a final item arrived earlier.
+    if (
+      method === "turn/completed" &&
+      !["completed", "interrupted", "failed"].includes(
+        params.turn?.status ?? "",
+      )
+    ) {
+      return;
+    }
+    let interaction = nativeInteraction;
+    if (interaction?.id !== id) {
+      // A late item/completion from another turn must not replace a newer
+      // active turn. A new turn/started is the authoritative ordering signal.
+      if (interaction && nativeTurnId && method !== "turn/started") {
+        rememberInteraction(id);
+        return;
+      }
+      if (interaction) rememberInteraction(interaction.id);
+      interaction = { id, sequence: ++replySequence, finishing: false };
+      nativeInteraction = interaction;
+    }
+    if (interaction.finishing) return;
+    if (method === "turn/started") nativeTurnId = id;
+    if (method === "item/started" || method === "item/completed") {
+      cacheNativeItem(interaction, params.item);
+    }
+    if (method === "turn/completed" && params.turn) {
+      interaction.finishing = true;
+      rememberInteraction(id);
+      if (nativeTurnId === id) nativeTurnId = undefined;
+      void completeNative(interaction, params.turn);
+    }
+  };
 
-type ManagedTurn = {
-  round: number;
-  sequence: number;
-  id?: string;
-  submitted: Promise<void>;
-  releaseSubmission(): void;
-  cancel: boolean;
-  interruptSent: boolean;
-  dispatched: boolean;
-  finishing: boolean;
-  early: Array<[string, Record<string, unknown>]>;
-  final: string;
-  review: boolean;
-  reviewResult?: string;
-  fallback: string;
-  truncated: boolean;
-  items: Set<string>;
-  tools: number;
-  compactions: number;
-  usage?: NativeUsage;
-  baseline: Record<string, number>;
-};
+  const cacheItem = (turn: ManagedTurn, item: NativeItem | undefined): void => {
+    if (!item || typeof item.id !== "string") return;
+    if (!turn.items.has(item.id)) {
+      if (turn.items.size >= 4096) {
+        throw new Error("Codex managed item limit exceeded");
+      }
+      turn.items.add(item.id);
+      if (TOOL_ITEM_TYPES.has(item.type)) turn.tools++;
+      if (item.type === "contextCompaction") turn.compactions++;
+    }
+    if (item.type === "exitedReviewMode" && typeof item.review === "string") {
+      const result = bounded(item.review);
+      turn.reviewResult = result.text;
+      turn.truncated ||= result.truncated;
+    }
+    if (item.type === "agentMessage" && typeof item.text === "string") {
+      const result = bounded(item.text);
+      if (item.phase === "final_answer") turn.final = result.text;
+      else turn.fallback = result.text;
+      turn.truncated ||= result.truncated;
+    }
+  };
 
-class CodexSession implements RuntimeSession {
-  readonly capabilities = capabilities;
-  private rpc?: CodexRpc;
-  private child?: ChildProcess;
-  private dir?: string;
-  private url = "";
-  private token = "";
-  private threadId?: string;
-  private runtimeSessionId?: string;
-  private ready = false;
-  private closed = false;
-  private lost = false;
-  private startPromise?: Promise<void>;
-  private closePromise?: Promise<void>;
-  private cleanupTail: Promise<void> = Promise.resolve();
-  private nativeTerminal?: TerminalHandle;
-  private attaching = false;
-  private attachmentPromise?: Promise<TerminalHandle>;
-  private managed?: ManagedTurn;
-  private nativeTurnId?: string;
-  private nativeInteraction?: NativeInteraction;
-  private interactionHistory = new Set<string>();
-  // Start order spans managed and native turns, independent of round numbers.
-  private replySequence = 0;
-  private round = 0;
-  private latestUsage?: NativeUsage;
-  private systemPrompt: string;
-  constructor(
-    private options: RuntimeOptions,
-    private host: RuntimeHost,
-    private deps: CodexDependencies,
-  ) {
-    this.systemPrompt = options.agent?.systemPrompt ?? "";
-  }
-  get connected(): boolean {
-    return this.ready && !this.closed && !this.lost;
-  }
-  get terminal(): TerminalHandle | undefined {
-    return this.nativeTerminal;
-  }
-  private emit(type: string, fields: Record<string, unknown> = {}): void {
-    this.host.emit({
-      type,
-      threadId: this.threadId,
-      runtimeSessionId: this.runtimeSessionId,
-      ...fields,
+  const completeManaged = async (
+    current: ManagedTurn,
+    turn: NativeTurn,
+  ): Promise<void> => {
+    for (const item of turn.items ?? []) cacheItem(current, item);
+    let hydrationError: string | undefined;
+    if (
+      turn.itemsView !== "full" &&
+      (current.review ? current.reviewResult === undefined : !current.final)
+    ) {
+      hydrationError = await hydrateTurnItems(current.id, (item) =>
+        cacheItem(current, item),
+      );
+    }
+    if (managed !== current || !isConnected()) return;
+    emit(buildStatsEvent(current));
+    managed = undefined;
+    const interactive = Boolean(nativeTurnId || nativeInteraction?.finishing);
+    emit({
+      type: "session_state",
+      state: interactive ? "interactive" : "idle",
+      activity: interactive ? "Native Codex turn" : undefined,
+      round: current.round,
+      turnId: current.id,
     });
-  }
-  start(): Promise<void> {
-    if (this.closed) return Promise.reject(new Error("Codex session closed"));
-    this.startPromise ??= this.startBackend();
-    return this.startPromise;
-  }
-  private async startBackend(): Promise<void> {
-    const deadline = Date.now() + (this.options.startupTimeoutMs ?? 15_000);
+    emit(buildTurnCompletion(current, turn, hydrationError));
+  };
+
+  const notification = (method: string, raw: Record<string, unknown>): void => {
+    const params = raw as NativeEvent;
+    if (!params || params.threadId !== threadId || !isConnected()) return;
+    if (method === "thread/tokenUsage/updated" && params.tokenUsage) {
+      latestUsage = params.tokenUsage;
+    }
+    const current = managed;
+    const turnId = params.turnId ?? params.turn?.id;
+    if (method === "thread/status/changed" && params.status?.type === "idle") {
+      nativeTurnId = undefined;
+    }
+    if (!current) {
+      nativeNotification(method, params);
+      // Backend idle is not publication completion: hydration still owns the
+      // native result. completeNative publishes idle after session_update.
+      if (
+        method === "thread/status/changed" &&
+        !(params.status?.type === "idle" && nativeInteraction?.finishing)
+      ) {
+        emit({
+          type: "session_state",
+          state: params.status?.type === "active" ? "interactive" : "idle",
+          activity:
+            params.status?.type === "active" ? "Native Codex turn" : undefined,
+        });
+      }
+      return;
+    }
+    if (method === "runtime/blocked") {
+      emit({
+        type: "blocked",
+        round: current.round,
+        turnId,
+        requestMethod: params.requestMethod,
+        error: "Interactive Codex request rejected by headless runtime",
+      });
+      emit({
+        type: "activity",
+        round: current.round,
+        toolName: params.requestMethod,
+        event: "blocked",
+      });
+      return;
+    }
+    if (!current.id) {
+      if (
+        !turnId ||
+        ![
+          "turn/started",
+          "turn/completed",
+          "item/started",
+          "item/completed",
+          "thread/tokenUsage/updated",
+        ].includes(method)
+      ) {
+        return;
+      }
+      if (current.early.length >= 64) {
+        disconnect(new Error("Codex startup event buffer exceeded"));
+        return;
+      }
+      current.early.push([method, raw]);
+      return;
+    }
+    if (turnId !== current.id) {
+      nativeNotification(method, params);
+      return; // Native turns never belong to a managed round.
+    }
+    if (current.finishing) return;
+    if (method === "item/started" || method === "item/completed") {
+      cacheItem(current, params.item);
+      const tool = params.item?.type;
+      if (tool && !NON_ACTIVITY_ITEM_TYPES.has(tool)) {
+        emit({
+          type: "activity",
+          round: current.round,
+          turnId,
+          toolName: tool,
+          event:
+            method === "item/started"
+              ? "tool_execution_start"
+              : "tool_execution_end",
+        });
+      }
+    }
+    if (method === "thread/tokenUsage/updated") {
+      current.usage = params.tokenUsage;
+      emit(buildStatsEvent(current));
+    }
+    if (method === "turn/completed" && params.turn) {
+      current.finishing = true;
+      void completeManaged(current, params.turn).catch((error) =>
+        disconnect(error),
+      );
+    }
+  };
+
+  const cleanupResources = async (): Promise<void> => {
+    const currentRpc = rpc;
+    rpc = undefined;
+    currentRpc?.close();
+    const currentChild = child;
+    if (
+      currentChild &&
+      currentChild.exitCode === null &&
+      currentChild.signalCode === null
+    ) {
+      // Guardian kill() requests group cleanup over IPC; even SIGKILL is not
+      // proof of exit. Never OS-kill the guardian and orphan its backend.
+      await new Promise<void>((resolve, reject) => {
+        let timer: ReturnType<typeof setTimeout>;
+        const exited = () => {
+          clearTimeout(timer);
+          resolve();
+        };
+        const failed = (cause: unknown) => {
+          clearTimeout(timer);
+          currentChild.removeListener("exit", exited);
+          reject(cause);
+        };
+        currentChild.once("exit", exited);
+        timer = setTimeout(() => {
+          timer = setTimeout(
+            () =>
+              failed(new Error("Codex guardian exit unconfirmed; retry close")),
+            500,
+          );
+          try {
+            currentChild.kill("SIGKILL");
+          } catch (cause) {
+            failed(cause);
+          }
+        }, 500);
+        try {
+          currentChild.kill("SIGTERM");
+        } catch (cause) {
+          failed(cause);
+        }
+      });
+    }
+    // Retain child, credentials and directory on an unconfirmed stop so the
+    // manager cannot release its concurrency claim and retries keep ownership.
+    if (child === currentChild) child = undefined;
+    const terminal = nativeTerminal;
+    let terminalError: unknown;
+    if (terminal) {
+      try {
+        await host.mux.destroy(terminal);
+        if (nativeTerminal === terminal) nativeTerminal = undefined;
+      } catch (error) {
+        terminalError = error;
+      }
+    }
+    const currentDir = dir;
+    if (currentDir) {
+      await deps.removeDirectory(currentDir);
+      dir = undefined;
+    }
+    token = "";
+    if (terminalError) throw terminalError;
+  };
+
+  const cleanup = (): Promise<void> => serializeCleanup(cleanupResources);
+
+  const startBackend = async (): Promise<void> => {
+    const deadline = Date.now() + (options.startupTimeoutMs ?? 15_000);
     const remaining = () => {
-      if (this.closed || this.lost) throw new Error("Codex startup aborted");
+      if (closed || lost) throw new Error("Codex startup aborted");
       const ms = deadline - Date.now();
       if (ms <= 0) throw new Error("Codex startup timed out");
       return ms;
@@ -353,62 +844,51 @@ class CodexSession implements RuntimeSession {
     try {
       // Version is diagnostic only. Compatibility is established by starting
       // the authenticated server and validating the required RPC responses.
-      version = await this.deps.probe(
-        this.options.executable ?? "codex",
-        this.options.cwd,
+      version = await deps.probe(
+        options.executable ?? "codex",
+        options.cwd,
         remaining(),
       );
       remaining();
-      this.dir = await mkdtemp(join(tmpdir(), "pi-kits-codex-"));
-      await chmod(this.dir, 0o700);
-      this.token = randomBytes(32).toString("hex");
-      const tokenFile = join(this.dir, "token");
-      await writeFile(tokenFile, this.token, { mode: 0o600 });
+      dir = await mkdtemp(join(tmpdir(), "pi-kits-codex-"));
+      await chmod(dir, 0o700);
+      token = randomBytes(32).toString("hex");
+      const tokenFile = join(dir, "token");
+      await writeFile(tokenFile, token, { mode: 0o600 });
       await chmod(tokenFile, 0o600);
-      this.url = await this.deps.address();
+      url = await deps.address();
       remaining();
-      this.child = this.deps.spawn(
-        this.options.executable ?? "codex",
-        [
-          "app-server",
-          "--listen",
-          this.url,
-          "--ws-auth",
-          "capability-token",
-          "--ws-token-file",
-          tokenFile,
-          ...codexNativeArgs(codexConfig(this.options)),
-        ],
-        this.options.cwd,
+      child = deps.spawn(
+        options.executable ?? "codex",
+        buildAppServerArgv(url, tokenFile, options),
+        options.cwd,
       );
       // Drain diagnostics without retaining or forwarding secrets/unbounded output.
-      this.child.stdout?.resume();
-      this.child.stderr?.resume();
-      this.child.on("error", () =>
-        this.disconnect(new Error("Codex app-server process error")),
+      child.stdout?.resume();
+      child.stderr?.resume();
+      child.on("error", () =>
+        disconnect(new Error("Codex app-server process error")),
       );
-      this.child.on("exit", (code, signal) =>
-        this.disconnect(
-          new Error(`Codex app-server exited (${code ?? signal})`),
-        ),
+      child.on("exit", (code, signal) =>
+        disconnect(new Error(`Codex app-server exited (${code ?? signal})`)),
       );
-      while (!this.rpc) {
+      while (!rpc) {
         try {
-          this.rpc = await this.deps.connect(
-            this.url,
-            this.token,
-            (method, params) => this.notification(method, params),
-            (error) => this.disconnect(error),
-            Math.min(1000, remaining()),
-            CODEX_REQUEST_TIMEOUT_MS,
-            () => this.shouldRejectServerRequest(),
-          );
+          rpc = await deps.connect({
+            url,
+            token,
+            notification,
+            disconnected: disconnect,
+            connectTimeoutMs: Math.min(1000, remaining()),
+            requestTimeoutMs: CODEX_REQUEST_TIMEOUT_MS,
+            shouldRejectServerRequest,
+          });
         } catch {
           remaining();
           await new Promise((resolve) => setTimeout(resolve, 40));
         }
       }
-      const initialized = await this.startupRequest(
+      const initialized = await startupRequest(
         "initialize",
         {
           clientInfo: {
@@ -420,22 +900,24 @@ class CodexSession implements RuntimeSession {
         },
         remaining(),
       );
-      if (typeof initialized?.userAgent !== "string")
+      if (typeof initialized?.userAgent !== "string") {
         throw new Error("Incompatible Codex initialize response");
-      this.rpc.notify("initialized");
-      const configuredEffort = effort(this.options);
-      const model = this.options.agent?.model ?? this.options.model;
+      }
+      rpc.notify("initialized");
+      const configuredEffort = effort(options);
+      const model = options.agent?.model ?? options.model;
       if (configuredEffort !== undefined) {
         let cursor: string | undefined;
         let selected: ModelEntry | undefined;
         for (let page = 0; page < 16; page++) {
-          const catalog = await this.startupRequest(
+          const catalog = await startupRequest(
             "model/list",
             { includeHidden: true, limit: 100, cursor },
             remaining(),
           );
-          if (!Array.isArray(catalog?.data))
+          if (!Array.isArray(catalog?.data)) {
             throw new Error("Incompatible Codex model catalog");
+          }
           selected = catalog.data.find((entry) =>
             model
               ? entry.model === model || entry.id === model
@@ -454,43 +936,33 @@ class CodexSession implements RuntimeSession {
           );
         }
       }
-      const config: Record<string, unknown> = {};
-      if (configuredEffort !== undefined)
-        config.model_reasoning_effort = configuredEffort;
-      // Native review delegates disable web search even when the thread enables it.
-      if (codexConfig(this.options).runtime_args.includes("search"))
-        config.web_search = "live";
-      const started = await this.startupRequest(
+      const started = await startupRequest(
         "thread/start",
-        {
-          cwd: this.options.cwd,
-          model,
-          sandbox: "workspace-write",
-          approvalPolicy: "never",
-          developerInstructions: this.systemPrompt || undefined,
-          ...(Object.keys(config).length ? { config } : {}),
-        },
+        buildThreadStartParams(options, systemPrompt),
         remaining(),
       );
-      if (typeof started?.thread?.id !== "string")
+      if (typeof started?.thread?.id !== "string") {
         throw new Error("Incompatible Codex thread/start response");
+      }
       remaining();
-      this.threadId = started.thread.id;
-      this.runtimeSessionId = started.thread.sessionId ?? started.thread.id;
-      if (this.options.sessionName) {
-        await this.startupRequest(
+      threadId = started.thread.id;
+      runtimeSessionId = started.thread.sessionId ?? started.thread.id;
+      if (options.sessionName) {
+        await startupRequest(
           "thread/name/set",
-          { threadId: this.threadId, name: this.options.sessionName },
+          { threadId, name: options.sessionName },
           remaining(),
         );
       }
-      this.ready = true;
-      this.emit("model_select", {
+      ready = true;
+      emit({
+        type: "model_select",
         provider: started.modelProvider,
         model: started.model,
         thinkingLevel: started.reasoningEffort,
       });
-      this.emit("session_state", {
+      emit({
+        type: "session_state",
         state: "idle",
         sessionPath: started.thread.path ?? undefined,
       });
@@ -500,755 +972,325 @@ class CodexSession implements RuntimeSession {
         `Codex startup failed${version?.trim() ? ` (${version.trim()})` : ""}: ${detail}`,
         { cause: error },
       );
-      this.disconnect(failure);
-      await this.cleanup();
+      disconnect(failure);
+      await cleanup();
       throw failure;
     }
-  }
-  private async startupRequest(
-    method: string,
-    params: unknown,
-    ms: number,
-  ): Promise<StartupResponse> {
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    const rpc = this.rpc;
-    if (!rpc) throw new Error("Codex startup transport missing");
-    try {
-      return await Promise.race([
-        rpc.request<StartupResponse>(method, params),
-        new Promise<never>((_, reject) => {
-          timer = setTimeout(
-            () => reject(new Error(`Codex startup timeout: ${method}`)),
-            ms,
-          );
-        }),
-      ]);
-    } finally {
-      clearTimeout(timer);
-    }
-  }
-  private disconnect(error: Error): void {
-    if (this.closed || this.lost) return;
-    this.lost = true;
-    this.ready = false;
-    this.emit("disconnected", {
-      error: error.message,
-      round: this.managed?.round,
-    });
-    // The manager owns disconnect cleanup for every session state. Retain
-    // handles until close() succeeds so failures remain retryable.
-  }
-  private requireConnected(): CodexRpc {
-    if (!this.connected || !this.rpc)
-      throw new Error("Codex session is disconnected; start a new session");
-    return this.rpc;
-  }
-  private async nativeAlive(): Promise<boolean> {
-    if (this.attaching) return true;
-    if (!this.nativeTerminal) return false;
-    const terminal = this.nativeTerminal;
-    const { alive } = await this.host.mux.inspect(terminal);
-    if (!alive && this.nativeTerminal === terminal) {
-      await this.host.mux.destroy(terminal);
-      if (this.nativeTerminal === terminal) this.nativeTerminal = undefined;
-    }
-    return alive;
-  }
-  private shouldRejectServerRequest(): boolean | Promise<boolean> {
-    const headless = () =>
-      this.connected &&
-      Boolean(this.managed?.dispatched && !this.managed.finishing);
-    if (!headless()) return false;
-    if (!this.nativeTerminal && !this.attaching) return true;
-    // App-server broadcasts requests to native clients too. Never race their
-    // answer, but resume headless rejection if the native terminal has exited.
-    return this.nativeAlive().then((alive) => headless() && !alive);
-  }
-  private async exclusiveCheck(): Promise<void> {
-    const { thread } = await this.requireConnected().request<StartupResponse>(
+  };
+
+  const exclusiveCheck = async (): Promise<void> => {
+    const { thread } = await requireConnected().request<StartupResponse>(
       "thread/read",
-      { threadId: this.threadId, includeTurns: false },
+      { threadId, includeTurns: false },
     );
-    if (!thread || thread.status?.type !== "idle")
+    if (!thread || thread.status?.type !== "idle") {
       throw new RuntimeTaskRejectedError(
         "Codex thread is not idle; wait for the native turn to finish",
       );
-    if (typeof thread.model === "string")
-      this.emit("model_select", {
+    }
+    if (typeof thread.model === "string") {
+      emit({
+        type: "model_select",
         model: thread.model,
         provider: thread.modelProvider,
         thinkingLevel: thread.reasoningEffort,
       });
-  }
-  private managedForRound(round: number | undefined): ManagedTurn | undefined {
-    const managed = this.managed;
-    return managed && (round === undefined || round === managed.round)
+    }
+  };
+
+  const managedForRound = (
+    round: number | undefined,
+  ): ManagedTurn | undefined =>
+    managed && (round === undefined || round === managed.round)
       ? managed
       : undefined;
-  }
-  async send(command: RuntimeCommand): Promise<void> {
-    try {
-      command = parseCodexTask(command, this.options);
-    } catch (cause) {
-      throw new RuntimeTaskRejectedError(
-        cause instanceof Error ? cause.message : "Invalid Codex task",
-        { cause },
-      );
-    }
-    const rpc = this.requireConnected();
-    if (command.type === "cancel") {
-      const managed = this.managedForRound(command.round);
-      if (!managed) return;
-      managed.cancel = true;
-      await this.interrupt(managed);
-      return;
-    }
-    if (command.type === "steer") {
-      const managed = this.managedForRound(command.round);
-      if (!managed?.id || managed.finishing)
-        throw new Error("No matching managed Codex turn to steer");
-      await rpc.request("turn/steer", {
-        threadId: this.threadId,
-        expectedTurnId: managed.id,
-        input: input(command.message),
-      });
-      return;
-    }
+
+  const interrupt = async (current: ManagedTurn): Promise<void> => {
     if (
-      command.instructions?.systemPrompt !== undefined &&
-      command.instructions.systemPrompt !== this.systemPrompt
-    )
-      throw new RuntimeTaskRejectedError(
-        "Codex developerInstructions are fixed at thread creation; supply agent.systemPrompt",
-      );
-    if (Buffer.byteLength(command.prompt) > RESULT_LIMIT)
-      throw new RuntimeTaskRejectedError("Codex task exceeds 64 KiB");
-    if (this.managed)
-      throw new RuntimeTaskRejectedError(
-        "Codex managed task already in progress",
-      );
-    const round = command.round ?? this.round + 1;
-    if (!Number.isSafeInteger(round) || round <= this.round)
-      throw new RuntimeTaskRejectedError("Invalid Codex managed round");
-    let releaseSubmission!: () => void;
-    const submitted = new Promise<void>((resolve) => {
-      releaseSubmission = resolve;
-    });
-    const managed: ManagedTurn = {
-      round,
-      sequence: ++this.replySequence,
-      submitted,
-      releaseSubmission,
-      cancel: false,
-      interruptSent: false,
-      dispatched: false,
-      finishing: false,
-      early: [],
-      final: "",
-      review: codexConfig(this.options).runtime_args.includes("review"),
-      fallback: "",
-      truncated: false,
-      items: new Set(),
-      tools: 0,
-      compactions: 0,
-      baseline: { ...this.latestUsage?.total },
-    };
-    this.managed = managed; // Attachments wait until turn/start has settled.
-    try {
-      await this.exclusiveCheck();
-      managed.baseline = { ...this.latestUsage?.total };
-      this.round = round;
-      if (managed.cancel) {
-        this.managed = undefined;
-        this.stats(managed);
-        this.emit("session_state", { state: "idle", round });
-        this.emit("completed", {
-          round,
-          resultSequence: managed.sequence,
-          result: "",
-          truncated: false,
-          canceled: true,
-        });
-        return;
-      }
-      const control = this.requireConnected();
-      // Only accepted dispatch supersedes native hydration. A rejected or
-      // canceled preflight must not discard a valid pending native reply.
-      if (this.nativeInteraction) {
-        this.rememberInteraction(this.nativeInteraction.id);
-        this.nativeInteraction = undefined;
-      }
-      managed.dispatched = true;
-      const method = managed.review ? "review/start" : "turn/start";
-      const response = await control.request<{
-        turn: NativeTurn;
-      }>(method, {
-        threadId: this.threadId,
-        ...(managed.review
-          ? { target: command.runtimeParams?.review_target, delivery: "inline" }
-          : { input: input(command.prompt) }),
-      });
-      if (typeof response?.turn?.id !== "string") {
-        this.disconnect(new Error(`Incompatible Codex ${method} response`));
-        throw new Error("Missing Codex turnId");
-      }
-      managed.id = response.turn.id;
-      this.rememberInteraction(managed.id);
-      this.emit("started", { round, turnId: managed.id });
-      this.emit("session_state", {
-        state: "running",
-        round,
-        turnId: managed.id,
-      });
-      this.stats(managed);
-      for (const [method, params] of managed.early.splice(0))
-        this.notification(method, params);
-      if (!managed.finishing) await this.interrupt(managed);
-    } catch (error) {
-      if (this.managed === managed && !managed.finishing)
-        this.managed = undefined;
-      throw error;
-    } finally {
-      managed.releaseSubmission();
-    }
-  }
-  private async interrupt(managed: ManagedTurn): Promise<void> {
-    if (
-      !managed.cancel ||
-      !managed.id ||
-      managed.interruptSent ||
-      managed.finishing
-    )
+      !current.cancel ||
+      !current.id ||
+      current.interruptSent ||
+      current.finishing
+    ) {
       return;
-    managed.interruptSent = true;
-    await this.requireConnected().request("turn/interrupt", {
-      threadId: this.threadId,
-      turnId: managed.id,
+    }
+    current.interruptSent = true;
+    await requireConnected().request("turn/interrupt", {
+      threadId,
+      turnId: current.id,
     });
     // Only turn/completed(status=interrupted) confirms cancellation.
-  }
-  private notification(method: string, raw: Record<string, unknown>): void {
-    const params = raw as NativeEvent;
-    if (!params || params.threadId !== this.threadId || !this.connected) return;
-    if (method === "thread/tokenUsage/updated" && params.tokenUsage)
-      this.latestUsage = params.tokenUsage;
-    const managed = this.managed;
-    const turnId = params.turnId ?? params.turn?.id;
-    if (method === "thread/status/changed" && params.status?.type === "idle")
-      this.nativeTurnId = undefined;
-    if (!managed) {
-      this.nativeNotification(method, params);
-      // Backend idle is not publication completion: hydration still owns the
-      // native result. completeNative publishes idle after session_update.
-      if (
-        method === "thread/status/changed" &&
-        !(params.status?.type === "idle" && this.nativeInteraction?.finishing)
-      )
-        this.emit("session_state", {
-          state: params.status?.type === "active" ? "interactive" : "idle",
-          activity:
-            params.status?.type === "active" ? "Native Codex turn" : undefined,
-        });
-      return;
-    }
-    if (method === "runtime/blocked") {
-      this.emit("blocked", {
-        round: managed.round,
-        turnId,
-        requestMethod: params.requestMethod,
-        error: "Interactive Codex request rejected by headless runtime",
-      });
-      this.emit("activity", {
-        round: managed.round,
-        toolName: params.requestMethod,
-        event: "blocked",
-      });
-      return;
-    }
-    if (!managed.id) {
-      if (
-        !turnId ||
-        ![
-          "turn/started",
-          "turn/completed",
-          "item/started",
-          "item/completed",
-          "thread/tokenUsage/updated",
-        ].includes(method)
-      )
-        return;
-      if (managed.early.length >= 64) {
-        this.disconnect(new Error("Codex startup event buffer exceeded"));
-        return;
-      }
-      managed.early.push([method, raw]);
-      return;
-    }
-    if (turnId !== managed.id) {
-      this.nativeNotification(method, params);
-      return; // Native turns never belong to a managed round.
-    }
-    if (managed.finishing) return;
-    if (method === "item/started" || method === "item/completed") {
-      this.cacheItem(managed, params.item);
-      const tool = params.item?.type;
-      if (
-        tool &&
-        ![
-          "agentMessage",
-          "userMessage",
-          "reasoning",
-          "enteredReviewMode",
-          "exitedReviewMode",
-        ].includes(tool)
-      )
-        this.emit("activity", {
-          round: managed.round,
-          turnId,
-          toolName: tool,
-          event:
-            method === "item/started"
-              ? "tool_execution_start"
-              : "tool_execution_end",
-        });
-    }
-    if (method === "thread/tokenUsage/updated") {
-      managed.usage = params.tokenUsage;
-      this.stats(managed);
-    }
-    if (method === "turn/completed" && params.turn) {
-      managed.finishing = true;
-      void this.complete(managed, params.turn).catch((error) =>
-        this.disconnect(error),
-      );
-    }
-  }
-  private rememberInteraction(id: string): void {
-    this.interactionHistory.add(id);
-    if (this.interactionHistory.size > INTERACTION_HISTORY_LIMIT) {
-      const oldest = this.interactionHistory.values().next().value;
-      if (oldest !== undefined) this.interactionHistory.delete(oldest);
-    }
-  }
-  private nativeNotification(method: string, params: NativeEvent): void {
-    const id = params.turnId ?? params.turn?.id;
-    if (
-      !id ||
-      this.interactionHistory.has(id) ||
-      ![
-        "turn/started",
-        "turn/completed",
-        "item/started",
-        "item/completed",
-      ].includes(method)
-    )
-      return;
-    // Retry/error notifications are not turn completion. Only terminal turn
-    // statuses can publish a result, even if a final item arrived earlier.
-    if (
-      method === "turn/completed" &&
-      !["completed", "interrupted", "failed"].includes(
-        params.turn?.status ?? "",
-      )
-    )
-      return;
-    let interaction = this.nativeInteraction;
-    if (interaction?.id !== id) {
-      // A late item/completion from another turn must not replace a newer
-      // active turn. A new turn/started is the authoritative ordering signal.
-      if (interaction && this.nativeTurnId && method !== "turn/started") {
-        this.rememberInteraction(id);
-        return;
-      }
-      if (interaction) this.rememberInteraction(interaction.id);
-      interaction = { id, sequence: ++this.replySequence, finishing: false };
-      this.nativeInteraction = interaction;
-    }
-    if (interaction.finishing) return;
-    if (method === "turn/started") this.nativeTurnId = id;
-    if (method === "item/started" || method === "item/completed")
-      this.cacheNativeItem(interaction, params.item);
-    if (method === "turn/completed" && params.turn) {
-      interaction.finishing = true;
-      this.rememberInteraction(id);
-      if (this.nativeTurnId === id) this.nativeTurnId = undefined;
-      void this.completeNative(interaction, params.turn);
-    }
-  }
-  private cacheNativeItem(
-    interaction: NativeInteraction,
-    item: NativeItem | undefined,
-  ): void {
-    if (!item) return;
-    if (item.type === "enteredReviewMode") interaction.reviewing = true;
-    if (item.type === "exitedReviewMode" && typeof item.review === "string")
-      interaction.review = bounded(item.review);
-    if (item.type === "agentMessage" && typeof item.text === "string") {
-      if (item.phase === "final_answer") interaction.final = bounded(item.text);
-      else interaction.fallback = bounded(item.text);
-    }
-  }
-  private async completeNative(
-    interaction: NativeInteraction,
-    turn: NativeTurn,
-  ): Promise<void> {
-    for (const item of turn.items ?? [])
-      this.cacheNativeItem(interaction, item);
-    let hydrationError: string | undefined;
-    if (
-      turn.itemsView !== "full" &&
-      interaction.review === undefined &&
-      (interaction.reviewing || interaction.final === undefined)
-    ) {
-      try {
-        let cursor: string | undefined;
-        const cursors = new Set<string>();
-        for (let page = 0; page < 64; page++) {
-          const result = await this.requireConnected().request<{
-            data: Array<{ item: NativeItem }>;
-            nextCursor?: string | null;
-          }>("thread/items/list", {
-            threadId: this.threadId,
-            turnId: interaction.id,
-            limit: 100,
-            sortDirection: "asc",
-            cursor,
-          });
-          if (!this.connected || this.nativeInteraction !== interaction) return;
-          if (!Array.isArray(result?.data))
-            throw new Error("Invalid Codex item page");
-          for (const entry of result.data)
-            this.cacheNativeItem(interaction, entry.item);
-          if (!result.nextCursor) break;
-          if (cursors.has(result.nextCursor) || page === 63)
-            throw new Error("Codex item pagination limit exceeded");
-          cursors.add(result.nextCursor);
-          cursor = result.nextCursor;
-        }
-      } catch (error) {
-        hydrationError =
-          error instanceof Error
-            ? error.message
-            : "Codex item hydration failed";
-      }
-    }
-    if (!this.connected || this.nativeInteraction !== interaction) return;
-    const result =
-      interaction.review ?? interaction.final ?? interaction.fallback;
-    const error =
-      turn.status === "failed"
-        ? String(turn.error?.message ?? "Codex turn failed")
-        : hydrationError;
-    const update: SessionUpdate = {
-      type: "session_update",
-      interactionId: interaction.id,
-      sequence: interaction.sequence,
-      response: result?.text ?? "",
-      outcome:
-        turn.status === "interrupted"
-          ? "aborted"
-          : error !== undefined
-            ? "error"
-            : "completed",
-      truncated: result?.truncated ?? false,
-      ...(error === undefined ? {} : { error }),
-    };
-    this.emit(update.type, { ...update });
-    interaction.finishing = false;
-    // Emission can synchronously start a new round/turn or close the session.
-    // Never let an old hydration overwrite that newer lifecycle.
-    if (
-      this.connected &&
-      this.nativeInteraction === interaction &&
-      !this.managed &&
-      !this.nativeTurnId
-    )
-      this.emit("session_state", { state: "idle" });
-  }
-  private cacheItem(managed: ManagedTurn, item: NativeItem | undefined): void {
-    if (!item || typeof item.id !== "string") return;
-    if (!managed.items.has(item.id)) {
-      if (managed.items.size >= 4096)
-        throw new Error("Codex managed item limit exceeded");
-      managed.items.add(item.id);
-      if (
-        [
-          "commandExecution",
-          "fileChange",
-          "mcpToolCall",
-          "dynamicToolCall",
-          "collabAgentToolCall",
-          "webSearch",
-          "imageGeneration",
-        ].includes(item.type)
-      )
-        managed.tools++;
-      if (item.type === "contextCompaction") managed.compactions++;
-    }
-    if (item.type === "exitedReviewMode" && typeof item.review === "string") {
-      const result = bounded(item.review);
-      managed.reviewResult = result.text;
-      managed.truncated ||= result.truncated;
-    }
-    if (item.type === "agentMessage" && typeof item.text === "string") {
-      const result = bounded(item.text);
-      if (item.phase === "final_answer") managed.final = result.text;
-      else managed.fallback = result.text;
-      managed.truncated ||= result.truncated;
-    }
-  }
-  private stats(managed: ManagedTurn): void {
-    const delta: Record<string, number> = {};
-    for (const [key, value] of Object.entries(managed.usage?.total ?? {})) {
-      if (Number.isSafeInteger(value) && value >= 0)
-        delta[key] = Math.max(0, value - (managed.baseline[key] ?? 0));
-    }
-    const totalTokens =
-      Math.max(0, (delta.inputTokens ?? 0) - (delta.cachedInputTokens ?? 0)) +
-      (delta.outputTokens ?? 0);
-    this.emit("stats", {
-      round: managed.round,
-      turnId: managed.id,
-      turnCount: managed.finishing ? 1 : 0,
-      toolUses: managed.tools,
-      compactionCount: managed.compactions,
-      totalTokens,
-      usage: managed.usage ? { ...managed.usage, delta } : undefined,
-    });
-  }
-  private async complete(
-    managed: ManagedTurn,
-    turn: NativeTurn,
-  ): Promise<void> {
-    for (const item of turn.items ?? []) this.cacheItem(managed, item);
-    let hydrationError: string | undefined;
-    if (
-      turn.itemsView !== "full" &&
-      (managed.review ? managed.reviewResult === undefined : !managed.final)
-    ) {
-      try {
-        let cursor: string | undefined;
-        const cursors = new Set<string>();
-        for (let page = 0; page < 64; page++) {
-          const result = await this.requireConnected().request<{
-            data: Array<{ item: NativeItem }>;
-            nextCursor?: string | null;
-          }>("thread/items/list", {
-            threadId: this.threadId,
-            turnId: managed.id,
-            limit: 100,
-            sortDirection: "asc",
-            cursor,
-          });
-          if (!Array.isArray(result?.data))
-            throw new Error("Invalid Codex item page");
-          for (const entry of result.data) this.cacheItem(managed, entry.item);
-          if (!result.nextCursor) break;
-          if (cursors.has(result.nextCursor) || page === 63)
-            throw new Error("Codex item pagination limit exceeded");
-          cursors.add(result.nextCursor);
-          cursor = result.nextCursor;
-        }
-      } catch (error) {
-        hydrationError =
-          error instanceof Error
-            ? error.message
-            : "Codex item hydration failed";
-      }
-    }
-    if (this.managed !== managed || !this.connected) return;
-    this.stats(managed);
-    this.managed = undefined;
-    this.emit("session_state", {
-      state:
-        this.nativeTurnId || this.nativeInteraction?.finishing
-          ? "interactive"
-          : "idle",
-      activity:
-        this.nativeTurnId || this.nativeInteraction?.finishing
-          ? "Native Codex turn"
-          : undefined,
-      round: managed.round,
-      turnId: managed.id,
-    });
-    this.emit("completed", {
-      round: managed.round,
-      turnId: managed.id,
-      resultSequence: managed.sequence,
-      result: managed.reviewResult ?? (managed.final || managed.fallback),
-      truncated: managed.truncated,
-      canceled: turn.status === "interrupted",
-      error:
-        turn.status === "failed"
-          ? String(turn.error?.message ?? "Codex turn failed")
-          : hydrationError,
-    });
-  }
-  async inspect(): Promise<boolean> {
-    if (!this.connected) return false;
+  };
+
+  const openAttachment = async (): Promise<TerminalHandle> => {
     try {
-      await this.requireConnected().request("thread/read", {
-        threadId: this.threadId,
-        includeTurns: false,
-      });
-      return this.connected;
-    } catch {
-      return false;
-    }
-  }
-  attachment(): Promise<TerminalHandle> {
-    if (this.attachmentPromise) return this.attachmentPromise;
-    try {
-      this.requireConnected();
-    } catch (error) {
-      return Promise.reject(error);
-    }
-    // A remote TUI may interact with an accepted managed turn, but must not
-    // create a native turn before the managed turn/start dispatch is settled.
-    const submitted = this.managed?.submitted;
-    const launch = () => {
-      this.requireConnected();
-      this.attaching = true;
-      return this.openAttachment();
-    };
-    const pending = (submitted ? submitted.then(launch) : launch()).finally(
-      () => {
-        this.attaching = false;
-        if (this.attachmentPromise === pending)
-          this.attachmentPromise = undefined;
-      },
-    );
-    this.attachmentPromise = pending;
-    return pending;
-  }
-  private async openAttachment(): Promise<TerminalHandle> {
-    try {
-      if (this.nativeTerminal) {
-        if ((await this.host.mux.inspect(this.nativeTerminal)).alive) {
-          this.requireConnected();
-          return this.nativeTerminal;
+      if (nativeTerminal) {
+        if ((await host.mux.inspect(nativeTerminal)).alive) {
+          requireConnected();
+          return nativeTerminal;
         }
-        const previous = this.nativeTerminal;
-        await this.host.mux.destroy(previous);
-        if (this.nativeTerminal === previous) this.nativeTerminal = undefined;
+        const previous = nativeTerminal;
+        await host.mux.destroy(previous);
+        if (nativeTerminal === previous) nativeTerminal = undefined;
       }
-      this.requireConnected();
-      const threadId = this.threadId;
+      requireConnected();
       if (!threadId) throw new Error("Codex attachment thread missing");
-      const terminal = await this.host.mux.start({
-        agentId: this.options.id,
-        agentType: this.options.agent?.name,
-        cwd: this.options.cwd,
+      const terminal = await host.mux.start({
+        agentId: options.id,
+        agentType: options.agent?.name,
+        cwd: options.cwd,
         argv: [
-          this.options.executable ?? "codex",
+          options.executable ?? "codex",
           "--remote",
-          this.url,
+          url,
           "--remote-auth-token-env",
           "PI_KITS_CODEX_TOKEN",
           "resume",
           threadId,
         ],
-        env: { PI_KITS_CODEX_TOKEN: this.token, PI_KITS_SUBAGENT_WORKER: "1" },
+        env: { PI_KITS_CODEX_TOKEN: token, PI_KITS_SUBAGENT_WORKER: "1" },
       });
       // Take ownership before checking lifecycle state: even a late terminal
       // must remain available to close(), including when destroy fails.
-      this.nativeTerminal = terminal;
-      if (!this.connected)
+      nativeTerminal = terminal;
+      if (!isConnected()) {
         throw new Error(
           "Codex session closed or disconnected during attachment",
         );
+      }
       return terminal;
     } catch (error) {
       if (error instanceof TerminalStartError) {
-        this.nativeTerminal = error.terminal;
+        nativeTerminal = error.terminal;
         // An in-flight close waits for us and owns cleanup/error propagation.
-        if (!this.closed) {
-          await this.host.mux.destroy(error.terminal);
-          if (this.nativeTerminal === error.terminal)
-            this.nativeTerminal = undefined;
+        if (!closed) {
+          await host.mux.destroy(error.terminal);
+          if (nativeTerminal === error.terminal) nativeTerminal = undefined;
         }
       }
       throw error;
     }
-  }
-  close(): Promise<void> {
-    this.closed = true;
-    this.ready = false;
-    this.closePromise ??= (async () => {
-      await this.startPromise?.catch(() => {});
-      await this.attachmentPromise?.catch(() => {});
-      await this.cleanup();
-    })().catch((error) => {
-      this.closePromise = undefined;
-      throw error;
-    });
-    return this.closePromise;
-  }
-  private cleanup(): Promise<void> {
-    const next = this.cleanupTail
-      .catch(() => {})
-      .then(() => this.cleanupResources());
-    this.cleanupTail = next;
-    return next;
-  }
-  private async cleanupResources(): Promise<void> {
-    const rpc = this.rpc;
-    this.rpc = undefined;
-    rpc?.close();
-    const child = this.child;
-    if (child && child.exitCode === null && child.signalCode === null) {
-      // Guardian kill() requests group cleanup over IPC; even SIGKILL is not
-      // proof of exit. Never OS-kill the guardian and orphan its backend.
-      await new Promise<void>((resolve, reject) => {
-        let timer: ReturnType<typeof setTimeout>;
-        const exited = () => {
-          clearTimeout(timer);
-          resolve();
-        };
-        const failed = (cause: unknown) => {
-          clearTimeout(timer);
-          child.removeListener("exit", exited);
-          reject(cause);
-        };
-        child.once("exit", exited);
-        timer = setTimeout(() => {
-          timer = setTimeout(
-            () =>
-              failed(new Error("Codex guardian exit unconfirmed; retry close")),
-            500,
-          );
-          try {
-            child.kill("SIGKILL");
-          } catch (cause) {
-            failed(cause);
-          }
-        }, 500);
-        try {
-          child.kill("SIGTERM");
-        } catch (cause) {
-          failed(cause);
-        }
-      });
-    }
-    // Retain child, credentials and directory on an unconfirmed stop so the
-    // manager cannot release its concurrency claim and retries keep ownership.
-    if (this.child === child) this.child = undefined;
-    const terminal = this.nativeTerminal;
-    let terminalError: unknown;
-    if (terminal) {
+  };
+
+  return {
+    capabilities,
+    get connected() {
+      return isConnected();
+    },
+    get terminal() {
+      return nativeTerminal;
+    },
+    start() {
+      if (closed) return Promise.reject(new Error("Codex session closed"));
+      startPromise ??= startBackend();
+      return startPromise;
+    },
+    async send(rawCommand: RuntimeCommand) {
+      let command: RuntimeCommand;
       try {
-        await this.host.mux.destroy(terminal);
-        if (this.nativeTerminal === terminal) this.nativeTerminal = undefined;
-      } catch (error) {
-        terminalError = error;
+        command = parseCodexTask(rawCommand, options);
+      } catch (cause) {
+        throw new RuntimeTaskRejectedError(
+          cause instanceof Error ? cause.message : "Invalid Codex task",
+          { cause },
+        );
       }
-    }
-    const dir = this.dir;
-    if (dir) {
-      await this.deps.removeDirectory(dir);
-      this.dir = undefined;
-    }
-    this.token = "";
-    if (terminalError) throw terminalError;
-  }
+      const controlRpc = requireConnected();
+      if (command.type === "cancel") {
+        const current = managedForRound(command.round);
+        if (!current) return;
+        current.cancel = true;
+        await interrupt(current);
+        return;
+      }
+      if (command.type === "steer") {
+        const current = managedForRound(command.round);
+        if (!current?.id || current.finishing) {
+          throw new Error("No matching managed Codex turn to steer");
+        }
+        await controlRpc.request("turn/steer", {
+          threadId,
+          expectedTurnId: current.id,
+          input: textInput(command.message),
+        });
+        return;
+      }
+      if (
+        command.instructions?.systemPrompt !== undefined &&
+        command.instructions.systemPrompt !== systemPrompt
+      ) {
+        throw new RuntimeTaskRejectedError(
+          "Codex developerInstructions are fixed at thread creation; supply agent.systemPrompt",
+        );
+      }
+      if (Buffer.byteLength(command.prompt) > MAX_RESULT_BYTES) {
+        throw new RuntimeTaskRejectedError("Codex task exceeds 64 KiB");
+      }
+      if (managed) {
+        throw new RuntimeTaskRejectedError(
+          "Codex managed task already in progress",
+        );
+      }
+      const round = command.round ?? lastRound + 1;
+      if (!Number.isSafeInteger(round) || round <= lastRound) {
+        throw new RuntimeTaskRejectedError("Invalid Codex managed round");
+      }
+      let releaseSubmission!: () => void;
+      const submitted = new Promise<void>((resolve) => {
+        releaseSubmission = resolve;
+      });
+      const current: ManagedTurn = {
+        round,
+        sequence: ++replySequence,
+        submitted,
+        releaseSubmission,
+        cancel: false,
+        interruptSent: false,
+        dispatched: false,
+        finishing: false,
+        early: [],
+        final: "",
+        review: codexConfig(options).runtime_args.includes("review"),
+        fallback: "",
+        truncated: false,
+        items: new Set(),
+        tools: 0,
+        compactions: 0,
+        baseline: { ...latestUsage?.total },
+      };
+      managed = current; // Attachments wait until turn/start has settled.
+      try {
+        await exclusiveCheck();
+        current.baseline = { ...latestUsage?.total };
+        lastRound = round;
+        if (current.cancel) {
+          managed = undefined;
+          emit(buildStatsEvent(current));
+          emit({ type: "session_state", state: "idle", round });
+          emit({
+            type: "completed",
+            round,
+            resultSequence: current.sequence,
+            result: "",
+            truncated: false,
+            canceled: true,
+          });
+          return;
+        }
+        const control = requireConnected();
+        // Only accepted dispatch supersedes native hydration. A rejected or
+        // canceled preflight must not discard a valid pending native reply.
+        if (nativeInteraction) {
+          rememberInteraction(nativeInteraction.id);
+          nativeInteraction = undefined;
+        }
+        current.dispatched = true;
+        const method = current.review ? "review/start" : "turn/start";
+        const response = await control.request<{ turn: NativeTurn }>(method, {
+          threadId,
+          ...(current.review
+            ? {
+                target: command.runtimeParams?.review_target,
+                delivery: "inline",
+              }
+            : { input: textInput(command.prompt) }),
+        });
+        if (typeof response?.turn?.id !== "string") {
+          disconnect(new Error(`Incompatible Codex ${method} response`));
+          throw new Error("Missing Codex turnId");
+        }
+        current.id = response.turn.id;
+        rememberInteraction(current.id);
+        emit({ type: "started", round, turnId: current.id });
+        emit({
+          type: "session_state",
+          state: "running",
+          round,
+          turnId: current.id,
+        });
+        emit(buildStatsEvent(current));
+        for (const [earlyMethod, earlyParams] of current.early.splice(0)) {
+          notification(earlyMethod, earlyParams);
+        }
+        if (!current.finishing) await interrupt(current);
+      } catch (error) {
+        if (managed === current && !current.finishing) managed = undefined;
+        throw error;
+      } finally {
+        current.releaseSubmission();
+      }
+    },
+    async inspect() {
+      if (!isConnected()) return false;
+      try {
+        await requireConnected().request("thread/read", {
+          threadId,
+          includeTurns: false,
+        });
+        return isConnected();
+      } catch {
+        return false;
+      }
+    },
+    attachment() {
+      if (attachmentPromise) return attachmentPromise;
+      try {
+        requireConnected();
+      } catch (error) {
+        return Promise.reject(error);
+      }
+      // A remote TUI may interact with an accepted managed turn, but must not
+      // create a native turn before the managed turn/start dispatch is settled.
+      const submitted = managed?.submitted;
+      const launch = () => {
+        requireConnected();
+        attaching = true;
+        return openAttachment();
+      };
+      const pending = (submitted ? submitted.then(launch) : launch()).finally(
+        () => {
+          attaching = false;
+          if (attachmentPromise === pending) attachmentPromise = undefined;
+        },
+      );
+      attachmentPromise = pending;
+      return pending;
+    },
+    close() {
+      closed = true;
+      ready = false;
+      closePromise ??= (async () => {
+        await startPromise?.catch(() => {});
+        await attachmentPromise?.catch(() => {});
+        await cleanup();
+      })().catch((error) => {
+        closePromise = undefined;
+        throw error;
+      });
+      return closePromise;
+    },
+  };
+}
+
+export function createCodexRuntime(
+  dependencies: Partial<CodexDependencies> = {},
+) {
+  const deps: CodexDependencies = { ...defaults, ...dependencies };
+  return {
+    id: "codex" as const,
+    displayName: "Codex",
+    capabilities,
+    parseConfig: parseCodexConfig,
+    parseCallConfig: parseCodexCallConfig,
+    parseTask: parseCodexTask,
+    validate: validateCodexOptions,
+    create(options: RuntimeOptions, host: RuntimeHost): RuntimeSession {
+      validateCodexOptions(options);
+      return createCodexSession(
+        { ...options, runtimeConfig: codexConfig(options) },
+        host,
+        deps,
+      );
+    },
+  } satisfies AgentRuntime;
 }

@@ -10,9 +10,9 @@ import type {
 import { useAgentDir } from "../../tests/helpers/agent-dir.ts";
 import { parseAgentDefinition } from "./agents.ts";
 import { registerSubagents } from "./index.ts";
-import { type SpawnOptions, SubagentManager } from "./manager.ts";
+import { createSubagentManager, type SpawnOptions } from "./manager.ts";
 import type { MuxAdapter } from "./mux/index.ts";
-import { CodexRuntime } from "./runtime/codex/index.ts";
+import { createCodexRuntime } from "./runtime/codex/index.ts";
 
 function definition(fields: string) {
   return parseAgentDefinition(
@@ -58,7 +58,7 @@ test("agent parser reads generic fields and retains nested runtime config withou
 test("runtime names are validated by the registry, not hardcoded in the parser", async () => {
   const agent = definition("runtime: future-runtime");
   assert.equal(agent.runtime, "future-runtime");
-  const manager = new SubagentManager({} as MuxAdapter);
+  const manager = createSubagentManager({} as MuxAdapter);
   try {
     assert.throws(
       () =>
@@ -77,7 +77,7 @@ test("runtime names are validated by the registry, not hardcoded in the parser",
 });
 
 test("Codex ignores Pi-owned runtime fields, including values invalid for Pi", () => {
-  const runtime = new CodexRuntime();
+  const runtime = createCodexRuntime();
   for (const prefix of ["", "runtime: codex\n"]) {
     for (const fields of [
       "prompt_mode: replace",
@@ -119,12 +119,24 @@ test("Codex does not inherit Pi model/thinking or read parent context, and front
       return "max";
     },
   } as unknown as ExtensionAPI;
-  registerSubagents(pi, {} as MuxAdapter);
   let latest: SpawnOptions | undefined;
-  t.mock.method(SubagentManager.prototype, "spawn", (options: SpawnOptions) => {
-    latest = options;
-    return { id: "child", status: "queued", description: options.description };
-  });
+  registerSubagents(
+    pi,
+    {} as MuxAdapter,
+    undefined,
+    undefined,
+    (adapter, opts) => ({
+      ...createSubagentManager(adapter, opts),
+      spawn(options: SpawnOptions) {
+        latest = options;
+        return {
+          id: "child",
+          status: "queued" as const,
+          description: options.description,
+        };
+      },
+    }),
+  );
   const ctx = {
     cwd,
     mode: "print",

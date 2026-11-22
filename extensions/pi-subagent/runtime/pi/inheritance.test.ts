@@ -4,7 +4,7 @@ import { SessionManager } from "@earendil-works/pi-coding-agent";
 import { parseAgentDefinition } from "../../agents.ts";
 import type { RuntimeOptions } from "../index.ts";
 import { parsePiCallConfig, parsePiConfig } from "./config.ts";
-import { PiRuntime } from "./index.ts";
+import { createPiRuntime } from "./index.ts";
 
 const options: RuntimeOptions = { id: "inherit-test", cwd: "/tmp" };
 
@@ -80,7 +80,7 @@ test("Pi prepareSpawn never accesses parent context when inheritance is false or
   };
   for (const runtimeConfig of [{}, { inherit_context: false }]) {
     const original = { ...options, runtimeConfig, context };
-    const prepared = new PiRuntime().prepareSpawn(original);
+    const prepared = createPiRuntime().prepareSpawn(original);
     assert.equal(prepared.parentSession, undefined);
     assert.equal(prepared.context, undefined);
     assert.equal(original.context, context);
@@ -95,12 +95,12 @@ test("Pi prepareSpawn captures an independent snapshot immediately and drops hos
     runtimeConfig: { inherit_context: true },
     context: parent,
   };
-  const runtime = new PiRuntime();
+  const runtime = createPiRuntime();
   runtime.validate(original);
   assert.equal(getBranch.mock.callCount(), 0);
   const prepared = runtime.prepareSpawn(original);
   assert.equal(getBranch.mock.callCount(), 1);
-  const snapshot = prepared.parentSession;
+  const snapshot = prepared.parentSession as { entries: unknown[] };
   assert.ok(snapshot);
   assert.equal(prepared.context, undefined);
   assert.equal(original.context, parent);
@@ -123,7 +123,7 @@ test("Pi prepareSpawn requires valid host session context only when capture is r
   ]) {
     assert.throws(
       () =>
-        new PiRuntime().prepareSpawn({
+        createPiRuntime().prepareSpawn({
           ...options,
           runtimeConfig: { inherit_context: true },
           context,
@@ -145,7 +145,7 @@ test("Pi prepareSpawn preserves explicit trusted snapshots regardless of inherit
     { inherit_context: false },
     { inherit_context: true },
   ]) {
-    const prepared = new PiRuntime().prepareSpawn({
+    const prepared = createPiRuntime().prepareSpawn({
       ...options,
       runtimeConfig,
       parentSession,
@@ -162,7 +162,7 @@ test("Pi prepareSpawn reads agent inheritance config unless session config overr
     "/agents/test.md",
     "project",
   );
-  const runtime = new PiRuntime();
+  const runtime = createPiRuntime();
   const prepared = runtime.prepareSpawn({
     ...options,
     agent,
@@ -185,7 +185,7 @@ test("Pi prepareSpawn reads agent inheritance config unless session config overr
 
 test("Pi resume and session creation never recapture the prepared parent", async (t) => {
   const parent = parentSession();
-  const runtime = new PiRuntime();
+  const runtime = createPiRuntime();
   const prepared = runtime.prepareSpawn({
     ...options,
     runtimeConfig: { inherit_context: true },
@@ -218,7 +218,7 @@ test("Pi resume and session creation never recapture the prepared parent", async
 });
 
 test("Pi capture of an empty branch starts fresh without retaining context or recapturing", async () => {
-  const runtime = new PiRuntime();
+  const runtime = createPiRuntime();
   const context = SessionManager.inMemory("/tmp");
   const prepared = runtime.prepareSpawn({
     ...options,

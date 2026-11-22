@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
-  HerdrAppAdapter,
+  createHerdrAppAdapter,
   HerdrAppError,
   type HerdrAppOptions,
   type HerdrAppRunner,
@@ -10,6 +10,7 @@ import {
   runHerdrApp,
 } from "./herdr-app.ts";
 import {
+  type MuxAdapter,
   type StartOptions,
   type TerminalHandle,
   TerminalStartError,
@@ -176,8 +177,8 @@ class FakeCore {
     assert.fail(`Unexpected RPC: ${method}`);
   }
 
-  adapter(options: HerdrAppOptions = {}): HerdrAppAdapter {
-    return new HerdrAppAdapter({
+  adapter(options: HerdrAppOptions = {}): MuxAdapter {
+    return createHerdrAppAdapter({
       runner: this.runner,
       env: baseEnv,
       binPath: binary,
@@ -207,7 +208,7 @@ function code(expected: string) {
 }
 
 async function failedStart(
-  adapter: HerdrAppAdapter,
+  adapter: MuxAdapter,
   expected: string,
 ): Promise<TerminalHandle> {
   let terminal: TerminalHandle | undefined;
@@ -399,7 +400,7 @@ test("terminal handles are adapter-scoped; foreign operations make no RPC", asyn
     await assert.rejects(other.inspect(handle), code("unowned_terminal"));
     await assert.rejects(other.destroy(handle), code("unowned_terminal"));
     await assert.rejects(
-      other.open_view({ terminal: handle, direction: "right" }),
+      other.open_view({ terminal: handle }),
       code("unowned_terminal"),
     );
   }
@@ -664,12 +665,8 @@ test("HC-only tab requests use the parent space, confirm shared layout, and neve
   const adapter = fake.adapter({ warn: (message) => warnings.push(message) });
   const terminal = await adapter.start(startOptions);
   const otherTerminal = await adapter.start(startOptions);
-  const first = await adapter.open_view({ terminal, direction: "right" });
-  const second = await adapter.open_view({
-    terminal: otherTerminal,
-    direction: "down",
-    relativeTo: first,
-  });
+  const first = await adapter.open_view({ terminal });
+  const second = await adapter.open_view({ terminal: otherTerminal });
   assert.notEqual(first.id, second.id);
   const a = fake.facts("t1");
   const b = fake.facts("t2");
@@ -722,7 +719,7 @@ test("pending requests can be cancelled without any client or published tab", as
     },
   });
   const terminal = await adapter.start(startOptions);
-  const view = await adapter.open_view({ terminal, direction: "right" });
+  const view = await adapter.open_view({ terminal });
   await adapter.close_view(view);
   assert.deepEqual(await adapter.inspect(terminal), { alive: true });
   assert.equal(fake.facts().keep, false);
@@ -733,7 +730,7 @@ test("inspection and close never follow placement changed by another client", as
   const fake = new FakeCore();
   const adapter = fake.adapter({ warn: () => {} });
   const terminal = await adapter.start(startOptions);
-  const view = await adapter.open_view({ terminal, direction: "right" });
+  const view = await adapter.open_view({ terminal });
   fake.publish();
   assert.deepEqual(await adapter.inspect_view(view), { alive: true });
   fake.facts().labels["herdr.tab"] = "tbforeign";
@@ -748,7 +745,7 @@ test("close retries CAS conflicts and preserves unrelated panes and document fie
   const fake = new FakeCore();
   const adapter = fake.adapter({ warn: () => {} });
   const terminal = await adapter.start(startOptions);
-  const view = await adapter.open_view({ terminal, direction: "right" });
+  const view = await adapter.open_view({ terminal });
   fake.publish();
   const tab = fake.document.spaces[0].tabs[0];
   tab.root = {
@@ -785,7 +782,7 @@ test("failed layout cleanup retains ownership after labels are cleared", async (
   const fake = new FakeCore();
   const adapter = fake.adapter({ warn: () => {} });
   const terminal = await adapter.start(startOptions);
-  const view = await adapter.open_view({ terminal, direction: "right" });
+  const view = await adapter.open_view({ terminal });
   fake.publish();
   fake.intercept = (call) =>
     call.method === "doc.set" ? failure("unavailable") : undefined;
@@ -802,7 +799,7 @@ test("layout cleanup survives runtime destruction before close or retry", async 
       const fake = new FakeCore();
       const adapter = fake.adapter({ warn: () => {} });
       const terminal = await adapter.start(startOptions);
-      const view = await adapter.open_view({ terminal, direction: "right" });
+      const view = await adapter.open_view({ terminal });
       fake.publish();
       if (failedFirst) {
         fake.intercept = (call) =>
@@ -832,14 +829,11 @@ test("lost keep reply rolls back only its placement and retry uses a fresh reque
     }
     return result;
   };
-  await assert.rejects(
-    adapter.open_view({ terminal, direction: "right" }),
-    code("timeout"),
-  );
+  await assert.rejects(adapter.open_view({ terminal }), code("timeout"));
   assert.equal(fake.facts().keep, false);
   assert.equal(fake.facts().labels["herdr.space"], "");
   assert.equal(fake.document.spaces[0].tabs.length, 0);
-  const view = await adapter.open_view({ terminal, direction: "right" });
+  const view = await adapter.open_view({ terminal });
   fake.publish();
   assert.deepEqual(await adapter.inspect_view(view), { alive: true });
 });
@@ -848,7 +842,7 @@ test("malformed shared layouts do not confirm an attachment", async () => {
   const fake = new FakeCore();
   const adapter = fake.adapter({ warn: () => {} });
   const terminal = await adapter.start(startOptions);
-  const view = await adapter.open_view({ terminal, direction: "right" });
+  const view = await adapter.open_view({ terminal });
   fake.intercept = (call) =>
     call.method === "doc.get"
       ? reply({ version: 1, value: { spaces: "invalid" } })
@@ -862,12 +856,12 @@ test("missing parent placement and changed terminal ownership reject before muta
   const terminal = await adapter.start(startOptions);
   fake.parentLabels = {};
   await assert.rejects(
-    adapter.open_view({ terminal, direction: "right" }),
+    adapter.open_view({ terminal }),
     code("parent_space_unavailable"),
   );
   assert.equal(fake.methods().includes("terminal.label"), false);
   fake.parentLabels = { "herdr.space": "spremote" };
-  const view = await adapter.open_view({ terminal, direction: "right" });
+  const view = await adapter.open_view({ terminal });
   fake.facts().labels[OWNER] = "foreign";
   fake.calls.length = 0;
   await assert.rejects(
@@ -957,7 +951,7 @@ test("runner exceptions, malformed RPC, and CLI errors are sanitized", async (t)
   ];
   for (const [index, [expected, result]] of cases.entries()) {
     await t.test(`${index}: ${expected}`, async () => {
-      const adapter = new HerdrAppAdapter({
+      const adapter = createHerdrAppAdapter({
         env: baseEnv,
         runner: async () => result(),
       });

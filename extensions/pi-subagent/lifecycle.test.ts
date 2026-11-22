@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { connect, type Socket } from "node:net";
 import { test } from "node:test";
 import { setTimeout as delay } from "node:timers/promises";
-import { SubagentManager } from "./manager.ts";
+import { createSubagentManager } from "./manager.ts";
 import {
   type MuxAdapter,
   type StartOptions,
@@ -76,7 +76,7 @@ function harness() {
 test("canceling one result waiter does not release another waiter's notification claim", async (t) => {
   const mux = harness();
   let notifications = 0;
-  const manager = new SubagentManager(mux.adapter, {
+  const manager = createSubagentManager(mux.adapter, {
     onComplete: () => {
       notifications += 1;
     },
@@ -96,7 +96,7 @@ test("canceling one result waiter does not release another waiter's notification
 
 test("running cancellation retains its queue slot until the worker settles", async (t) => {
   const mux = harness();
-  const manager = new SubagentManager(mux.adapter, { maxConcurrent: 1 });
+  const manager = createSubagentManager(mux.adapter, { maxConcurrent: 1 });
   t.after(() => manager.close());
   const first = manager.spawn({ ...task, keepAlive: true });
   const next = manager.spawn({ ...task, keepAlive: true });
@@ -127,7 +127,7 @@ test("shutdown awaits a mux startup and destroys its late-returning terminal", a
     await gate;
     return originalStart(options);
   };
-  const manager = new SubagentManager(mux.adapter);
+  const manager = createSubagentManager(mux.adapter);
   const { id } = manager.spawn(task);
   await until(() => entered);
   const closing = manager.close();
@@ -139,7 +139,7 @@ test("shutdown awaits a mux startup and destroys its late-returning terminal", a
 
 test("oversized task commands fail before creating a worker", async () => {
   const mux = harness();
-  const manager = new SubagentManager(mux.adapter);
+  const manager = createSubagentManager(mux.adapter);
   assert.throws(
     () => manager.spawn({ ...task, prompt: "界".repeat(30_000) }),
     /64 KiB/,
@@ -156,7 +156,7 @@ test("IPC disconnect retains the slot until cleanup succeeds; stop retries failu
     if (!canDestroy) throw new Error("Server unavailable");
     await destroy(terminal);
   };
-  const manager = new SubagentManager(mux.adapter, { maxConcurrent: 1 });
+  const manager = createSubagentManager(mux.adapter, { maxConcurrent: 1 });
   t.after(async () => {
     canDestroy = true;
     await manager.close();
@@ -176,7 +176,7 @@ test("IPC disconnect retains the slot until cleanup succeeds; stop retries failu
 
 test("forced cancellation is stopped, not a disconnect error", async (t) => {
   const mux = harness();
-  const manager = new SubagentManager(mux.adapter, { cancelTimeoutMs: 1 });
+  const manager = createSubagentManager(mux.adapter, { cancelTimeoutMs: 1 });
   t.after(() => manager.close());
   const { id } = manager.spawn(task);
   await until(() => mux.prompts.includes(id));
@@ -198,7 +198,7 @@ test("concurrent view operations create one attachment and close it completely",
   mux.adapter.close_view = async (view) => {
     closed.push(view.id);
   };
-  const manager = new SubagentManager(mux.adapter);
+  const manager = createSubagentManager(mux.adapter);
   t.after(() => manager.close());
   const { id } = manager.spawn(task);
   await until(() => mux.prompts.includes(id));
@@ -215,7 +215,7 @@ test("concurrent view operations create one attachment and close it completely",
 
 test("blank prompts and steering fail before changing the worker", async (t) => {
   const mux = harness();
-  const manager = new SubagentManager(mux.adapter);
+  const manager = createSubagentManager(mux.adapter);
   t.after(() => manager.close());
   assert.throws(() => manager.spawn({ ...task, prompt: "  \n " }), /blank/);
   assert.deepEqual(mux.starts, []);
@@ -243,7 +243,7 @@ test("failed startup rollback retains its handle and queue slot for cleanup retr
     if (!canDestroy) throw new Error("Cleanup unavailable");
     await destroy(terminal);
   };
-  const manager = new SubagentManager(mux.adapter, { maxConcurrent: 1 });
+  const manager = createSubagentManager(mux.adapter, { maxConcurrent: 1 });
   t.after(async () => {
     canDestroy = true;
     await manager.close();

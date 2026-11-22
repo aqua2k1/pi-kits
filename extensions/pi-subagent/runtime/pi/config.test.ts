@@ -3,7 +3,7 @@ import { test } from "node:test";
 import type { AgentDefinition } from "../../agents.ts";
 import type { RuntimeCommand, RuntimeOptions } from "../index.ts";
 import { parsePiCallConfig, parsePiConfig, parsePiTask } from "./config.ts";
-import { PiRuntime } from "./index.ts";
+import { createPiRuntime } from "./index.ts";
 
 const options: RuntimeOptions = { id: "test", cwd: "/tmp" };
 const agent: AgentDefinition = {
@@ -183,7 +183,7 @@ test("Pi ignores and strips unowned config fields but validates the outer object
 });
 
 test("Pi call config splits static config from empty task params and merges per key", () => {
-  const runtime = new PiRuntime();
+  const runtime = createPiRuntime();
   assert.deepEqual(runtime.parseCallConfig({}, {}, "spawn"), {
     runtimeConfig: {},
     runtimeParams: {},
@@ -325,7 +325,7 @@ test("Pi call config ignores foreign fields on spawn/resume and still validates 
 test("Pi task parser preserves ordinary tasks and controls but strips foreign task params", () => {
   const command = { type: "task" as const, prompt: "Inspect files" };
   assert.equal(parsePiTask(command), command);
-  assert.equal(new PiRuntime().parseTask(command, options), command);
+  assert.equal(createPiRuntime().parseTask(command, options), command);
   assert.throws(
     () => parsePiTask({ type: "task", prompt: " " }),
     /must not be blank/,
@@ -348,7 +348,7 @@ test("Pi task parser preserves ordinary tasks and controls but strips foreign ta
     { type: "steer", message: "Focus on tests" },
     { type: "cancel" },
   ] as RuntimeCommand[]) {
-    assert.equal(new PiRuntime().parseTask(control, options), control);
+    assert.equal(createPiRuntime().parseTask(control, options), control);
   }
 });
 
@@ -370,7 +370,7 @@ test("Pi task tools use explicit allow minus deny, including empty tools, withou
     ...command,
     instructions: { systemPrompt: "Keep role", tools: ["read"] },
   };
-  const parsed = new PiRuntime().parseTask(
+  const parsed = createPiRuntime().parseTask(
     { ...command, runtimeParams: { review_target: false, tools: false } },
     sessionOptions,
   );
@@ -425,7 +425,7 @@ test("Pi validation and task parsing use session runtimeConfig before agent conf
       instructions: { tools: ["read"] },
     },
   );
-  const runtime = new PiRuntime();
+  const runtime = createPiRuntime();
   assert.doesNotThrow(() =>
     runtime.validate({ ...opts, runtimeConfig: { runtime_args: [false] } }),
   );
@@ -440,7 +440,7 @@ test("Pi validation and task parsing use session runtimeConfig before agent conf
 });
 
 test("Pi keeps the empty named-body error for effective replace, but permits append and default unnamed sessions", () => {
-  const runtime = new PiRuntime();
+  const runtime = createPiRuntime();
   for (const runtimeConfig of [{}, { prompt_mode: "replace" }]) {
     assert.throws(
       () =>

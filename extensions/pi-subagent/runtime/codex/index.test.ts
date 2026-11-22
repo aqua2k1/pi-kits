@@ -6,16 +6,19 @@ import { PassThrough } from "node:stream";
 import test from "node:test";
 import { setTimeout as delay } from "node:timers/promises";
 import type { AgentDefinition } from "../../agents.ts";
-import { SubagentManager } from "../../manager.ts";
+import { createSubagentManager } from "../../manager.ts";
 import {
   type MuxAdapter,
   type StartOptions,
   type TerminalHandle,
   TerminalStartError,
 } from "../../mux/index.ts";
-import { RuntimeTaskRejectedError } from "../errors.ts";
-import type { RuntimeEvent, RuntimeOptions } from "../index.ts";
-import { type CodexDependencies, CodexRuntime } from "./index.ts";
+import {
+  type RuntimeEvent,
+  type RuntimeOptions,
+  RuntimeTaskRejectedError,
+} from "../index.ts";
+import { type CodexDependencies, createCodexRuntime } from "./index.ts";
 import type { CodexRpc } from "./transport.ts";
 
 test("Codex forwards task cwd to the backend, thread and native mux terminal", async (t) => {
@@ -197,26 +200,18 @@ function fixture(
       children.push(child);
       return child as unknown as ChildProcess;
     },
-    async connect(
-      _url,
-      token,
-      onNotification,
-      onDisconnected,
-      connectTimeout,
-      requestTimeout,
-      shouldRejectServerRequest,
-    ) {
-      connectTimeoutMs = connectTimeout;
-      requestTimeoutMs = requestTimeout;
-      rejectServerRequest = shouldRejectServerRequest;
-      authToken = token;
-      notification = onNotification;
-      disconnected = onDisconnected;
+    async connect(options) {
+      connectTimeoutMs = options.connectTimeoutMs ?? 1000;
+      requestTimeoutMs = options.requestTimeoutMs ?? 60_000;
+      rejectServerRequest = options.shouldRejectServerRequest ?? (() => true);
+      authToken = options.token;
+      notification = options.notification;
+      disconnected = options.disconnected;
       return rpc;
     },
     ...overrides,
   };
-  const runtime = new CodexRuntime(dependencies);
+  const runtime = createCodexRuntime(dependencies);
   const session = runtime.create(
     { id: "test", cwd: "/tmp", ...extra },
     { mux, emit: (event) => events.push(event) },
@@ -303,7 +298,7 @@ test("native hydration publishes reply before idle and manager auto-release with
             host.emit(event);
           },
         });
-      const manager = new SubagentManager(f.mux, { runtimes: [f.runtime] });
+      const manager = createSubagentManager(f.mux, { runtimes: [f.runtime] });
       t.after(() => manager.close());
       const agent = manager.spawn({
         runtime: "codex",
@@ -790,8 +785,18 @@ test("native completion before managed hydration has newer reply order without c
   assert.equal(sessionUpdates(f).length, 1);
   assert.deepEqual(
     f.events
-      .filter((event) => ["session_update", "completed"].includes(event.type))
-      .map((event) => [event.type, event.sequence ?? event.resultSequence]),
+      .filter(
+        (
+          event,
+        ): event is Extract<
+          RuntimeEvent,
+          { type: "session_update" | "completed" }
+        > => event.type === "session_update" || event.type === "completed",
+      )
+      .map((event) => [
+        event.type,
+        event.type === "session_update" ? event.sequence : event.resultSequence,
+      ]),
     [
       ["session_update", 2],
       ["completed", 1],
@@ -830,10 +835,16 @@ test("native interaction deduplication is bounded and sequence does not use mana
   }
   assert.equal(sessionUpdates(f).length, 300);
   assert.equal(sessionUpdates(f).at(-1)?.sequence, 300);
-  const state = f.session as unknown as { interactionHistory: Set<string> };
-  assert.equal(state.interactionHistory.size, 256);
-  assert.equal(state.interactionHistory.has("native-0"), false);
-  assert.equal(state.interactionHistory.has("native-299"), true);
+  // Most recent 256 IDs (native-44..native-299) stay deduplicated; older ones evict.
+  for (const retained of ["native-299", "native-44"]) {
+    nativeStarted(f, retained);
+    finished(f, retained);
+  }
+  assert.equal(sessionUpdates(f).length, 300);
+  nativeStarted(f, "native-43");
+  finished(f, "native-43");
+  assert.equal(sessionUpdates(f).length, 301);
+  assert.equal(sessionUpdates(f).at(-1)?.sequence, 301);
 });
 
 const reviewOptions = { runtimeConfig: { runtime_args: ["review"] } };
@@ -859,7 +870,7 @@ function stats(f: ReturnType<typeof fixture>) {
 }
 
 test("Codex exposes parsers and direct validate/create reject malformed runtime_args", () => {
-  const runtime = new CodexRuntime();
+  const runtime = createCodexRuntime();
   assert.deepEqual(runtime.parseConfig({ runtime_args: "review,search" }), {
     runtime_args: ["review", "search"],
   });
@@ -1242,7 +1253,7 @@ test("native review preserves steer, cancel before acknowledgment, and attachmen
 });
 
 test("validate rejects cross-runtime clones and invalid supported thinking", () => {
-  const runtime = new CodexRuntime();
+  const runtime = createCodexRuntime();
   const base = { id: "test", cwd: "/tmp" };
   for (const extra of [{ parentSession: {} }, { thinking: "ultra" }])
     assert.throws(() =>
@@ -1256,7 +1267,7 @@ test("validate rejects cross-runtime clones and invalid supported thinking", () 
 });
 
 test("Codex ignores Pi runtime config fields regardless of their values", () => {
-  const runtime = new CodexRuntime();
+  const runtime = createCodexRuntime();
   const base = { id: "test", cwd: "/tmp" };
   for (const field of [
     "prompt_mode",
@@ -1284,8 +1295,6 @@ test("unsupported options are ignored without changing Codex policy or task tool
   };
   const f = fixture({
     agent: rawAgent,
-    extensionAllowlist: ["ignored-extension"],
-    workerPath: "ignored-worker.ts",
   });
   t.after(() => f.session.close());
   await f.session.start();

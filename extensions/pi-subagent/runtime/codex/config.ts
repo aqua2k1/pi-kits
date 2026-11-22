@@ -1,6 +1,10 @@
 import { Type } from "typebox";
 import { Value } from "typebox/value";
-import type { RuntimeCommand, RuntimeOptions } from "../index.ts";
+import {
+  MAX_COMMAND_BYTES,
+  type RuntimeCommand,
+  type RuntimeOptions,
+} from "../index.ts";
 
 export type CodexReviewTarget =
   | { type: "uncommittedChanges" }
@@ -8,8 +12,33 @@ export type CodexReviewTarget =
   | { type: "commit"; sha: string; title: string | null }
   | { type: "custom"; instructions: string };
 
+/** Model-facing Codex task schema; execution semantics stay in parseCodexTask. */
+export function codexReviewTargetSchema() {
+  const nonEmpty = () => Type.String({ minLength: 1, pattern: "\\S" });
+  return Type.Optional(
+    Type.Union(
+      [
+        Type.Object({ type: Type.Literal("uncommittedChanges") }),
+        Type.Object({ type: Type.Literal("baseBranch"), branch: nonEmpty() }),
+        Type.Object({
+          type: Type.Literal("commit"),
+          sha: nonEmpty(),
+          title: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+        }),
+        Type.Object({
+          type: Type.Literal("custom"),
+          instructions: nonEmpty(),
+        }),
+      ],
+      {
+        description:
+          "Codex native review target. Required in runtime_config on every subagent and resume_subagent call when runtime_args includes review; never inherited. Omit prompt for structured targets; use custom instructions for tailored review requests.",
+      },
+    ),
+  );
+}
+
 export type CodexConfig = { runtime_args: string[] };
-const TASK_LIMIT = 64 * 1024;
 const objectSchema = Type.Object({});
 const configSchema = Type.Object({
   runtime_args: Type.Optional(
@@ -25,7 +54,7 @@ function record(value: unknown, name: string): Record<string, unknown> {
 function text(value: unknown, name: string): string {
   if (typeof value !== "string" || !value.trim())
     throw new Error(`Codex ${name} must be a nonempty string`);
-  if (Buffer.byteLength(value) > TASK_LIMIT)
+  if (Buffer.byteLength(value) > MAX_COMMAND_BYTES)
     throw new Error(`Codex ${name} exceeds 64 KiB`);
   return value;
 }
@@ -165,7 +194,7 @@ export function parseCodexTask(
       ),
     };
   }
-  if (Buffer.byteLength(JSON.stringify(target)) > TASK_LIMIT)
+  if (Buffer.byteLength(JSON.stringify(target)) > MAX_COMMAND_BYTES)
     throw new Error("Codex review_target exceeds 64 KiB");
   return { ...command, prompt: "", runtimeParams: { review_target: target } };
 }

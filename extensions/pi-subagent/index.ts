@@ -19,11 +19,15 @@ import {
   DOCKED_PANEL_OPENED,
 } from "../../shared/ui/docked-panel/index.ts";
 import { loadAgentDefinitions, resolveAgentDefinition } from "./agents.ts";
-import { type AgentSnapshot, SubagentManager } from "./manager.ts";
-import "./mux/providers.ts";
+import {
+  type AgentSnapshot,
+  createSubagentManager,
+  type SubagentManager,
+} from "./manager.ts";
 import type { MuxAdapter } from "./mux/index.ts";
-import { resolveMux } from "./mux/registry.ts";
-import { codexReviewTargetSchema } from "./runtime/codex/schema.ts";
+import { resolveMux } from "./mux/resolve.ts";
+import { codexReviewTargetSchema } from "./runtime/codex/config.ts";
+import { createPiRuntime } from "./runtime/pi/index.ts";
 import {
   renderSubagentNotification,
   renderSubagentResult,
@@ -32,7 +36,7 @@ import {
   subagentCallRenderer,
 } from "./ui/renderers.ts";
 import { SubagentStatusWidget } from "./ui/status-widget.ts";
-import { showSubagentViews } from "./ui/views.ts";
+import { showSubagentViews, type ViewActionResult } from "./ui/views.ts";
 
 const namespace = {
   name: "pi-subagent",
@@ -76,6 +80,7 @@ export function registerSubagents(
   adapter: MuxAdapter,
   maxConcurrent = 4,
   extensionAllowlist: readonly WorkerExtensionSource[] = SUBAGENT_DEFAULT_EXTENSIONS,
+  createManager: typeof createSubagentManager = createSubagentManager,
 ): void {
   pi.registerMessageRenderer(
     "subagent-notification",
@@ -88,9 +93,9 @@ export function registerSubagents(
   const getManager = (ctx?: ExtensionContext) => {
     if (shutdown) throw new Error("Subagent manager is shutting down.");
     context = ctx ?? context;
-    manager ??= new SubagentManager(adapter, {
+    manager ??= createManager(adapter, {
       maxConcurrent,
-      extensionAllowlist,
+      runtimes: [createPiRuntime({ extensionAllowlist })],
       onSessionUpdate(snapshot, update) {
         pi.sendMessage(
           {
@@ -443,6 +448,52 @@ export function registerSubagents(
             "Usage: /subagent:views [id] [open|focus|close|copy|stop|delete]",
           );
         }
+        const executeAction = async (
+          agentId: string,
+          action: string,
+          fromPanel: boolean,
+        ): Promise<ViewActionResult> => {
+          switch (action) {
+            case "copy":
+              await copyToClipboard(current.get(agentId).id);
+              if (!fromPanel) ctx.ui.notify("Copied subagent ID.", "info");
+              return { closePanel: true };
+            case "stop":
+              current.stop(agentId);
+              return {};
+            case "close":
+              await current.closeView(agentId);
+              return {};
+            case "delete": {
+              if (!fromPanel) {
+                const agent = current.get(agentId);
+                if (
+                  !(await ctx.ui.confirm(
+                    "Delete subagent?",
+                    `Delete ${agent.description} (${agent.id})? This closes its terminal and removes the manager record. Session files are retained.`,
+                  ))
+                ) {
+                  return {};
+                }
+              }
+              await current.remove(agentId);
+              return {};
+            }
+            case "open":
+            case "focus":
+              if (fromPanel) {
+                throw new Error(`Unsupported panel action: ${action}`);
+              }
+              await current.openView(agentId);
+              return {};
+            default:
+              throw new Error(
+                fromPanel
+                  ? `Unsupported panel action: ${action}`
+                  : "View action must be open, focus, close, copy, stop, or delete.",
+              );
+          }
+        };
         let [id, action] = tokens;
         if (id) current.get(id);
         if (!action) {
@@ -451,28 +502,8 @@ export function registerSubagents(
           const result = await showSubagentViews(
             ctx.ui,
             current,
-            async ({ agentId, action }) => {
-              switch (action) {
-                case "copy":
-                  await copyToClipboard(current.get(agentId).id);
-                  return { closePanel: true };
-
-                case "stop":
-                  current.stop(agentId);
-                  return {};
-
-                case "delete":
-                  await current.remove(agentId);
-                  return {};
-
-                case "close":
-                  await current.closeView(agentId);
-                  return {};
-
-                default:
-                  throw new Error(`Unsupported panel action: ${action}`);
-              }
-            },
+            ({ agentId, action: panelAction }) =>
+              executeAction(agentId, panelAction, true),
             id,
             {
               onOpen: () => pi.events.emit(DOCKED_PANEL_OPENED, payload),
@@ -488,28 +519,7 @@ export function registerSubagents(
           action = result.choice.action;
         }
         if (!id) return;
-        if (action === "copy") {
-          await copyToClipboard(current.get(id).id);
-          ctx.ui.notify("Copied subagent ID.", "info");
-        } else if (action === "delete") {
-          const agent = current.get(id);
-          if (
-            !(await ctx.ui.confirm(
-              "Delete subagent?",
-              `Delete ${agent.description} (${agent.id})? This closes its terminal and removes the manager record. Session files are retained.`,
-            ))
-          )
-            return;
-          await current.remove(id);
-        } else if (action === "stop") current.stop(id);
-        else if (action === "close") await current.closeView(id);
-        else if (action === "open" || action === "focus") {
-          await current.openView(id);
-        } else {
-          throw new Error(
-            "View action must be open, focus, close, copy, stop, or delete.",
-          );
-        }
+        await executeAction(id, action, false);
       } catch (error) {
         ctx.ui.notify(
           error instanceof Error ? error.message : String(error),
@@ -546,7 +556,15 @@ export function registerSubagents(
   });
 }
 
-export default function subagentExtension(pi: ExtensionAPI): void {
+export interface SubagentExtensionDependencies {
+  resolveMux?: typeof resolveMux;
+  createManager?: typeof createSubagentManager;
+}
+
+export default function subagentExtension(
+  pi: ExtensionAPI,
+  dependencies: SubagentExtensionDependencies = {},
+): void {
   // Workers inherit the mux environment but must not become coordinators.
   if (process.env.PI_KITS_SUBAGENT_WORKER === "1") return;
   const subagent = readPiKitsConfig()["pi-subagent"];
@@ -565,7 +583,8 @@ export default function subagentExtension(pi: ExtensionAPI): void {
       // Notification failures must not interrupt adapter operations.
     }
   };
-  const adapter = resolveMux(process.env, { warn });
+  const resolveAdapter = dependencies.resolveMux ?? resolveMux;
+  const adapter = resolveAdapter(process.env, { warn });
   if (!adapter) return;
   pi.on("session_start", (_event, ctx) => {
     context = ctx;
@@ -580,5 +599,6 @@ export default function subagentExtension(pi: ExtensionAPI): void {
     adapter,
     subagent.maxConcurrent,
     subagent.extensionAllowlist,
+    dependencies.createManager,
   );
 }

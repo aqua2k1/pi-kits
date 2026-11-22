@@ -1,5 +1,4 @@
 import { randomUUID } from "node:crypto";
-import type { WorkerExtensionSource } from "@pi-kits/config";
 import type { AgentDefinition } from "./agents.ts";
 import type { MuxAdapter, ViewHandle } from "./mux/index.ts";
 import {
@@ -9,27 +8,28 @@ import {
   resumeBlocker,
   steerBlocker,
 } from "./policy.ts";
-import { CodexRuntime } from "./runtime/codex/index.ts";
-import { RuntimeTaskRejectedError } from "./runtime/errors.ts";
-import type {
-  AgentRuntime,
-  RuntimeCapabilities,
-  RuntimeCommand,
-  RuntimeEvent,
-  RuntimeId,
-  RuntimeOptions,
-  RuntimeSession,
-  SessionUpdate,
+import { createCodexRuntime } from "./runtime/codex/index.ts";
+import {
+  type AgentRuntime,
+  MAX_COMMAND_BYTES,
+  MAX_RESULT_BYTES,
+  type RuntimeCapabilities,
+  type RuntimeCommand,
+  type RuntimeEvent,
+  type RuntimeEventMeta,
+  type RuntimeId,
+  type RuntimeOptions,
+  type RuntimeSession,
+  RuntimeTaskRejectedError,
+  type SessionUpdate,
 } from "./runtime/index.ts";
-import type { ParentSessionSnapshot } from "./runtime/pi/clone.ts";
-import { PiRuntime } from "./runtime/pi/index.ts";
-import { MAX_COMMAND_BYTES, MAX_RESULT_BYTES } from "./runtime/pi/protocol.ts";
-
+import { createPiRuntime } from "./runtime/pi/index.ts";
 import {
   type AgentStatus,
   isBackendSessionState,
   type SessionState,
 } from "./state.ts";
+import { createSerializer } from "./util.ts";
 
 export type { AgentStatus, SessionState } from "./state.ts";
 export { isTerminalStatus } from "./state.ts";
@@ -93,7 +93,60 @@ export interface SpawnOptions {
   runtimeConfig?: Record<string, unknown>;
   runtimeParams?: Record<string, unknown>;
   context?: unknown;
-  parentSession?: ParentSessionSnapshot;
+  parentSession?: unknown;
+}
+
+export interface ResumeOptions {
+  prompt: string;
+  runtimeParams?: Record<string, unknown>;
+  description?: string;
+}
+
+export interface ManagerOptions {
+  runtimes?: readonly AgentRuntime[];
+  maxConcurrent?: number;
+  startupTimeoutMs?: number;
+  cancelTimeoutMs?: number;
+  runtimeExecutables?: Partial<Record<RuntimeId, string>>;
+  onComplete?: (snapshot: AgentSnapshot) => void;
+  onSessionUpdate?: (snapshot: AgentSnapshot, update: SessionUpdate) => void;
+}
+
+export interface SubagentManager {
+  subscribe(listener: () => void): () => void;
+  list(): AgentSnapshot[];
+  get(id: string): AgentSnapshot;
+  runtimeCapabilities(id: RuntimeId): RuntimeCapabilities;
+  spawn(options: SpawnOptions): AgentSnapshot;
+  backgroundPreference(id: string): boolean | undefined;
+  resume(id: string, options: ResumeOptions): AgentSnapshot;
+  result(
+    id: string,
+    wait?: boolean,
+    signal?: AbortSignal,
+  ): Promise<AgentSnapshot>;
+  steer(id: string, message: string): void | Promise<void>;
+  stop(id: string): AgentSnapshot;
+  openView(id: string): Promise<ViewHandle>;
+  closeView(id: string): Promise<void>;
+  release(id: string): Promise<void>;
+  remove(id: string): Promise<void>;
+  close(): Promise<void>;
+}
+
+interface Execution {
+  round: number;
+  command: RuntimeCommand;
+  reused: boolean;
+  dispatched: boolean;
+  accepted: boolean;
+  consumed: boolean;
+  waiters: number;
+  notified: boolean;
+  finished: boolean;
+  resolve: (snapshot: AgentSnapshot) => void;
+  completion: Promise<AgentSnapshot>;
+  snapshot?: AgentSnapshot;
 }
 
 interface AgentRecord {
@@ -114,1181 +167,266 @@ interface AgentRecord {
   viewTimer?: ReturnType<typeof setTimeout>;
 }
 
-interface Execution {
-  round: number;
-  reused: boolean;
-  dispatched: boolean;
-  accepted: boolean;
-  consumed: boolean;
-  waiters: number;
-  notified: boolean;
-  finished: boolean;
-  resolve: (snapshot: AgentSnapshot) => void;
-  completion: Promise<AgentSnapshot>;
-  snapshot?: AgentSnapshot;
-}
+// --- Pure functional core: snapshot construction, event reduction & validation ---
 
-export interface ResumeOptions {
-  prompt: string;
-  runtimeParams?: Record<string, unknown>;
-  description?: string;
-}
-
-export interface ManagerOptions {
-  runtimes?: readonly AgentRuntime[];
-  maxConcurrent?: number;
-  extensionAllowlist?: readonly WorkerExtensionSource[];
-  startupTimeoutMs?: number;
-  cancelTimeoutMs?: number;
-  workerPath?: string;
-  executable?: string;
-  runtimeExecutables?: Partial<Record<RuntimeId, string>>;
-  onComplete?: (snapshot: AgentSnapshot) => void;
-  onSessionUpdate?: (snapshot: AgentSnapshot, update: SessionUpdate) => void;
-}
-
-/** Owns managed rounds and view placement; runtimes own execution resources. */
-export class SubagentManager {
-  private readonly records = new Map<string, AgentRecord>();
-  private readonly listeners = new Set<() => void>();
-  private readonly views = new Map<string, AgentRecord>();
-  private viewMutation: Promise<void> = Promise.resolve();
-  private readonly queue: { record: AgentRecord; execution: Execution }[] = [];
-  private readonly runtimes = new Map<RuntimeId, AgentRuntime>();
-  private readonly launches = new Set<Promise<void>>();
-  private readonly closedSessions = new WeakSet<RuntimeSession>();
-  private active = 0;
-  private disposed = false;
-  private closing?: Promise<void>;
-
-  constructor(
-    private readonly adapter: MuxAdapter,
-    private readonly options: ManagerOptions = {},
-  ) {
-    for (const runtime of [
-      new PiRuntime(),
-      new CodexRuntime(),
-      ...(options.runtimes ?? []),
-    ]) {
-      this.runtimes.set(runtime.id, runtime);
-    }
-  }
-
-  subscribe(listener: () => void): () => void {
-    this.listeners.add(listener);
-    return () => this.listeners.delete(listener);
-  }
-
-  private changed(): void {
-    for (const listener of this.listeners) {
-      try {
-        listener();
-      } catch {
-        // A view/render failure must never alter task execution.
-      }
-    }
-  }
-
-  list(): AgentSnapshot[] {
-    return [...this.records.values()].map((record) => this.snapshot(record));
-  }
-
-  get(id: string): AgentSnapshot {
-    return this.snapshot(this.record(id));
-  }
-
-  runtimeCapabilities(id: RuntimeId): RuntimeCapabilities {
-    return { ...this.runtime(id).capabilities };
-  }
-
-  private runtime(id: RuntimeId): AgentRuntime {
-    const runtime = this.runtimes.get(id);
-    if (!runtime) throw new Error(`Unknown subagent runtime: ${id}`);
-    return runtime;
-  }
-
-  spawn(options: SpawnOptions): AgentSnapshot {
-    if (this.disposed) throw new Error("Subagent manager is closed.");
-    const runtimeId = options.agent?.runtime ?? options.runtime ?? "pi";
-    const runtime = this.runtime(runtimeId);
-    const rawConfig =
-      options.agent?.runtimeConfig ?? options.runtimeConfig ?? {};
-    const callConfig = runtime.parseCallConfig?.(
-      options.runtimeParams ?? {},
-      rawConfig,
-      "spawn",
-    );
-    options = {
-      ...options,
-      ...(callConfig ??
-        (runtime.parseConfig
-          ? { runtimeConfig: runtime.parseConfig(rawConfig) }
-          : { runtimeConfig: rawConfig })),
-    };
-    options = {
-      ...options,
-      sessionName: `Sub · ${options.agent?.name ?? "-"} · ${options.description.replace(/\s+/g, " ").trim()}`,
-    };
-    const id = randomUUID();
-    let runtimeOptions = this.runtimeOptions(id, options, runtime.id);
-    runtime.validate(runtimeOptions);
-    if (runtime.prepareSpawn) {
-      runtimeOptions = runtime.prepareSpawn(runtimeOptions);
-      options = { ...options, ...runtimeOptions };
-    }
-    validateCommand(
-      this.parseTask(runtime, taskCommand(options), runtimeOptions),
-    );
-    if (options.parentSession && !runtime.capabilities.nativeClone) {
-      throw new Error(
-        "Cross-runtime context cloning is unsupported by this runtime.",
-      );
-    }
-    const record: AgentRecord = {
-      snapshot: {
-        id,
-        runtime: runtime.id,
-        runtimeName: runtime.displayName,
-        capabilities: { ...runtime.capabilities },
-        description: options.description,
-        cwd: options.cwd,
-        status: "queued",
-        round: 1,
-        inheritedContext: Boolean(options.parentSession),
-        keepAlive: options.agent?.keepAlive ?? options.keepAlive ?? false,
-        model: options.agent?.model ?? options.model,
-        configuredModel: options.agent?.model,
-        ...(options.agent
-          ? {
-              subagentType: options.agent.name,
-              displayName: options.agent.displayName,
-              agentSource: options.agent.source,
-              agentPath: options.agent.sourcePath,
-            }
-          : {}),
-        createdAt: Date.now(),
-        turnCount: 0,
-        toolUses: 0,
-        totalTokens: 0,
-        compactionCount: 0,
-      },
-      options,
-      runtime,
-      execution: createExecution(1),
-    };
-    this.records.set(record.snapshot.id, record);
-    this.queue.push({ record, execution: record.execution });
-    this.pump();
-    this.changed();
-    return this.snapshot(record);
-  }
-
-  backgroundPreference(id: string): boolean | undefined {
-    return this.record(id).options.agent?.runInBackground;
-  }
-
-  resume(id: string, options: ResumeOptions): AgentSnapshot {
-    if (this.disposed) throw new Error("Subagent manager is closed.");
-    const record = this.record(id);
-    const blocker = resumeBlocker(record);
-    if (blocker) throw new Error(blocker);
-    const callConfig = record.runtime.parseCallConfig?.(
-      options.runtimeParams ?? {},
-      record.options.runtimeConfig ?? {},
-      "resume",
-    );
-    const next = {
-      ...record.options,
-      ...options,
-      // The runtime partitions fresh call options; no per-round data is reused.
-      runtimeParams: options.runtimeParams,
-      ...callConfig,
-    };
-    next.description = options.description ?? record.options.description;
-    const round = record.execution.round + 1;
-    if (!Number.isSafeInteger(round))
-      throw new Error("Subagent round limit reached.");
-    validateCommand(
-      this.parseTask(
-        record.runtime,
-        { ...taskCommand(next), round },
-        this.runtimeOptions(id, next, record.runtime.id),
-      ),
-    );
-    this.clearViewTimer(record);
-    record.options = next;
-    record.execution = createExecution(round, true);
-    record.snapshot = {
-      ...record.snapshot,
-      description: next.description,
-      round,
-      status: "queued",
-      error: undefined,
-      activity: undefined,
-      sessionActivity: undefined,
-      createdAt: Date.now(),
-      startedAt: undefined,
-      completedAt: undefined,
-      turnCount: 0,
-      toolUses: 0,
-      totalTokens: 0,
-      contextPercent: undefined,
-      compactionCount: 0,
-    };
-    this.queue.push({ record, execution: record.execution });
-    this.pump();
-    this.changed();
-    return this.snapshot(record);
-  }
-
-  async result(id: string, wait = false, signal?: AbortSignal) {
-    const record = this.record(id);
-    const execution = record.execution;
-    if (wait && !execution.finished) {
-      // Claims and resolved snapshots belong to a round, not the reusable worker.
-      execution.waiters += 1;
-      try {
-        const snapshot = await waitFor(execution.completion, signal);
-        execution.consumed = true;
-        return { ...snapshot };
-      } finally {
-        execution.waiters -= 1;
-        if (execution.finished) this.notify(record, execution);
-      }
-    }
-    if (execution.finished) execution.consumed = true;
-    return this.snapshot(record);
-  }
-
-  steer(id: string, message: string): void | Promise<void> {
-    if (!message.trim()) throw new Error("Steering message must not be blank.");
-    const record = this.record(id);
-    const blocker = steerBlocker(record);
-    if (blocker) throw new Error(blocker);
-    const sent = this.send(record, { type: "steer", message });
-    // Legacy callers may ignore the return value; parents can await delivery.
-    if (sent) void sent.catch(() => undefined);
-    return sent;
-  }
-
-  stop(id: string): AgentSnapshot {
-    const record = this.record(id);
-    const execution = record.execution;
-    if (execution.finished) {
-      if (record.snapshot.sessionState === "disconnected") {
-        void this.terminate(record, "error");
-      }
-      return this.snapshot(record);
-    }
-    if (
-      record.snapshot.status === "queued" ||
-      (record.execution.reused && !record.execution.dispatched)
-    ) {
-      this.finish(record, "stopped");
-    } else if (record.snapshot.status !== "stopping") {
-      const starting = record.snapshot.status === "starting";
-      const disconnected = record.snapshot.status === "disconnected";
-      record.snapshot.status = "stopping";
-      if (starting) {
-        // Abort startup immediately, even while another agent mutates views.
-        const closing = record.session?.close();
-        if (closing) void closing.catch(() => undefined);
-        void this.terminate(record, "stopped");
-      } else if (disconnected || !record.session?.connected) {
-        void this.terminate(record, "stopped");
-      } else {
-        try {
-          const sent = this.send(record, { type: "cancel" });
-          if (sent) {
-            void sent.catch((error) =>
-              this.sendFailed(record, execution, error),
-            );
-          }
-        } catch (error) {
-          this.sendFailed(record, execution, error);
-        }
-        if (record.execution !== execution || execution.finished) {
-          this.changed();
-          return this.snapshot(record);
-        }
-        record.cancelTimer = setTimeout(() => {
-          if (record.execution !== execution || execution.finished) return;
-          void this.terminate(record, "stopped");
-        }, this.options.cancelTimeoutMs ?? 5_000);
-      }
-    }
-    this.changed();
-    return this.snapshot(record);
-  }
-
-  openView(id: string) {
-    const record = this.record(id);
-    record.openingViews = (record.openingViews ?? 0) + 1;
-    return this.viewOperation(async () => {
-      this.checkNativeView(record);
-      // Keep TypeScript narrowing at the resource boundary, after ordered policy.
-      if (!record.session)
-        throw new Error("Subagent terminal is not ready yet.");
-      const terminal = await record.session.attachment();
-      this.checkNativeView(record);
-      const existing = await this.liveView(record);
-      this.checkNativeView(record);
-      if (existing) {
-        await this.adapter.focus_view(existing);
-        this.checkNativeView(record);
-        return existing;
-      }
-      let relativeTo: ViewHandle | undefined;
-      for (const previous of [...this.views.values()].reverse()) {
-        relativeTo = await this.liveView(previous);
-        this.checkNativeView(record);
-        if (relativeTo) break;
-      }
-      // Layout policy belongs here, not in any adapter: first right of the
-      // parent, every subsequent view below the last surviving attachment.
-      this.checkNativeView(record);
-      const view = await this.adapter.open_view(
-        relativeTo
-          ? { terminal, direction: "down", relativeTo }
-          : { terminal, direction: "right" },
-      );
-      record.view = view;
-      this.views.set(view.id, record);
-      this.changed();
-      try {
-        this.checkNativeView(record);
-      } catch (error) {
-        // Only roll back the view created by this operation. Record ownership
-        // first so a failed close remains available for cleanup retries.
-        try {
-          await this.adapter.close_view(view);
-          this.forgetView(record);
-        } catch {
-          this.scheduleViewCheck(record);
-        }
-        throw error;
-      }
-      this.scheduleViewCheck(record);
-      return view;
-    }).finally(() => {
-      record.openingViews = (record.openingViews ?? 1) - 1;
-    });
-  }
-
-  private checkNativeView(record: AgentRecord): void {
-    if (this.disposed) throw new Error("Subagent manager is closed.");
-    const blocker = nativeViewBlocker(
-      record,
-      Boolean(record.session && this.closedSessions.has(record.session)),
-    );
-    if (blocker) throw new Error(blocker);
-  }
-
-  closeView(id: string): Promise<void> {
-    const record = this.record(id);
-    return this.viewOperation(async () => {
-      if (record.view) {
-        await this.adapter.close_view(record.view);
-        this.forgetView(record);
-      }
-      this.autoRelease(record);
-    });
-  }
-
-  /** Close resources while preserving the managed record and round results. */
-  release(id: string): Promise<void> {
-    const record = this.record(id);
-    if (record.releasing) return record.releasing;
-    if (!record.execution.finished) {
-      return Promise.reject(
-        new Error("Only a finished managed task can be released."),
-      );
-    }
-    record.releaseRequested = true;
-    this.clearViewTimer(record);
-    const operation = this.viewOperation(async () => {
-      let viewClosed = true;
-      if (record.view) {
-        try {
-          await this.adapter.close_view(record.view);
-          this.forgetView(record);
-        } catch {
-          viewClosed = false;
-        }
-      }
-      const sessionClosed = await this.closeSession(record);
-      if (!viewClosed || !sessionClosed) {
-        record.snapshot.sessionState = "disconnected";
-        record.snapshot.sessionActivity =
-          "Worker cleanup failed; retry release or stop_subagent.";
-        this.changed();
-        throw new Error(`Could not release subagent ${id}; retry release.`);
-      }
-      record.snapshot.capabilities = {
-        ...(record.session?.capabilities ??
-          record.snapshot.capabilities ??
-          record.runtime.capabilities),
-      };
-      record.session = undefined;
-      record.options = {
-        ...record.options,
-        context: undefined,
-        parentSession: undefined,
-      };
-      this.changed();
-    });
-    record.releasing = operation;
-    const settled = () => {
-      record.releasing = undefined;
-    };
-    void operation.then(settled, settled);
-    return operation;
-  }
-
-  private clearViewTimer(record: AgentRecord): void {
-    clearTimeout(record.viewTimer);
-    record.viewTimer = undefined;
-  }
-
-  private scheduleViewCheck(record: AgentRecord): void {
-    if (
-      this.disposed ||
-      record.releaseRequested ||
-      record.snapshot.keepAlive ||
-      !record.execution.finished ||
-      !record.view ||
-      record.viewTimer
-    )
-      return;
-    record.viewTimer = setTimeout(() => {
-      record.viewTimer = undefined;
-      this.autoRelease(record);
-    }, 1_000);
-    record.viewTimer.unref();
-  }
-
-  private autoRelease(record: AgentRecord): void {
-    if (!canAutoRelease(record, this.disposed)) return;
-    const execution = record.execution;
-    void this.viewOperation(async () => {
-      if (
-        record.execution !== execution ||
-        !canAutoRelease(record, this.disposed)
-      )
-        return;
-      if (await this.liveView(record)) {
-        this.scheduleViewCheck(record);
-      } else if (
-        record.execution === execution &&
-        canAutoRelease(record, this.disposed)
-      ) {
-        // Do not await release from inside the serialized view operation.
-        void this.release(record.snapshot.id).catch(() => undefined);
-      }
-    }).catch(() => this.scheduleViewCheck(record));
-  }
-
-  /** Close native resources and forget the agent, never its session files. */
-  async remove(id: string): Promise<void> {
-    const record = this.record(id);
-    // Even a previously stopped startup may still acquire a terminal.
-    const launch = record.launch;
-    record.releaseRequested = true;
-    this.clearViewTimer(record);
-    record.execution.consumed = true;
-    clearTimeout(record.cancelTimer);
-    record.cancelTimer = undefined;
-    // Closing immediately cancels startup; keep the session recorded for retries.
-    const closing = record.session?.close();
-    if (closing) void closing.catch(() => undefined);
-    record.snapshot.sessionState = "closed";
-    // Drop stale queue references even if this round was already stopped.
-    for (let index = this.queue.length - 1; index >= 0; index -= 1) {
-      if (this.queue[index]?.record === record) this.queue.splice(index, 1);
-    }
-    if (record.snapshot.status === "queued") {
-      this.finish(record, "stopped");
-    } else if (!record.execution.finished) {
-      record.snapshot.status = "stopping";
-      this.changed();
-    }
-    await launch?.catch(() => undefined);
-    await this.viewOperation(async () => {
-      if (record.view) {
-        await this.adapter.close_view(record.view);
-        this.forgetView(record);
-      }
-      if (!(await this.closeSession(record))) {
-        throw new Error(`Could not delete subagent ${id}; retry deletion.`);
-      }
-      this.finish(record, "stopped");
-      this.records.delete(id);
-      this.changed();
-    });
-  }
-
-  private forgetView(record: AgentRecord): void {
-    this.clearViewTimer(record);
-    if (record.view) this.views.delete(record.view.id);
-    record.view = undefined;
-    this.changed();
-  }
-
-  private async liveView(record: AgentRecord): Promise<ViewHandle | undefined> {
-    if (record.view && !(await this.adapter.inspect_view(record.view)).alive) {
-      await this.adapter.close_view(record.view);
-      this.forgetView(record);
-      this.autoRelease(record);
-    }
-    return record.view;
-  }
-
-  private viewOperation<T>(action: () => Promise<T>) {
-    // Different agents share one column, so serialize across all records.
-    const result = this.viewMutation.then(action);
-    this.viewMutation = result.then(
-      () => undefined,
-      () => undefined,
-    );
-    return result;
-  }
-
-  close(): Promise<void> {
-    this.closing ??= this.dispose().catch((error) => {
-      this.closing = undefined;
-      throw error;
-    });
-    return this.closing;
-  }
-
-  private async dispose(): Promise<void> {
-    this.disposed = true;
-    const closing: Promise<void>[] = [];
-    for (const record of this.records.values()) {
-      record.releaseRequested = true;
-      this.clearViewTimer(record);
-      const session = record.session;
-      if (session && !this.closedSessions.has(session)) {
-        closing.push(
-          session.close().then(() => {
-            this.closedSessions.add(session);
-          }),
-        );
-      }
-      if (!record.execution.finished) this.finish(record, "stopped");
-    }
-    await Promise.allSettled([...this.launches, ...closing]);
-    const cleanup = await Promise.allSettled(
-      [...this.records.values()].map(async (record) => {
-        const viewClosed = await this.closeView(record.snapshot.id).then(
-          () => true,
-          () => false,
-        );
-        const terminalClosed = await this.closeSession(record);
-        if (!viewClosed || !terminalClosed) {
-          const resources = [
-            ...(!viewClosed ? ["view"] : []),
-            ...(!terminalClosed ? ["runtime"] : []),
-          ].join(" and ");
-          throw new Error(
-            `Could not clean up subagent ${record.snapshot.id}: ${resources}.`,
-          );
-        }
-      }),
-    );
-    const errors = cleanup.flatMap((result) =>
-      result.status === "rejected" ? [result.reason as Error] : [],
-    );
-    if (errors.length) {
-      throw new AggregateError(
-        errors,
-        `Some subagent terminals could not be cleaned up. ${errors.map((error) => error.message).join(" ")}`,
-      );
-    }
-  }
-
-  private record(id: string): AgentRecord {
-    const record = this.records.get(id);
-    if (!record) throw new Error(`Unknown subagent: ${id}`);
-    return record;
-  }
-
-  private snapshot(record: AgentRecord): AgentSnapshot {
-    return {
-      ...record.snapshot,
-      capabilities: {
-        ...(record.session?.capabilities ??
-          record.snapshot.capabilities ??
-          record.runtime.capabilities),
-      },
-      terminalId:
-        record.snapshot.sessionState === "closed" ||
-        (record.session && this.closedSessions.has(record.session))
-          ? undefined
-          : record.session?.terminal?.id,
-      viewId: record.view?.id,
-    };
-  }
-
-  private pump(): void {
-    while (
-      !this.disposed &&
-      this.active < (this.options.maxConcurrent ?? 4) &&
-      this.queue.length
-    ) {
-      const entry = this.queue.shift();
-      if (!entry) continue;
-      const { record, execution } = entry;
-      if (record.execution !== execution || execution.finished) continue;
-      this.active += 1;
-      record.snapshot.status = "starting";
-      record.snapshot.startedAt = Date.now();
-      this.changed();
-      const launch = execution.reused
-        ? this.startResumed(record, execution)
-        : this.start(record);
-      record.launch = launch;
-      this.launches.add(launch);
-      const settled = () => {
-        this.launches.delete(launch);
-        if (record.launch === launch) record.launch = undefined;
-      };
-      void launch.then(settled, settled);
-    }
-  }
-
-  private async startResumed(
-    record: AgentRecord,
-    execution: Execution,
-  ): Promise<void> {
-    try {
-      if (!record.session?.connected || !(await record.session.inspect())) {
-        throw new Error(
-          "Retained runtime is unavailable; no automatic restart.",
-        );
-      }
-      if (record.execution !== execution || execution.finished || this.disposed)
-        return;
-      if (dispatchBlocker(record, "resume")) {
-        throw new RuntimeTaskRejectedError(
-          "Subagent became unavailable or busy with native/user interaction while resume was queued.",
-        );
-      }
-      record.snapshot.status = "running";
-      record.snapshot.activity = "Thinking…";
-      execution.dispatched = true;
-      await this.send(record, taskCommand(record.options));
-      this.changed();
-    } catch (error) {
-      this.sendFailed(record, execution, error);
-    }
-  }
-
-  private runtimeOptions(
-    id: string,
-    options: SpawnOptions,
-    runtimeId: RuntimeId,
-  ): RuntimeOptions {
-    return {
-      id,
-      cwd: options.cwd,
-      sessionName: options.sessionName,
-      model: options.agent?.model ?? options.model,
-      thinking: options.agent?.thinking ?? options.thinking,
-      agent: options.agent,
-      runtimeConfig: options.runtimeConfig,
-      context: options.context,
-      parentSession: options.parentSession,
-      extensionAllowlist:
-        runtimeId === "pi" ? this.options.extensionAllowlist : undefined,
-      executable:
-        this.options.runtimeExecutables?.[runtimeId] ??
-        (runtimeId === "pi" ? this.options.executable : undefined),
-      workerPath: runtimeId === "pi" ? this.options.workerPath : undefined,
-      startupTimeoutMs: this.options.startupTimeoutMs,
-    };
-  }
-
-  private async start(record: AgentRecord): Promise<void> {
-    const execution = record.execution;
-    try {
-      // Record ownership before start, including resources acquired on failure.
-      record.session = record.runtime.create(
-        this.runtimeOptions(
-          record.snapshot.id,
-          record.options,
-          record.runtime.id,
-        ),
-        { mux: this.adapter, emit: (event) => this.event(record, event) },
-      );
-      await record.session.start();
-      if (
-        record.execution.finished ||
-        this.disposed ||
-        record.snapshot.status === "stopping"
-      ) {
-        await this.terminate(record, "stopped");
-        return;
-      }
-      const blocker = dispatchBlocker(record, "startup");
-      if (blocker === "disconnected") {
-        throw new Error("Subagent runtime disconnected during startup.");
-      }
-      if (blocker === "busy") {
-        throw new RuntimeTaskRejectedError(
-          "Managed dispatch requires an idle session; native/user work must settle first.",
-        );
-      }
-      record.snapshot.status = "running";
-      record.snapshot.sessionState = "running";
-      record.snapshot.activity = "Thinking…";
-      this.changed();
-      record.execution.dispatched = true;
-      await this.send(record, taskCommand(record.options));
-    } catch (error) {
-      if (record.execution !== execution || execution.finished) return;
-      if (error instanceof RuntimeTaskRejectedError) {
-        this.sendFailed(record, execution, error);
-        return;
-      }
-      await this.terminate(
-        record,
-        record.snapshot.status === "stopping" ? "stopped" : "error",
-        error instanceof Error ? error.message : String(error),
-      );
-    }
-  }
-
-  private async closeSession(record: AgentRecord): Promise<boolean> {
-    try {
-      const session = record.session;
-      if (session && !this.closedSessions.has(session)) {
-        await session.close();
-        this.closedSessions.add(session);
-      }
-      record.snapshot.sessionState = "closed";
-      record.snapshot.sessionActivity = undefined;
-      return true;
-    } catch {
-      // Retain ownership and the concurrency slot until cleanup can be retried.
-      record.snapshot.sessionState = "disconnected";
-      record.snapshot.sessionActivity =
-        "Worker cleanup failed; retry stop_subagent.";
-      this.changed();
-      return false;
-    }
-  }
-
-  private terminate(
-    record: AgentRecord,
-    status: "stopped" | "error",
-    error?: string,
-  ): Promise<void> {
-    if (record.terminating) return record.terminating;
-    const operation = this.viewOperation(async () => {
-      // View ownership is independent from the runtime's execution resources.
-      let viewClosed = true;
-      if (record.view) {
-        try {
-          await this.adapter.close_view(record.view);
-          this.forgetView(record);
-        } catch {
-          // Runtime cleanup must still run if a detached view cannot be closed.
-          viewClosed = false;
-        }
-      }
-      const sessionClosed = await this.closeSession(record);
-      if (sessionClosed && viewClosed) {
-        this.finish(record, status, error);
-      } else {
-        record.snapshot.sessionState = "disconnected";
-        record.snapshot.sessionActivity =
-          "Worker cleanup failed; retry stop_subagent.";
-        if (!record.execution.finished) {
-          record.snapshot.status = "disconnected";
-          record.snapshot.error =
-            "Worker cleanup failed; concurrency slot retained. Retry stop_subagent.";
-        }
-        this.changed();
-      }
-    });
-    record.terminating = operation;
-    void operation.then(
-      () => {
-        record.terminating = undefined;
-      },
-      () => {
-        record.terminating = undefined;
-      },
-    );
-    return operation;
-  }
-
-  private disconnected(record: AgentRecord, error: string): void {
-    if (record.snapshot.sessionState === "closed") return;
-    record.snapshot.sessionState = "disconnected";
-    record.snapshot.sessionActivity = undefined;
-    this.changed();
-    const execution = record.execution;
-    if (record.terminating) return;
-    // Fresh startup handles its own rejection/cleanup. All other sessions,
-    // including idle/native sessions and unacknowledged resumes, are parent-
-    // owned and must not survive loss of the control connection.
-    if (
-      !execution.finished &&
-      !execution.reused &&
-      record.snapshot.status === "starting"
-    ) {
-      return;
-    }
-    void this.terminate(
-      record,
-      record.snapshot.status === "stopping" ? "stopped" : "error",
-      error,
-    );
-  }
-
-  private sendFailed(
-    record: AgentRecord,
-    execution: Execution,
-    error: unknown,
-  ): void {
-    if (record.execution !== execution || execution.finished) return;
-    const message = error instanceof Error ? error.message : String(error);
-    if (error instanceof RuntimeTaskRejectedError) {
-      // The adapter guarantees no dispatch, unlike an uncertain transport error.
-      execution.dispatched = false;
-      if (record.snapshot.sessionState === "running") {
-        record.snapshot.sessionState = "idle";
-      }
-      this.finish(record, "error", message);
-    } else if (execution.reused && !execution.dispatched) {
-      this.finish(record, "error", message);
-    } else {
-      this.disconnected(record, message);
-    }
-  }
-
-  private event(record: AgentRecord, event: RuntimeEvent): void {
-    if (event.type === "session_update") {
-      this.sessionUpdate(record, event);
-      return;
-    }
-    if (event.round !== undefined && event.round !== record.execution.round)
-      return;
-    if (event.type === "disconnected") {
-      this.disconnected(
-        record,
-        typeof event.error === "string" ? event.error : "Runtime disconnected.",
-      );
-      return;
-    }
-    if (event.type === "model_select") {
-      updateModelMetadata(record.snapshot, event);
-      this.changed();
-      return;
-    }
-    if (event.type === "session_state") {
-      if (
-        typeof event.state !== "string" ||
-        !isBackendSessionState(event.state)
-      ) {
-        throw new Error("Invalid worker session state");
-      }
-      if (record.snapshot.sessionState === "closed") return;
-      updateModelMetadata(record.snapshot, event);
-      record.snapshot.sessionState = event.state;
-      if (
-        event.state === "running" &&
-        !record.execution.finished &&
-        record.execution.dispatched &&
-        (record.execution.round === 1 || event.round === record.execution.round)
-      ) {
-        record.execution.accepted = true;
-      }
-      record.snapshot.sessionActivity =
-        event.state === "interactive" && typeof event.activity === "string"
-          ? event.activity.slice(0, 4096)
-          : undefined;
-      this.changed();
-      if (event.state === "idle") this.autoRelease(record);
-      return;
-    }
-    if (
-      record.execution.finished ||
-      (record.execution.round > 1 && event.round !== record.execution.round)
-    )
-      return;
-    if (event.type === "started") {
-      record.execution.accepted = true;
-      updateModelMetadata(record.snapshot, event);
-      this.changed();
-    }
-    if (event.type === "stats") {
-      updateModelMetadata(record.snapshot, event);
-      for (const key of [
-        "turnCount",
-        "toolUses",
-        "totalTokens",
-        "compactionCount",
-      ] as const) {
-        const value = event[key];
-        if (
-          typeof value === "number" &&
-          Number.isSafeInteger(value) &&
-          value >= 0
-        ) {
-          record.snapshot[key] = value;
-        }
-      }
-      record.snapshot.contextPercent = undefined;
-      if (
-        typeof event.contextPercent === "number" &&
-        Number.isFinite(event.contextPercent) &&
-        event.contextPercent >= 0 &&
-        event.contextPercent <= 100
-      ) {
-        record.snapshot.contextPercent = event.contextPercent;
-      }
-      this.changed();
-    }
-    if (event.type === "activity") {
-      if (typeof event.toolName === "string") {
-        record.snapshot.activity =
-          event.event === "tool_execution_end" ? "Thinking…" : event.toolName;
-      }
-      this.changed();
-    }
-    if (event.type === "completed") {
-      if (typeof event.result !== "string") {
-        throw new Error("Invalid worker result");
-      }
-      if (record.snapshot.sessionState === "running") {
-        record.snapshot.sessionState = "idle";
-      }
-      this.updateResult(
-        record,
-        event.result,
-        "managed",
-        event.canceled === true
-          ? "aborted"
-          : typeof event.error === "string"
-            ? "error"
-            : "completed",
-        event.truncated === true,
-        typeof event.error === "string" ? event.error : undefined,
-        typeof event.resultSequence === "number"
-          ? event.resultSequence
-          : undefined,
-      );
-      if (typeof event.sessionPath === "string") {
-        record.snapshot.sessionPath = event.sessionPath;
-      }
-      if (event.canceled === true) this.finish(record, "stopped");
-      else if (typeof event.error === "string") {
-        this.finish(record, "error", event.error);
-      } else {
-        this.finish(
-          record,
-          record.snapshot.status === "stopping" ? "stopped" : "completed",
-        );
-      }
-    }
-    if (event.type === "error" && typeof event.error === "string") {
-      this.finish(record, "error", event.error);
-    }
-  }
-
-  private updateResult(
-    record: AgentRecord,
-    response: string,
-    source: AgentSnapshot["resultSource"],
-    outcome: SessionUpdate["outcome"],
-    truncated: boolean,
-    error?: string,
-    sequence?: number,
-  ): void {
-    if (sequence !== undefined) {
-      if (!Number.isSafeInteger(sequence) || sequence < 1) {
-        throw new Error("Invalid result sequence");
-      }
-      if (sequence <= (record.lastResultSequence ?? 0)) return;
-      record.lastResultSequence = sequence;
-    }
-    if (!response) return;
-    Object.assign(record.snapshot, {
-      result: response,
-      resultSource: source,
-      resultRevision: (record.snapshot.resultRevision ?? 0) + 1,
-      resultUpdatedAt: Date.now(),
-      resultOutcome: outcome,
-      resultError: error,
-      truncated,
-    });
-  }
-
-  private sessionUpdate(record: AgentRecord, event: RuntimeEvent): void {
-    if (
-      typeof event.interactionId !== "string" ||
-      !event.interactionId.trim() ||
-      event.interactionId.length > 4096 ||
-      typeof event.sequence !== "number" ||
-      !Number.isSafeInteger(event.sequence) ||
-      event.sequence < 1 ||
-      typeof event.response !== "string" ||
-      Buffer.byteLength(event.response) > MAX_RESULT_BYTES ||
-      !["completed", "aborted", "error"].includes(String(event.outcome)) ||
-      (event.error !== undefined && typeof event.error !== "string")
-    ) {
-      throw new Error("Invalid session update");
-    }
-    if (
-      event.sequence <= (record.lastInteractionSequence ?? 0) ||
-      record.snapshot.sessionState === "closed" ||
-      record.releaseRequested ||
-      this.disposed
-    )
-      return;
-    record.lastInteractionSequence = event.sequence;
-    // Result ownership is separate from task completion: native work can
-    // settle while an older managed turn is still hydrating its final reply.
-    if (event.sequence <= (record.lastResultSequence ?? 0)) return;
-    const update: SessionUpdate = {
-      type: "session_update",
-      interactionId: event.interactionId,
-      sequence: event.sequence,
-      response: event.response,
-      outcome: event.outcome as SessionUpdate["outcome"],
-      truncated: event.truncated === true,
-      error: typeof event.error === "string" ? event.error : undefined,
-    };
-    this.updateResult(
-      record,
-      update.response,
-      "user_interaction",
-      update.outcome,
-      update.truncated === true,
-      update.error,
-      update.sequence,
-    );
-    this.changed();
-    try {
-      this.options.onSessionUpdate?.(this.snapshot(record), update);
-    } catch {
-      // Notification failures must not invalidate the latest reply.
-    }
-  }
-
-  private send(
-    record: AgentRecord,
-    command: RuntimeCommand,
-  ): void | Promise<void> {
-    if (!record.session?.connected) {
-      throw new Error("Subagent runtime is not connected.");
-    }
-    // Stamp before parsing/delivery so acceptance and dispatch see the same round.
-    if (record.execution.round > 1)
-      command = { ...command, round: record.execution.round };
-    command = this.parseTask(
-      record.runtime,
-      command,
-      this.runtimeOptions(
-        record.snapshot.id,
-        record.options,
-        record.runtime.id,
-      ),
-    );
-    validateCommand(command);
-    return record.session.send(command);
-  }
-
-  private parseTask(
-    runtime: AgentRuntime,
-    command: RuntimeCommand,
-    options: RuntimeOptions,
-  ): RuntimeCommand {
-    if (runtime.parseTask) return runtime.parseTask(command, options);
-    if (command.type === "task") {
-      if (!command.prompt.trim())
-        throw new Error("Task prompt must not be blank.");
-    }
-    return command;
-  }
-
-  private finish(record: AgentRecord, status: AgentStatus, error?: string) {
-    const execution = record.execution;
-    if (execution.finished) return;
-    const wasActive = record.snapshot.status !== "queued";
-    execution.finished = true;
-    clearTimeout(record.cancelTimer);
-    record.cancelTimer = undefined;
-    record.snapshot.status = status;
-    record.snapshot.error = error;
-    record.snapshot.completedAt = Date.now();
-    if (wasActive) this.active -= 1;
-    execution.snapshot = this.snapshot(record);
-    execution.resolve(execution.snapshot);
-    this.notify(record, execution);
-    this.changed();
-    this.pump();
-    this.autoRelease(record);
-  }
-
-  private notify(record: AgentRecord, execution = record.execution): void {
-    if (
-      this.disposed ||
-      execution.consumed ||
-      execution.waiters > 0 ||
-      execution.notified
-    ) {
-      return;
-    }
-    execution.notified = true;
-    try {
-      this.options.onComplete?.({
-        ...(execution.snapshot ?? this.snapshot(record)),
-      });
-    } catch {
-      // A parent notification failure cannot invalidate a completed task.
-    }
-  }
-}
-
-/** Ignore malformed optional metadata without replacing the last known model. */
-function updateModelMetadata(
-  snapshot: AgentSnapshot,
-  event: Record<string, unknown>,
-): void {
-  if (typeof event.runtimeSessionId === "string") {
-    snapshot.runtimeSessionId = event.runtimeSessionId;
-  }
-  if (typeof event.sessionPath === "string") {
-    snapshot.sessionPath = event.sessionPath;
-  }
-  const validText = (value: unknown): value is string =>
+function validMetadataText(value: unknown): value is string {
+  return (
     typeof value === "string" &&
     value.trim().length > 0 &&
     value.length <= 4096 &&
-    !/[\p{Cc}\p{Zl}\p{Zp}]/u.test(value);
-  if (validText(event.model)) {
-    if (event.model !== snapshot.model) snapshot.modelName = undefined;
-    snapshot.model = event.model;
-  }
-  if (
-    validText(event.modelName) &&
-    (event.model === undefined || validText(event.model))
-  ) {
-    snapshot.modelName = event.modelName;
-  }
+    !/[\p{Cc}\p{Zl}\p{Zp}]/u.test(value)
+  );
 }
 
-function createExecution(round: number, reused = false): Execution {
+/** Ignore malformed optional metadata without replacing the last known model. */
+function applyModelMetadata(
+  snapshot: AgentSnapshot,
+  event: RuntimeEventMeta,
+): AgentSnapshot {
+  const next = { ...snapshot };
+  if (typeof event.runtimeSessionId === "string") {
+    next.runtimeSessionId = event.runtimeSessionId;
+  }
+  if (typeof event.sessionPath === "string") {
+    next.sessionPath = event.sessionPath;
+  }
+  if (validMetadataText(event.model)) {
+    if (event.model !== next.model) next.modelName = undefined;
+    next.model = event.model;
+  }
+  if (
+    validMetadataText(event.modelName) &&
+    (event.model === undefined || validMetadataText(event.model))
+  ) {
+    next.modelName = event.modelName;
+  }
+  return next;
+}
+
+function applyStatsEvent(
+  snapshot: AgentSnapshot,
+  event: Extract<RuntimeEvent, { type: "stats" }>,
+): AgentSnapshot {
+  const next = applyModelMetadata(snapshot, event);
+  for (const key of [
+    "turnCount",
+    "toolUses",
+    "totalTokens",
+    "compactionCount",
+  ] as const) {
+    const value = event[key];
+    if (
+      typeof value === "number" &&
+      Number.isSafeInteger(value) &&
+      value >= 0
+    ) {
+      next[key] = value;
+    }
+  }
+  next.contextPercent =
+    typeof event.contextPercent === "number" &&
+    Number.isFinite(event.contextPercent) &&
+    event.contextPercent >= 0 &&
+    event.contextPercent <= 100
+      ? event.contextPercent
+      : undefined;
+  return next;
+}
+
+function applyResultUpdate(
+  snapshot: AgentSnapshot,
+  lastResultSequence: number | undefined,
+  update: {
+    response: string;
+    source: AgentSnapshot["resultSource"];
+    outcome: SessionUpdate["outcome"];
+    truncated: boolean;
+    error?: string;
+    sequence?: number;
+  },
+  now = Date.now(),
+): { snapshot: AgentSnapshot; lastResultSequence: number | undefined } {
+  let nextSequence = lastResultSequence;
+  if (update.sequence !== undefined) {
+    if (!Number.isSafeInteger(update.sequence) || update.sequence < 1) {
+      throw new Error("Invalid result sequence");
+    }
+    if (update.sequence <= (lastResultSequence ?? 0)) {
+      return { snapshot, lastResultSequence };
+    }
+    nextSequence = update.sequence;
+  }
+  if (!update.response) {
+    return { snapshot, lastResultSequence: nextSequence };
+  }
+  return {
+    lastResultSequence: nextSequence,
+    snapshot: {
+      ...snapshot,
+      result: update.response,
+      resultSource: update.source,
+      resultRevision: (snapshot.resultRevision ?? 0) + 1,
+      resultUpdatedAt: now,
+      resultOutcome: update.outcome,
+      resultError: update.error,
+      truncated: update.truncated,
+    },
+  };
+}
+
+function parseSessionUpdateEvent(
+  event: Extract<RuntimeEvent, { type: "session_update" }>,
+): SessionUpdate {
+  const raw = event as unknown as Record<string, unknown>;
+  if (
+    typeof raw.interactionId !== "string" ||
+    !raw.interactionId.trim() ||
+    raw.interactionId.length > 4096 ||
+    typeof raw.sequence !== "number" ||
+    !Number.isSafeInteger(raw.sequence) ||
+    raw.sequence < 1 ||
+    typeof raw.response !== "string" ||
+    Buffer.byteLength(raw.response) > MAX_RESULT_BYTES ||
+    !["completed", "aborted", "error"].includes(String(raw.outcome)) ||
+    (raw.error !== undefined && typeof raw.error !== "string")
+  ) {
+    throw new Error("Invalid session update");
+  }
+  return {
+    type: "session_update",
+    interactionId: raw.interactionId,
+    sequence: raw.sequence,
+    response: raw.response,
+    outcome: raw.outcome as SessionUpdate["outcome"],
+    truncated: raw.truncated === true,
+    error: typeof raw.error === "string" ? raw.error : undefined,
+  };
+}
+
+function createInitialSnapshot(
+  id: string,
+  runtime: AgentRuntime,
+  options: SpawnOptions,
+  now = Date.now(),
+): AgentSnapshot {
+  return {
+    id,
+    runtime: runtime.id,
+    runtimeName: runtime.displayName,
+    capabilities: { ...runtime.capabilities },
+    description: options.description,
+    cwd: options.cwd,
+    status: "queued",
+    round: 1,
+    inheritedContext: Boolean(options.parentSession),
+    keepAlive: options.agent?.keepAlive ?? options.keepAlive ?? false,
+    model: options.agent?.model ?? options.model,
+    configuredModel: options.agent?.model,
+    ...(options.agent
+      ? {
+          subagentType: options.agent.name,
+          displayName: options.agent.displayName,
+          agentSource: options.agent.source,
+          agentPath: options.agent.sourcePath,
+        }
+      : {}),
+    createdAt: now,
+    turnCount: 0,
+    toolUses: 0,
+    totalTokens: 0,
+    compactionCount: 0,
+  };
+}
+
+function createResumedSnapshot(
+  previous: AgentSnapshot,
+  description: string,
+  round: number,
+  now = Date.now(),
+): AgentSnapshot {
+  return {
+    ...previous,
+    description,
+    round,
+    status: "queued",
+    error: undefined,
+    activity: undefined,
+    sessionActivity: undefined,
+    createdAt: now,
+    startedAt: undefined,
+    completedAt: undefined,
+    turnCount: 0,
+    toolUses: 0,
+    totalTokens: 0,
+    contextPercent: undefined,
+    compactionCount: 0,
+  };
+}
+
+function projectSnapshot(
+  record: AgentRecord,
+  sessionClosed: boolean,
+): AgentSnapshot {
+  return {
+    ...record.snapshot,
+    capabilities: {
+      ...(record.session?.capabilities ??
+        record.snapshot.capabilities ??
+        record.runtime.capabilities),
+    },
+    terminalId:
+      record.snapshot.sessionState === "closed" || sessionClosed
+        ? undefined
+        : record.session?.terminal?.id,
+    viewId: record.view?.id,
+  };
+}
+
+function buildRuntimeOptions(
+  id: string,
+  options: SpawnOptions,
+  runtimeId: RuntimeId,
+  managerOptions: ManagerOptions,
+): RuntimeOptions {
+  return {
+    id,
+    cwd: options.cwd,
+    sessionName: options.sessionName,
+    model: options.agent?.model ?? options.model,
+    thinking: options.agent?.thinking ?? options.thinking,
+    agent: options.agent,
+    runtimeConfig: options.runtimeConfig,
+    context: options.context,
+    parentSession: options.parentSession,
+    executable: managerOptions.runtimeExecutables?.[runtimeId],
+    startupTimeoutMs: managerOptions.startupTimeoutMs,
+  };
+}
+
+function parseRuntimeTask(
+  runtime: AgentRuntime,
+  command: RuntimeCommand,
+  options: RuntimeOptions,
+): RuntimeCommand {
+  if (runtime.parseTask) return runtime.parseTask(command, options);
+  if (command.type === "task" && !command.prompt.trim()) {
+    throw new Error("Task prompt must not be blank.");
+  }
+  return command;
+}
+
+function createExecution(
+  round: number,
+  command: RuntimeCommand,
+  reused = false,
+): Execution {
   let resolve: Execution["resolve"] = () => undefined;
   const completion = new Promise<AgentSnapshot>((done) => {
     resolve = done;
   });
   return {
     round,
+    command,
     reused,
     dispatched: false,
     accepted: false,
@@ -1330,4 +468,955 @@ async function waitFor<T>(
       signal.removeEventListener("abort", abort);
     });
   });
+}
+
+// --- Imperative shell: queueing, lifecycle coordination & resource ownership ---
+
+/** Owns managed rounds, queueing and resource release; runtimes own execution resources. */
+export function createSubagentManager(
+  adapter: MuxAdapter,
+  options: ManagerOptions = {},
+): SubagentManager {
+  const records = new Map<string, AgentRecord>();
+  const listeners = new Set<() => void>();
+  const viewOperation = createSerializer();
+  const queue: { record: AgentRecord; execution: Execution }[] = [];
+  const runtimes = new Map<RuntimeId, AgentRuntime>();
+  const launches = new Set<Promise<void>>();
+  const closedSessions = new WeakSet<RuntimeSession>();
+  let active = 0;
+  let disposed = false;
+  let closing: Promise<void> | undefined;
+
+  for (const runtime of [
+    createPiRuntime(),
+    createCodexRuntime(),
+    ...(options.runtimes ?? []),
+  ]) {
+    runtimes.set(runtime.id, runtime);
+  }
+
+  const changed = (): void => {
+    for (const listener of listeners) {
+      try {
+        listener();
+      } catch {
+        // A view/render failure must never alter task execution.
+      }
+    }
+  };
+
+  const getRecord = (id: string): AgentRecord => {
+    const found = records.get(id);
+    if (!found) throw new Error(`Unknown subagent: ${id}`);
+    return found;
+  };
+
+  const getRuntime = (id: RuntimeId): AgentRuntime => {
+    const found = runtimes.get(id);
+    if (!found) throw new Error(`Unknown subagent runtime: ${id}`);
+    return found;
+  };
+
+  const snapshot = (record: AgentRecord): AgentSnapshot =>
+    projectSnapshot(
+      record,
+      Boolean(record.session && closedSessions.has(record.session)),
+    );
+
+  const clearViewTimer = (record: AgentRecord): void => {
+    clearTimeout(record.viewTimer);
+    record.viewTimer = undefined;
+  };
+
+  const forgetView = (record: AgentRecord): void => {
+    clearViewTimer(record);
+    record.view = undefined;
+    changed();
+  };
+
+  const checkNativeView = (record: AgentRecord): void => {
+    if (disposed) throw new Error("Subagent manager is closed.");
+    const blocker = nativeViewBlocker(
+      record,
+      Boolean(record.session && closedSessions.has(record.session)),
+    );
+    if (blocker) throw new Error(blocker);
+  };
+
+  const notify = (record: AgentRecord, execution = record.execution): void => {
+    if (
+      disposed ||
+      execution.consumed ||
+      execution.waiters > 0 ||
+      execution.notified
+    ) {
+      return;
+    }
+    execution.notified = true;
+    try {
+      options.onComplete?.({ ...(execution.snapshot ?? snapshot(record)) });
+    } catch {
+      // A parent notification failure cannot invalidate a completed task.
+    }
+  };
+
+  const closeSession = async (record: AgentRecord): Promise<boolean> => {
+    try {
+      const session = record.session;
+      if (session && !closedSessions.has(session)) {
+        await session.close();
+        closedSessions.add(session);
+      }
+      record.snapshot = {
+        ...record.snapshot,
+        sessionState: "closed",
+        sessionActivity: undefined,
+      };
+      return true;
+    } catch {
+      // Retain ownership and the concurrency slot until cleanup can be retried.
+      record.snapshot = {
+        ...record.snapshot,
+        sessionState: "disconnected",
+        sessionActivity: "Worker cleanup failed; retry stop_subagent.",
+      };
+      changed();
+      return false;
+    }
+  };
+
+  const scheduleViewCheck = (record: AgentRecord): void => {
+    if (
+      disposed ||
+      record.releaseRequested ||
+      record.snapshot.keepAlive ||
+      !record.execution.finished ||
+      !record.view ||
+      record.viewTimer
+    ) {
+      return;
+    }
+    record.viewTimer = setTimeout(() => {
+      record.viewTimer = undefined;
+      autoRelease(record);
+    }, 1_000);
+    record.viewTimer.unref();
+  };
+
+  const liveView = async (
+    record: AgentRecord,
+  ): Promise<ViewHandle | undefined> => {
+    if (record.view && !(await adapter.inspect_view(record.view)).alive) {
+      await adapter.close_view(record.view);
+      forgetView(record);
+      autoRelease(record);
+    }
+    return record.view;
+  };
+
+  const release = (id: string): Promise<void> => {
+    const record = getRecord(id);
+    if (record.releasing) return record.releasing;
+    if (!record.execution.finished) {
+      return Promise.reject(
+        new Error("Only a finished managed task can be released."),
+      );
+    }
+    record.releaseRequested = true;
+    clearViewTimer(record);
+    const operation = viewOperation(async () => {
+      let viewClosed = true;
+      if (record.view) {
+        try {
+          await adapter.close_view(record.view);
+          forgetView(record);
+        } catch {
+          viewClosed = false;
+        }
+      }
+      const sessionClosed = await closeSession(record);
+      if (!viewClosed || !sessionClosed) {
+        record.snapshot = {
+          ...record.snapshot,
+          sessionState: "disconnected",
+          sessionActivity:
+            "Worker cleanup failed; retry release or stop_subagent.",
+        };
+        changed();
+        throw new Error(`Could not release subagent ${id}; retry release.`);
+      }
+      record.snapshot = {
+        ...record.snapshot,
+        capabilities: {
+          ...(record.session?.capabilities ??
+            record.snapshot.capabilities ??
+            record.runtime.capabilities),
+        },
+      };
+      record.session = undefined;
+      record.options = {
+        ...record.options,
+        context: undefined,
+        parentSession: undefined,
+      };
+      changed();
+    });
+    record.releasing = operation;
+    const settled = () => {
+      record.releasing = undefined;
+    };
+    void operation.then(settled, settled);
+    return operation;
+  };
+
+  const autoRelease = (record: AgentRecord): void => {
+    if (!canAutoRelease(record, disposed)) return;
+    const execution = record.execution;
+    void viewOperation(async () => {
+      if (record.execution !== execution || !canAutoRelease(record, disposed)) {
+        return;
+      }
+      if (await liveView(record)) {
+        scheduleViewCheck(record);
+      } else if (
+        record.execution === execution &&
+        canAutoRelease(record, disposed)
+      ) {
+        // Do not await release from inside the serialized view operation.
+        void release(record.snapshot.id).catch(() => undefined);
+      }
+    }).catch(() => scheduleViewCheck(record));
+  };
+
+  const finish = (
+    record: AgentRecord,
+    status: AgentStatus,
+    error?: string,
+  ): void => {
+    const execution = record.execution;
+    if (execution.finished) return;
+    const wasActive = record.snapshot.status !== "queued";
+    execution.finished = true;
+    clearTimeout(record.cancelTimer);
+    record.cancelTimer = undefined;
+    record.snapshot = {
+      ...record.snapshot,
+      status,
+      error,
+      completedAt: Date.now(),
+    };
+    if (wasActive) active -= 1;
+    execution.snapshot = snapshot(record);
+    execution.resolve(execution.snapshot);
+    notify(record, execution);
+    changed();
+    pump();
+    autoRelease(record);
+  };
+
+  const terminate = (
+    record: AgentRecord,
+    status: "stopped" | "error",
+    error?: string,
+  ): Promise<void> => {
+    if (record.terminating) return record.terminating;
+    const operation = viewOperation(async () => {
+      // View ownership is independent from the runtime's execution resources.
+      let viewClosed = true;
+      if (record.view) {
+        try {
+          await adapter.close_view(record.view);
+          forgetView(record);
+        } catch {
+          // Runtime cleanup must still run if a detached view cannot be closed.
+          viewClosed = false;
+        }
+      }
+      const sessionClosed = await closeSession(record);
+      if (sessionClosed && viewClosed) {
+        finish(record, status, error);
+      } else {
+        record.snapshot = {
+          ...record.snapshot,
+          sessionState: "disconnected",
+          sessionActivity: "Worker cleanup failed; retry stop_subagent.",
+          ...(!record.execution.finished
+            ? {
+                status: "disconnected" as const,
+                error:
+                  "Worker cleanup failed; concurrency slot retained. Retry stop_subagent.",
+              }
+            : {}),
+        };
+        changed();
+      }
+    });
+    record.terminating = operation;
+    const clear = () => {
+      record.terminating = undefined;
+    };
+    void operation.then(clear, clear);
+    return operation;
+  };
+
+  const disconnected = (record: AgentRecord, error: string): void => {
+    if (record.snapshot.sessionState === "closed") return;
+    record.snapshot = {
+      ...record.snapshot,
+      sessionState: "disconnected",
+      sessionActivity: undefined,
+    };
+    changed();
+    const execution = record.execution;
+    if (record.terminating) return;
+    // Fresh startup handles its own rejection/cleanup. All other sessions,
+    // including idle/native sessions and unacknowledged resumes, are parent-
+    // owned and must not survive loss of the control connection.
+    if (
+      !execution.finished &&
+      !execution.reused &&
+      record.snapshot.status === "starting"
+    ) {
+      return;
+    }
+    void terminate(
+      record,
+      record.snapshot.status === "stopping" ? "stopped" : "error",
+      error,
+    );
+  };
+
+  const sendFailed = (
+    record: AgentRecord,
+    execution: Execution,
+    error: unknown,
+  ): void => {
+    if (record.execution !== execution || execution.finished) return;
+    const message = error instanceof Error ? error.message : String(error);
+    if (error instanceof RuntimeTaskRejectedError) {
+      // The adapter guarantees no dispatch, unlike an uncertain transport error.
+      execution.dispatched = false;
+      if (record.snapshot.sessionState === "running") {
+        record.snapshot = { ...record.snapshot, sessionState: "idle" };
+      }
+      finish(record, "error", message);
+    } else if (execution.reused && !execution.dispatched) {
+      finish(record, "error", message);
+    } else {
+      disconnected(record, message);
+    }
+  };
+
+  const send = (
+    record: AgentRecord,
+    command: RuntimeCommand,
+  ): void | Promise<void> => {
+    if (!record.session?.connected) {
+      throw new Error("Subagent runtime is not connected.");
+    }
+    // Tasks are already parsed and stamped on acceptance; stamp control frames too.
+    if (
+      record.execution.round > 1 &&
+      command.round !== record.execution.round
+    ) {
+      command = { ...command, round: record.execution.round };
+    }
+    validateCommand(command);
+    return record.session.send(command);
+  };
+
+  const handleSessionUpdate = (
+    record: AgentRecord,
+    event: Extract<RuntimeEvent, { type: "session_update" }>,
+  ): void => {
+    const update = parseSessionUpdateEvent(event);
+    if (
+      update.sequence <= (record.lastInteractionSequence ?? 0) ||
+      record.snapshot.sessionState === "closed" ||
+      record.releaseRequested ||
+      disposed
+    ) {
+      return;
+    }
+    record.lastInteractionSequence = update.sequence;
+    // Result ownership is separate from task completion: native work can
+    // settle while an older managed turn is still hydrating its final reply.
+    if (update.sequence <= (record.lastResultSequence ?? 0)) return;
+    const applied = applyResultUpdate(
+      record.snapshot,
+      record.lastResultSequence,
+      {
+        response: update.response,
+        source: "user_interaction",
+        outcome: update.outcome,
+        truncated: update.truncated === true,
+        error: update.error,
+        sequence: update.sequence,
+      },
+    );
+    record.snapshot = applied.snapshot;
+    record.lastResultSequence = applied.lastResultSequence;
+    changed();
+    try {
+      options.onSessionUpdate?.(snapshot(record), update);
+    } catch {
+      // Notification failures must not invalidate the latest reply.
+    }
+  };
+
+  const handleEvent = (record: AgentRecord, event: RuntimeEvent): void => {
+    if (event.type === "session_update") {
+      handleSessionUpdate(record, event);
+      return;
+    }
+    if (event.round !== undefined && event.round !== record.execution.round) {
+      return;
+    }
+    if (event.type === "disconnected") {
+      disconnected(
+        record,
+        typeof event.error === "string" ? event.error : "Runtime disconnected.",
+      );
+      return;
+    }
+    if (event.type === "model_select") {
+      record.snapshot = applyModelMetadata(record.snapshot, event);
+      changed();
+      return;
+    }
+    if (event.type === "session_state") {
+      if (
+        typeof event.state !== "string" ||
+        !isBackendSessionState(event.state)
+      ) {
+        throw new Error("Invalid worker session state");
+      }
+      if (record.snapshot.sessionState === "closed") return;
+      record.snapshot = {
+        ...applyModelMetadata(record.snapshot, event),
+        sessionState: event.state,
+        sessionActivity:
+          event.state === "interactive" && typeof event.activity === "string"
+            ? event.activity.slice(0, 4096)
+            : undefined,
+      };
+      if (
+        event.state === "running" &&
+        !record.execution.finished &&
+        record.execution.dispatched &&
+        (record.execution.round === 1 || event.round === record.execution.round)
+      ) {
+        record.execution.accepted = true;
+      }
+      changed();
+      if (event.state === "idle") autoRelease(record);
+      return;
+    }
+    if (
+      record.execution.finished ||
+      (record.execution.round > 1 && event.round !== record.execution.round)
+    ) {
+      return;
+    }
+    if (event.type === "started") {
+      record.execution.accepted = true;
+      record.snapshot = applyModelMetadata(record.snapshot, event);
+      changed();
+    } else if (event.type === "stats") {
+      record.snapshot = applyStatsEvent(record.snapshot, event);
+      changed();
+    } else if (event.type === "activity") {
+      if (typeof event.toolName === "string") {
+        record.snapshot = {
+          ...record.snapshot,
+          activity:
+            event.event === "tool_execution_end" ? "Thinking…" : event.toolName,
+        };
+      }
+      changed();
+    } else if (event.type === "completed") {
+      if (typeof event.result !== "string") {
+        throw new Error("Invalid worker result");
+      }
+      let nextSnapshot =
+        record.snapshot.sessionState === "running"
+          ? { ...record.snapshot, sessionState: "idle" as const }
+          : record.snapshot;
+      const applied = applyResultUpdate(
+        nextSnapshot,
+        record.lastResultSequence,
+        {
+          response: event.result,
+          source: "managed",
+          outcome:
+            event.canceled === true
+              ? "aborted"
+              : typeof event.error === "string"
+                ? "error"
+                : "completed",
+          truncated: event.truncated === true,
+          error: typeof event.error === "string" ? event.error : undefined,
+          sequence:
+            typeof event.resultSequence === "number"
+              ? event.resultSequence
+              : undefined,
+        },
+      );
+      nextSnapshot = applied.snapshot;
+      record.lastResultSequence = applied.lastResultSequence;
+      if (typeof event.sessionPath === "string") {
+        nextSnapshot = { ...nextSnapshot, sessionPath: event.sessionPath };
+      }
+      record.snapshot = nextSnapshot;
+      if (event.canceled === true) finish(record, "stopped");
+      else if (typeof event.error === "string") {
+        finish(record, "error", event.error);
+      } else {
+        finish(
+          record,
+          record.snapshot.status === "stopping" ? "stopped" : "completed",
+        );
+      }
+    } else if (event.type === "error" && typeof event.error === "string") {
+      finish(record, "error", event.error);
+    }
+  };
+
+  const startResumed = async (
+    record: AgentRecord,
+    execution: Execution,
+  ): Promise<void> => {
+    try {
+      if (!record.session?.connected || !(await record.session.inspect())) {
+        throw new Error(
+          "Retained runtime is unavailable; no automatic restart.",
+        );
+      }
+      if (record.execution !== execution || execution.finished || disposed) {
+        return;
+      }
+      if (dispatchBlocker(record, "resume")) {
+        throw new RuntimeTaskRejectedError(
+          "Subagent became unavailable or busy with native/user interaction while resume was queued.",
+        );
+      }
+      record.snapshot = {
+        ...record.snapshot,
+        status: "running",
+        activity: "Thinking…",
+      };
+      execution.dispatched = true;
+      await send(record, execution.command);
+      changed();
+    } catch (error) {
+      sendFailed(record, execution, error);
+    }
+  };
+
+  const startFresh = async (record: AgentRecord): Promise<void> => {
+    const execution = record.execution;
+    try {
+      // Record ownership before start, including resources acquired on failure.
+      record.session = record.runtime.create(
+        buildRuntimeOptions(
+          record.snapshot.id,
+          record.options,
+          record.runtime.id,
+          options,
+        ),
+        { mux: adapter, emit: (event) => handleEvent(record, event) },
+      );
+      await record.session.start();
+      if (
+        record.execution.finished ||
+        disposed ||
+        record.snapshot.status === "stopping"
+      ) {
+        await terminate(record, "stopped");
+        return;
+      }
+      const blocker = dispatchBlocker(record, "startup");
+      if (blocker === "disconnected") {
+        throw new Error("Subagent runtime disconnected during startup.");
+      }
+      if (blocker === "busy") {
+        throw new RuntimeTaskRejectedError(
+          "Managed dispatch requires an idle session; native/user work must settle first.",
+        );
+      }
+      record.snapshot = {
+        ...record.snapshot,
+        status: "running",
+        sessionState: "running",
+        activity: "Thinking…",
+      };
+      changed();
+      record.execution.dispatched = true;
+      await send(record, execution.command);
+    } catch (error) {
+      if (record.execution !== execution || execution.finished) return;
+      if (error instanceof RuntimeTaskRejectedError) {
+        sendFailed(record, execution, error);
+        return;
+      }
+      await terminate(
+        record,
+        record.snapshot.status === "stopping" ? "stopped" : "error",
+        error instanceof Error ? error.message : String(error),
+      );
+    }
+  };
+
+  const pump = (): void => {
+    while (!disposed && active < (options.maxConcurrent ?? 4) && queue.length) {
+      const entry = queue.shift();
+      if (!entry) continue;
+      const { record, execution } = entry;
+      if (record.execution !== execution || execution.finished) continue;
+      active += 1;
+      record.snapshot = {
+        ...record.snapshot,
+        status: "starting",
+        startedAt: Date.now(),
+      };
+      changed();
+      const launch = execution.reused
+        ? startResumed(record, execution)
+        : startFresh(record);
+      record.launch = launch;
+      launches.add(launch);
+      const settled = () => {
+        launches.delete(launch);
+        if (record.launch === launch) record.launch = undefined;
+      };
+      void launch.then(settled, settled);
+    }
+  };
+
+  const closeView = (id: string): Promise<void> => {
+    const record = getRecord(id);
+    return viewOperation(async () => {
+      if (record.view) {
+        await adapter.close_view(record.view);
+        forgetView(record);
+      }
+      autoRelease(record);
+    });
+  };
+
+  const dispose = async (): Promise<void> => {
+    disposed = true;
+    const pendingCloses: Promise<void>[] = [];
+    for (const record of records.values()) {
+      record.releaseRequested = true;
+      clearViewTimer(record);
+      const session = record.session;
+      if (session && !closedSessions.has(session)) {
+        pendingCloses.push(
+          session.close().then(() => {
+            closedSessions.add(session);
+          }),
+        );
+      }
+      if (!record.execution.finished) finish(record, "stopped");
+    }
+    await Promise.allSettled([...launches, ...pendingCloses]);
+    const cleanup = await Promise.allSettled(
+      [...records.values()].map(async (record) => {
+        const viewClosed = await closeView(record.snapshot.id).then(
+          () => true,
+          () => false,
+        );
+        const terminalClosed = await closeSession(record);
+        if (!viewClosed || !terminalClosed) {
+          const resources = [
+            ...(!viewClosed ? ["view"] : []),
+            ...(!terminalClosed ? ["runtime"] : []),
+          ].join(" and ");
+          throw new Error(
+            `Could not clean up subagent ${record.snapshot.id}: ${resources}.`,
+          );
+        }
+      }),
+    );
+    const errors = cleanup.flatMap((result) =>
+      result.status === "rejected" ? [result.reason as Error] : [],
+    );
+    if (errors.length) {
+      throw new AggregateError(
+        errors,
+        `Some subagent terminals could not be cleaned up. ${errors.map((error) => error.message).join(" ")}`,
+      );
+    }
+  };
+
+  return {
+    subscribe(listener) {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    },
+    list: () => [...records.values()].map(snapshot),
+    get: (id) => snapshot(getRecord(id)),
+    runtimeCapabilities: (id) => ({ ...getRuntime(id).capabilities }),
+    spawn(spawnOpts) {
+      if (disposed) throw new Error("Subagent manager is closed.");
+      const runtimeId = spawnOpts.agent?.runtime ?? spawnOpts.runtime ?? "pi";
+      const runtime = getRuntime(runtimeId);
+      const rawConfig =
+        spawnOpts.agent?.runtimeConfig ?? spawnOpts.runtimeConfig ?? {};
+      const callConfig = runtime.parseCallConfig?.(
+        spawnOpts.runtimeParams ?? {},
+        rawConfig,
+        "spawn",
+      );
+      let normalized: SpawnOptions = {
+        ...spawnOpts,
+        ...(callConfig ??
+          (runtime.parseConfig
+            ? { runtimeConfig: runtime.parseConfig(rawConfig) }
+            : { runtimeConfig: rawConfig })),
+        sessionName: `Sub · ${spawnOpts.agent?.name ?? "-"} · ${spawnOpts.description.replace(/\s+/g, " ").trim()}`,
+      };
+      const id = randomUUID();
+      let runtimeOptions = buildRuntimeOptions(
+        id,
+        normalized,
+        runtime.id,
+        options,
+      );
+      runtime.validate(runtimeOptions);
+      if (runtime.prepareSpawn) {
+        runtimeOptions = runtime.prepareSpawn(runtimeOptions);
+        normalized = { ...normalized, ...runtimeOptions };
+      }
+      const command = parseRuntimeTask(
+        runtime,
+        taskCommand(normalized),
+        runtimeOptions,
+      );
+      validateCommand(command);
+      if (normalized.parentSession && !runtime.capabilities.nativeClone) {
+        throw new Error(
+          "Cross-runtime context cloning is unsupported by this runtime.",
+        );
+      }
+      const record: AgentRecord = {
+        snapshot: createInitialSnapshot(id, runtime, normalized),
+        options: normalized,
+        runtime,
+        execution: createExecution(1, command),
+      };
+      records.set(record.snapshot.id, record);
+      queue.push({ record, execution: record.execution });
+      pump();
+      changed();
+      return snapshot(record);
+    },
+    backgroundPreference: (id) => getRecord(id).options.agent?.runInBackground,
+    resume(id, resumeOpts) {
+      if (disposed) throw new Error("Subagent manager is closed.");
+      const record = getRecord(id);
+      const blocker = resumeBlocker(record);
+      if (blocker) throw new Error(blocker);
+      const callConfig = record.runtime.parseCallConfig?.(
+        resumeOpts.runtimeParams ?? {},
+        record.options.runtimeConfig ?? {},
+        "resume",
+      );
+      const next: SpawnOptions = {
+        ...record.options,
+        ...resumeOpts,
+        // The runtime partitions fresh call options; no per-round data is reused.
+        runtimeParams: resumeOpts.runtimeParams,
+        ...callConfig,
+        description: resumeOpts.description ?? record.options.description,
+      };
+      const round = record.execution.round + 1;
+      if (!Number.isSafeInteger(round)) {
+        throw new Error("Subagent round limit reached.");
+      }
+      const command = parseRuntimeTask(
+        record.runtime,
+        { ...taskCommand(next), round },
+        buildRuntimeOptions(id, next, record.runtime.id, options),
+      );
+      validateCommand(command);
+      clearViewTimer(record);
+      record.options = next;
+      record.execution = createExecution(round, command, true);
+      record.snapshot = createResumedSnapshot(
+        record.snapshot,
+        next.description,
+        round,
+      );
+      queue.push({ record, execution: record.execution });
+      pump();
+      changed();
+      return snapshot(record);
+    },
+    async result(id, wait = false, signal) {
+      const record = getRecord(id);
+      const execution = record.execution;
+      if (wait && !execution.finished) {
+        // Claims and resolved snapshots belong to a round, not the reusable worker.
+        execution.waiters += 1;
+        try {
+          const resolved = await waitFor(execution.completion, signal);
+          execution.consumed = true;
+          return { ...resolved };
+        } finally {
+          execution.waiters -= 1;
+          if (execution.finished) notify(record, execution);
+        }
+      }
+      if (execution.finished) execution.consumed = true;
+      return snapshot(record);
+    },
+    steer(id, message) {
+      if (!message.trim()) {
+        throw new Error("Steering message must not be blank.");
+      }
+      const record = getRecord(id);
+      const blocker = steerBlocker(record);
+      if (blocker) throw new Error(blocker);
+      const sent = send(record, { type: "steer", message });
+      // Legacy callers may ignore the return value; parents can await delivery.
+      if (sent) void sent.catch(() => undefined);
+      return sent;
+    },
+    stop(id) {
+      const record = getRecord(id);
+      const execution = record.execution;
+      if (execution.finished) {
+        if (record.snapshot.sessionState === "disconnected") {
+          void terminate(record, "error");
+        }
+        return snapshot(record);
+      }
+      if (
+        record.snapshot.status === "queued" ||
+        (record.execution.reused && !record.execution.dispatched)
+      ) {
+        finish(record, "stopped");
+      } else if (record.snapshot.status !== "stopping") {
+        const starting = record.snapshot.status === "starting";
+        const isDisconnected = record.snapshot.status === "disconnected";
+        record.snapshot = { ...record.snapshot, status: "stopping" };
+        if (starting) {
+          // Abort startup immediately, even while another agent mutates views.
+          const sessionClosing = record.session?.close();
+          if (sessionClosing) void sessionClosing.catch(() => undefined);
+          void terminate(record, "stopped");
+        } else if (isDisconnected || !record.session?.connected) {
+          void terminate(record, "stopped");
+        } else {
+          try {
+            const sent = send(record, { type: "cancel" });
+            if (sent) {
+              void sent.catch((error) => sendFailed(record, execution, error));
+            }
+          } catch (error) {
+            sendFailed(record, execution, error);
+          }
+          if (record.execution !== execution || execution.finished) {
+            changed();
+            return snapshot(record);
+          }
+          record.cancelTimer = setTimeout(() => {
+            if (record.execution !== execution || execution.finished) return;
+            void terminate(record, "stopped");
+          }, options.cancelTimeoutMs ?? 5_000);
+        }
+      }
+      changed();
+      return snapshot(record);
+    },
+    openView(id) {
+      const record = getRecord(id);
+      record.openingViews = (record.openingViews ?? 0) + 1;
+      return viewOperation(async () => {
+        checkNativeView(record);
+        // Keep TypeScript narrowing at the resource boundary, after ordered policy.
+        if (!record.session) {
+          throw new Error("Subagent terminal is not ready yet.");
+        }
+        const terminal = await record.session.attachment();
+        checkNativeView(record);
+        const existing = await liveView(record);
+        checkNativeView(record);
+        if (existing) {
+          await adapter.focus_view(existing);
+          checkNativeView(record);
+          return existing;
+        }
+        const view = await adapter.open_view({ terminal });
+        record.view = view;
+        changed();
+        try {
+          checkNativeView(record);
+        } catch (error) {
+          // Only roll back the view created by this operation. Record ownership
+          // first so a failed close remains available for cleanup retries.
+          try {
+            await adapter.close_view(view);
+            forgetView(record);
+          } catch {
+            scheduleViewCheck(record);
+          }
+          throw error;
+        }
+        scheduleViewCheck(record);
+        return view;
+      }).finally(() => {
+        record.openingViews = (record.openingViews ?? 1) - 1;
+      });
+    },
+    closeView,
+    release,
+    async remove(id) {
+      const record = getRecord(id);
+      // Even a previously stopped startup may still acquire a terminal.
+      const launch = record.launch;
+      record.releaseRequested = true;
+      clearViewTimer(record);
+      record.execution.consumed = true;
+      clearTimeout(record.cancelTimer);
+      record.cancelTimer = undefined;
+      // Closing immediately cancels startup; keep the session recorded for retries.
+      const sessionClosing = record.session?.close();
+      if (sessionClosing) void sessionClosing.catch(() => undefined);
+      record.snapshot = { ...record.snapshot, sessionState: "closed" };
+      // Drop stale queue references even if this round was already stopped.
+      for (let index = queue.length - 1; index >= 0; index -= 1) {
+        if (queue[index]?.record === record) queue.splice(index, 1);
+      }
+      if (record.snapshot.status === "queued") {
+        finish(record, "stopped");
+      } else if (!record.execution.finished) {
+        record.snapshot = { ...record.snapshot, status: "stopping" };
+        changed();
+      }
+      await launch?.catch(() => undefined);
+      await viewOperation(async () => {
+        if (record.view) {
+          await adapter.close_view(record.view);
+          forgetView(record);
+        }
+        if (!(await closeSession(record))) {
+          throw new Error(`Could not delete subagent ${id}; retry deletion.`);
+        }
+        finish(record, "stopped");
+        records.delete(id);
+        changed();
+      });
+    },
+    close() {
+      closing ??= dispose().catch((error) => {
+        closing = undefined;
+        throw error;
+      });
+      return closing;
+    },
+  };
 }

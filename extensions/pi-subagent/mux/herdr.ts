@@ -1,6 +1,7 @@
 import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { isAbsolute } from "node:path";
+import { createSerializer } from "../util.ts";
 import {
   type MuxAdapter,
   type OpenViewOptions,
@@ -9,13 +10,6 @@ import {
   TerminalStartError,
   type ViewHandle,
 } from "./index.ts";
-import { registerMux } from "./registry.ts";
-
-registerMux({
-  id: "herdr",
-  matches: (env) => env.HERDR_ENV === "1",
-  create: () => new HerdrAdapter(),
-});
 
 export interface RunOptions {
   timeoutMs: number;
@@ -36,6 +30,7 @@ export type HerdrRunner = (
 
 export interface HerdrOptions {
   runner?: HerdrRunner;
+  env?: NodeJS.ProcessEnv;
   binPath?: string;
   timeoutMs?: number;
   maxOutputBytes?: number;
@@ -124,6 +119,68 @@ function shellQuote(argv: string[]): string {
   return argv.map((arg) => `'${arg.replaceAll("'", `'"'"'`)}'`).join(" ");
 }
 
+function parseCommandOutput(
+  output: RunResult,
+  maxOutputBytes: number,
+  emptyOk: boolean,
+): JsonObject {
+  if (
+    Buffer.byteLength(output.stdout) + Buffer.byteLength(output.stderr) >
+    maxOutputBytes
+  ) {
+    throw new HerdrError("output_limit");
+  }
+  for (const text of [output.stdout, output.stderr]) {
+    if (!text.trim().startsWith("{")) continue;
+    const envelope = object(json(text));
+    if ("error" in envelope) {
+      const code = object(envelope.error).code;
+      throw new HerdrError(
+        typeof code === "string" && /^[a-z][a-z0-9_]{0,63}$/.test(code)
+          ? code
+          : "server_error",
+      );
+    }
+  }
+  if (output.exitCode !== 0) throw new HerdrError("cli_failed");
+  // Installed `pane run` succeeds with no output, unlike layout commands.
+  if (emptyOk && !output.stdout.trim()) return {};
+  return object(object(json(output.stdout)).result);
+}
+
+function buildWorkspaceCreateArgv(options: StartOptions): string[] {
+  if (
+    !options.agentId ||
+    !isAbsolute(options.cwd) ||
+    !options.argv.length ||
+    !options.argv[0] ||
+    [
+      options.agentId,
+      options.agentType ?? "",
+      options.cwd,
+      ...options.argv,
+    ].some((s) => s.includes("\0"))
+  ) {
+    throw new HerdrError("invalid_start");
+  }
+  const argv = [
+    "workspace",
+    "create",
+    "--cwd",
+    options.cwd,
+    "--label",
+    `sub-${options.agentType ?? "anonymous"}-${options.agentId}`,
+    "--no-focus",
+  ];
+  for (const [key, value] of Object.entries(options.env)) {
+    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key) || value.includes("\0")) {
+      throw new HerdrError("invalid_env");
+    }
+    argv.push("--env", `${key}=${value}`);
+  }
+  return argv;
+}
+
 interface Pane {
   paneId: string;
   terminalId: string;
@@ -153,101 +210,77 @@ interface View extends Pane {
   direction: "right" | "down";
 }
 
+function workerPane(worker: Worker): Pane {
+  return {
+    paneId: identifier(worker.paneId),
+    terminalId: identifier(worker.terminalId),
+    workspaceId: worker.workspaceId,
+  };
+}
+
 /**
  * CLI verified against Herdr 0.9.0 and https://herdr.dev/docs/cli-reference/.
  * Nested terminal attach was verified in an isolated, disposable workspace.
  * No server startup, pane move, takeover, or observe mode is performed.
  */
-export class HerdrAdapter implements MuxAdapter {
-  private readonly runner: HerdrRunner;
-  private readonly binary: string;
-  private readonly limits: RunOptions;
-  private readonly workers = new Map<string, Worker>();
-  private readonly views = new Map<string, View>();
-  // Tombstones cover runtime-driven destroy racing manager view cleanup.
-  // Only handles issued and successfully retired by this adapter qualify.
-  private readonly closedViews = new Set<string>();
-  private mutation: Promise<void> = Promise.resolve();
-
-  constructor(options: HerdrOptions = {}) {
-    this.runner = options.runner ?? runHerdr;
-    this.binary = options.binPath ?? process.env.HERDR_BIN_PATH ?? "herdr";
-    this.limits = {
-      timeoutMs: options.timeoutMs ?? 15_000,
-      maxOutputBytes: options.maxOutputBytes ?? 1024 * 1024,
-    };
-    for (const limit of Object.values(this.limits)) {
-      if (!Number.isSafeInteger(limit) || limit <= 0) {
-        throw new HerdrError("invalid_limits");
-      }
+export function createHerdrAdapter(options: HerdrOptions = {}): MuxAdapter {
+  const runner = options.runner ?? runHerdr;
+  const pinnedEnv = options.env ? { ...options.env } : undefined;
+  const currentEnv = () => pinnedEnv ?? process.env;
+  const binary = options.binPath ?? currentEnv().HERDR_BIN_PATH ?? "herdr";
+  const limits: RunOptions = {
+    timeoutMs: options.timeoutMs ?? 15_000,
+    maxOutputBytes: options.maxOutputBytes ?? 1024 * 1024,
+  };
+  for (const limit of Object.values(limits)) {
+    if (!Number.isSafeInteger(limit) || limit <= 0) {
+      throw new HerdrError("invalid_limits");
     }
   }
 
+  const workers = new Map<string, Worker>();
+  const views = new Map<string, View>();
+  // Tombstones cover runtime-driven destroy racing manager view cleanup.
+  // Only handles issued and successfully retired by this adapter qualify.
+  const closedViews = new Set<string>();
   // Serialize creation/destruction so shutdown cannot overtake an in-flight
   // split and leave its attachment behind. A failure never blocks later cleanup.
-  private serialize<T>(operation: () => Promise<T>): Promise<T> {
-    const result = this.mutation.then(operation);
-    this.mutation = result.then(
-      () => {},
-      () => {},
-    );
-    return result;
-  }
+  const serialize = createSerializer();
 
-  check_env(): boolean {
-    return process.env.HERDR_ENV === "1";
-  }
+  const checkEnv = (): boolean => currentEnv().HERDR_ENV === "1";
 
-  private async command(argv: string[], emptyOk = false): Promise<JsonObject> {
-    if (!this.check_env()) throw new HerdrError("not_in_herdr");
+  const command = async (
+    argv: string[],
+    emptyOk = false,
+  ): Promise<JsonObject> => {
+    if (!checkEnv()) throw new HerdrError("not_in_herdr");
     let output: RunResult;
     try {
-      output = await this.runner(this.binary, argv, { ...this.limits });
+      output = await runner(binary, argv, { ...limits });
     } catch (error) {
       // Even injected runners may include secrets in their thrown errors.
       throw error instanceof HerdrError
         ? error
         : new HerdrError("runner_failed");
     }
-    if (
-      Buffer.byteLength(output.stdout) + Buffer.byteLength(output.stderr) >
-      this.limits.maxOutputBytes
-    ) {
-      throw new HerdrError("output_limit");
-    }
-    for (const text of [output.stdout, output.stderr]) {
-      if (!text.trim().startsWith("{")) continue;
-      const envelope = object(json(text));
-      if ("error" in envelope) {
-        const code = object(envelope.error).code;
-        throw new HerdrError(
-          typeof code === "string" && /^[a-z][a-z0-9_]{0,63}$/.test(code)
-            ? code
-            : "server_error",
-        );
-      }
-    }
-    if (output.exitCode !== 0) throw new HerdrError("cli_failed");
-    // Installed `pane run` succeeds with no output, unlike layout commands.
-    if (emptyOk && !output.stdout.trim()) return {};
-    return object(object(json(output.stdout)).result);
-  }
+    return parseCommandOutput(output, limits.maxOutputBytes, emptyOk);
+  };
 
-  private worker(handle: TerminalHandle): Worker {
-    const worker = this.workers.get(handle.id);
-    if (!worker) throw new HerdrError("unowned_terminal");
-    return worker;
-  }
+  const ownedWorker = (handle: TerminalHandle): Worker => {
+    const found = workers.get(handle.id);
+    if (!found) throw new HerdrError("unowned_terminal");
+    return found;
+  };
 
-  private view(handle: ViewHandle): View {
-    const view = this.views.get(handle.id);
-    if (!view) throw new HerdrError("unowned_view");
-    return view;
-  }
+  const ownedView = (handle: ViewHandle): View => {
+    const found = views.get(handle.id);
+    if (!found) throw new HerdrError("unowned_view");
+    return found;
+  };
 
-  private async matches(expected: Pane): Promise<boolean> {
+  const matches = async (expected: Pane): Promise<boolean> => {
     try {
-      const result = await this.command(["pane", "get", expected.paneId]);
+      const result = await command(["pane", "get", expected.paneId]);
       const actual = pane(result.pane);
       return (
         actual.paneId === expected.paneId &&
@@ -255,38 +288,26 @@ export class HerdrAdapter implements MuxAdapter {
         actual.workspaceId === expected.workspaceId
       );
     } catch (error) {
-      if (isNotFound(error)) {
-        return false;
-      }
+      if (isNotFound(error)) return false;
       throw error;
     }
-  }
+  };
 
-  private workerPane(worker: Worker): Pane {
-    return {
-      paneId: identifier(worker.paneId),
-      terminalId: identifier(worker.terminalId),
-      workspaceId: worker.workspaceId,
-    };
-  }
-
-  private async confirmStopped(worker: Worker): Promise<void> {
+  const confirmStopped = async (worker: Worker): Promise<void> => {
     if (!worker.paneId) throw new HerdrError("terminal_stop_unconfirmed");
     try {
-      const result = await this.command(["pane", "get", worker.paneId]);
+      const result = await command(["pane", "get", worker.paneId]);
       pane(result.pane);
       // The old alias can resolve to a moved pane or a replacement terminal.
       // Neither is permission to close its new location or forget ownership.
       throw new HerdrError("terminal_not_stopped");
     } catch (error) {
-      if (!isNotFound(error)) {
-        throw error;
-      }
+      if (!isNotFound(error)) throw error;
     }
     if (!worker.terminalId) throw new HerdrError("terminal_stop_unconfirmed");
     // A move may also invalidate the original alias. Check the terminal's
     // identity across the server rather than assuming not_found means exited.
-    const result = await this.command(["pane", "list"]);
+    const result = await command(["pane", "list"]);
     if (!Array.isArray(result.panes)) throw new HerdrError("invalid_response");
     for (const value of result.panes) {
       const actual = pane(value);
@@ -297,22 +318,20 @@ export class HerdrAdapter implements MuxAdapter {
         throw new HerdrError("terminal_not_stopped");
       }
     }
-  }
+  };
 
-  private async closeWorkspace(worker: Worker): Promise<void> {
+  const closeWorkspace = async (worker: Worker): Promise<void> => {
     let result: JsonObject;
     try {
-      result = await this.command([
+      result = await command([
         "pane",
         "list",
         "--workspace",
         worker.workspaceId,
       ]);
     } catch (error) {
-      if (!isNotFound(error)) {
-        throw error;
-      }
-      await this.confirmStopped(worker);
+      if (!isNotFound(error)) throw error;
+      await confirmStopped(worker);
       return;
     }
     if (!Array.isArray(result.panes)) throw new HerdrError("invalid_response");
@@ -332,59 +351,39 @@ export class HerdrAdapter implements MuxAdapter {
       // Recover a missing terminal ID only from the known root in the owned
       // workspace, never from a pane resolved in a foreign location.
       worker.terminalId ??= pane(result.panes[0]).terminalId;
-      if (!(await this.matches(this.workerPane(worker)))) {
+      if (!(await matches(workerPane(worker)))) {
         throw new HerdrError("terminal_not_stopped");
       }
     } else {
-      await this.confirmStopped(worker);
+      await confirmStopped(worker);
     }
-    await this.command(["workspace", "close", worker.workspaceId]);
+    await command(["workspace", "close", worker.workspaceId]);
     // Closing the workspace can race a move, or succeed after it disappeared.
     // Keep the handle until the terminal's absence is actually confirmed.
-    await this.confirmStopped(worker);
-  }
+    await confirmStopped(worker);
+  };
 
-  start(options: StartOptions): Promise<TerminalHandle> {
-    return this.serialize(() => this.startWorker(options));
-  }
+  const closeView = async (handle: ViewHandle): Promise<void> => {
+    if (closedViews.has(handle.id)) return;
+    const view = ownedView(handle);
+    if (await matches(view)) {
+      await command(["pane", "close", view.paneId]);
+    }
+    views.delete(handle.id);
+    closedViews.add(handle.id);
+  };
 
-  private async startWorker(options: StartOptions): Promise<TerminalHandle> {
-    if (
-      !options.agentId ||
-      !isAbsolute(options.cwd) ||
-      !options.argv.length ||
-      !options.argv[0] ||
-      [
-        options.agentId,
-        options.agentType ?? "",
-        options.cwd,
-        ...options.argv,
-      ].some((s) => s.includes("\0"))
-    ) {
-      throw new HerdrError("invalid_start");
-    }
-    const argv = [
-      "workspace",
-      "create",
-      "--cwd",
-      options.cwd,
-      "--label",
-      `sub-${options.agentType ?? "anonymous"}-${options.agentId}`,
-      "--no-focus",
-    ];
-    for (const [key, value] of Object.entries(options.env)) {
-      if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key) || value.includes("\0")) {
-        throw new HerdrError("invalid_env");
-      }
-      argv.push("--env", `${key}=${value}`);
-    }
-    const result = await this.command(argv);
+  const startWorker = async (
+    startOpts: StartOptions,
+  ): Promise<TerminalHandle> => {
+    const argv = buildWorkspaceCreateArgv(startOpts);
+    const result = await command(argv);
     const worker: Worker = {
       workspaceId: identifier(object(result.workspace).workspace_id),
-      cwd: options.cwd,
+      cwd: startOpts.cwd,
     };
     const handle = { id: randomUUID() };
-    this.workers.set(handle.id, worker);
+    workers.set(handle.id, worker);
     try {
       // Capture the root ID before validating the remaining response so a
       // partial response can still be rolled back without touching outsiders.
@@ -397,82 +396,67 @@ export class HerdrAdapter implements MuxAdapter {
       worker.terminalId = root.terminalId;
       // exec ties terminal lifetime to the supplied command, not a leftover
       // shell. The only shell text is a fixed prefix plus quoted argv.
-      await this.command(
-        ["pane", "run", root.paneId, `exec ${shellQuote(options.argv)}`],
+      await command(
+        ["pane", "run", root.paneId, `exec ${shellQuote(startOpts.argv)}`],
         true,
       );
       return handle;
     } catch (error) {
       try {
-        await this.closeWorkspace(worker);
+        await closeWorkspace(worker);
       } catch (cleanupError) {
         throw new TerminalStartError(
           handle,
           new AggregateError([error, cleanupError], "Herdr start rollback"),
         );
       }
-      this.workers.delete(handle.id);
+      workers.delete(handle.id);
       throw error;
     }
-  }
+  };
 
-  async inspect(terminal: TerminalHandle): Promise<{ alive: boolean }> {
-    const worker = this.worker(terminal);
-    return { alive: await this.matches(this.workerPane(worker)) };
-  }
-
-  destroy(terminal: TerminalHandle): Promise<void> {
-    return this.serialize(() => this.destroyWorker(terminal));
-  }
-
-  private async destroyWorker(terminal: TerminalHandle): Promise<void> {
-    const worker = this.worker(terminal);
-    for (const [id, view] of this.views) {
-      if (view.workerId === terminal.id) await this.closeView({ id });
+  const destroyWorker = async (terminal: TerminalHandle): Promise<void> => {
+    const worker = ownedWorker(terminal);
+    for (const [id, view] of views) {
+      if (view.workerId === terminal.id) await closeView({ id });
     }
-    await this.closeWorkspace(worker);
-    this.workers.delete(terminal.id);
-  }
+    await closeWorkspace(worker);
+    workers.delete(terminal.id);
+  };
 
-  open_view(options: OpenViewOptions): Promise<ViewHandle> {
-    return this.serialize(() => this.openView(options));
-  }
-
-  private async openView(options: OpenViewOptions): Promise<ViewHandle> {
-    const worker = this.worker(options.terminal);
-    if (
-      !(
-        (options.direction === "down" && options.relativeTo) ||
-        (options.direction === "right" && !options.relativeTo)
-      )
-    ) {
-      throw new HerdrError("invalid_placement");
-    }
-    const relativeView = options.relativeTo
-      ? this.view(options.relativeTo)
-      : undefined;
-    const parentId = process.env.HERDR_PANE_ID;
+  const openView = async (viewOpts: OpenViewOptions): Promise<ViewHandle> => {
+    const worker = ownedWorker(viewOpts.terminal);
+    const parentId = currentEnv().HERDR_PANE_ID;
     if (!parentId) throw new HerdrError("missing_parent_pane");
     identifier(parentId);
-    if (!(await this.matches(this.workerPane(worker)))) {
+    if (!(await matches(workerPane(worker)))) {
       throw new HerdrError("terminal_not_alive");
     }
-    const parent = pane((await this.command(["pane", "get", parentId])).pane);
+    const parent = pane((await command(["pane", "get", parentId])).pane);
     if (parent.paneId !== parentId) throw new HerdrError("invalid_response");
-    const anchor: Pane = relativeView ?? parent;
-    if (
-      anchor.workspaceId !== parent.workspaceId ||
-      !(await this.matches(anchor))
-    ) {
-      throw new HerdrError("view_not_alive");
+    // Place the first attachment right of the parent and stack subsequent ones
+    // below the last surviving owned attachment in the parent's workspace.
+    let relativeView: View | undefined;
+    for (const [id, candidate] of [...views.entries()].reverse()) {
+      if (!(await matches(candidate))) {
+        views.delete(id);
+        closedViews.add(id);
+        continue;
+      }
+      if (candidate.workspaceId === parent.workspaceId) {
+        relativeView = candidate;
+        break;
+      }
     }
-    const result = await this.command([
+    const anchor: Pane = relativeView ?? parent;
+    const direction = relativeView ? "down" : "right";
+    const result = await command([
       "pane",
       "split",
       "--pane",
       anchor.paneId,
       "--direction",
-      options.direction,
+      direction,
       "--cwd",
       worker.cwd,
       "--no-focus",
@@ -486,25 +470,25 @@ export class HerdrAdapter implements MuxAdapter {
       throw new HerdrError("invalid_response");
     }
     const handle = { id: randomUUID() };
-    this.views.set(handle.id, {
+    views.set(handle.id, {
       ...attachment,
-      workerId: options.terminal.id,
+      workerId: viewOpts.terminal.id,
       parent,
       anchor: {
         paneId: anchor.paneId,
         terminalId: anchor.terminalId,
         workspaceId: anchor.workspaceId,
       },
-      direction: options.direction,
+      direction,
     });
     try {
-      await this.command(
+      await command(
         [
           "pane",
           "run",
           attachment.paneId,
           shellQuote([
-            this.binary,
+            binary,
             "terminal",
             "attach",
             identifier(worker.terminalId),
@@ -515,29 +499,20 @@ export class HerdrAdapter implements MuxAdapter {
       return handle;
     } catch (error) {
       try {
-        await this.closeView(handle);
+        await closeView(handle);
       } catch (cleanupError) {
         throw new AggregateError([error, cleanupError], "Herdr view rollback");
       }
       throw error;
     }
-  }
+  };
 
-  async inspect_view(handle: ViewHandle): Promise<{ alive: boolean }> {
-    if (this.closedViews.has(handle.id)) return { alive: false };
-    return { alive: await this.matches(this.view(handle)) };
-  }
-
-  focus_view(handle: ViewHandle): Promise<void> {
-    return this.serialize(() => this.focusView(handle));
-  }
-
-  private async focusView(handle: ViewHandle): Promise<void> {
-    const view = this.view(handle);
-    if (!(await this.matches(view))) throw new HerdrError("view_not_alive");
+  const focusView = async (handle: ViewHandle): Promise<void> => {
+    const view = ownedView(handle);
+    if (!(await matches(view))) throw new HerdrError("view_not_alive");
     const routes = [
       { anchor: view.anchor, direction: view.direction },
-      ...[view.parent, ...this.views.values()].flatMap((anchor) =>
+      ...[view.parent, ...views.values()].flatMap((anchor) =>
         ["right", "down", "up", "left"].map((direction) => ({
           anchor,
           direction,
@@ -550,7 +525,7 @@ export class HerdrAdapter implements MuxAdapter {
       if (
         route.anchor.paneId === view.paneId ||
         route.anchor.workspaceId !== view.workspaceId ||
-        !(await this.matches(route.anchor))
+        !(await matches(route.anchor))
       ) {
         continue;
       }
@@ -562,30 +537,33 @@ export class HerdrAdapter implements MuxAdapter {
       ];
       let result: JsonObject;
       try {
-        result = await this.command(["pane", "neighbor", ...argv]);
+        result = await command(["pane", "neighbor", ...argv]);
       } catch (error) {
         if (isNotFound(error)) continue;
         throw error;
       }
       if (object(result.neighbor).neighbor_pane_id === view.paneId) {
-        await this.command(["pane", "focus", ...argv]);
+        await command(["pane", "focus", ...argv]);
         return;
       }
     }
     throw new HerdrError("view_layout_changed");
-  }
+  };
 
-  close_view(handle: ViewHandle): Promise<void> {
-    return this.serialize(() => this.closeView(handle));
-  }
-
-  private async closeView(handle: ViewHandle): Promise<void> {
-    if (this.closedViews.has(handle.id)) return;
-    const view = this.view(handle);
-    if (await this.matches(view)) {
-      await this.command(["pane", "close", view.paneId]);
-    }
-    this.views.delete(handle.id);
-    this.closedViews.add(handle.id);
-  }
+  return {
+    id: "herdr",
+    check_env: checkEnv,
+    start: (startOpts) => serialize(() => startWorker(startOpts)),
+    inspect: async (terminal) => ({
+      alive: await matches(workerPane(ownedWorker(terminal))),
+    }),
+    destroy: (terminal) => serialize(() => destroyWorker(terminal)),
+    open_view: (viewOpts) => serialize(() => openView(viewOpts)),
+    inspect_view: async (handle) =>
+      closedViews.has(handle.id)
+        ? { alive: false }
+        : { alive: await matches(ownedView(handle)) },
+    focus_view: (handle) => serialize(() => focusView(handle)),
+    close_view: (handle) => serialize(() => closeView(handle)),
+  };
 }

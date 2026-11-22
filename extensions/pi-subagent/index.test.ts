@@ -3,6 +3,7 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { type TestContext, test } from "node:test";
 import {
+  DefaultPackageManager,
   type ExtensionAPI,
   type ExtensionCommandContext,
   type ExtensionContext,
@@ -15,18 +16,30 @@ import { useAgentDir } from "../../tests/helpers/agent-dir.ts";
 import subagentExtension, { registerSubagents } from "./index.ts";
 import {
   type AgentSnapshot,
+  createSubagentManager,
   type ManagerOptions,
   type ResumeOptions,
   type SpawnOptions,
-  SubagentManager,
+  type SubagentManager,
 } from "./manager.ts";
-import { HerdrAdapter } from "./mux/herdr.ts";
-import type { MuxAdapter } from "./mux/index.ts";
-import {
-  type MuxFactoryOptions,
-  registerMux,
-  resolveMux,
-} from "./mux/registry.ts";
+import type { MuxAdapter, MuxFactoryOptions } from "./mux/index.ts";
+import { resolveMux } from "./mux/resolve.ts";
+
+function withManagerOverrides(
+  overrides:
+    | Partial<SubagentManager>
+    | ((
+        base: SubagentManager,
+        options?: ManagerOptions,
+      ) => Partial<SubagentManager>),
+): typeof createSubagentManager {
+  return (adapter, options) => {
+    const base = createSubagentManager(adapter, options);
+    const extra =
+      typeof overrides === "function" ? overrides(base, options) : overrides;
+    return { ...base, ...extra };
+  };
+}
 
 function environment(t: TestContext, env: Record<string, string | undefined>) {
   for (const [key, value] of Object.entries(env)) {
@@ -192,7 +205,7 @@ for (const [name, env, expected] of [
     if (expected === "none") assert.equal(adapter, undefined);
     else {
       assert.ok(adapter);
-      assert.equal(adapter instanceof HerdrAdapter, expected === "legacy");
+      assert.equal(adapter.id, expected === "legacy" ? "herdr" : "herdr-app");
     }
     const capture = registrations();
     subagentExtension(capture.pi);
@@ -220,36 +233,23 @@ for (const [name, config, worker] of [
   });
 }
 
-let warningFactory: ((options?: MuxFactoryOptions) => MuxAdapter) | undefined;
-registerMux({
-  id: "entry-warning-test",
-  matches: (env) => env.PI_KITS_MUX_WARNING_TEST === "1",
-  create: (options) => {
-    assert.ok(warningFactory);
-    return warningFactory(options);
-  },
-});
-
 test("entry queues factory warnings and notifies through lifecycle context", async (t) => {
   useAgentDir(t, {});
   environment(t, {
     HERDR_ENV: undefined,
     HC_TERMINAL_ID: undefined,
     PI_KITS_SUBAGENT_WORKER: undefined,
-    PI_KITS_MUX_WARNING_TEST: "1",
   });
   let warn: MuxFactoryOptions["warn"];
-  warningFactory = (options) => {
-    assert.equal(options?.env, process.env);
-    warn = options?.warn;
-    warn?.("factory warning");
-    return {} as MuxAdapter;
-  };
-  t.after(() => {
-    warningFactory = undefined;
-  });
   const capture = registrations();
-  subagentExtension(capture.pi);
+  subagentExtension(capture.pi, {
+    resolveMux: (env, options) => {
+      assert.equal(env, process.env);
+      warn = options?.warn;
+      warn?.("factory warning");
+      return {} as MuxAdapter;
+    },
+  });
   const notifications: unknown[][] = [];
   const ctx = {
     mode: "print",
@@ -281,31 +281,35 @@ test("entry queues factory warnings and notifies through lifecycle context", asy
 });
 
 for (const failures of [1, 3]) {
-  test(`shutdown retains its manager through ${failures} cleanup failures`, async (t) => {
+  test(`shutdown retains its manager through ${failures} cleanup failures`, async () => {
     const capture = registrations();
     const managers: SubagentManager[] = [];
     const closed: SubagentManager[] = [];
-    t.mock.method(
-      SubagentManager.prototype,
-      "result",
-      async function (this: SubagentManager) {
-        managers.push(this);
-        return {
-          id: "owned",
-          description: "Task",
-          status: "completed" as const,
+    registerSubagents(
+      capture.pi,
+      {} as MuxAdapter,
+      undefined,
+      undefined,
+      (adapter, options) => {
+        const instance: SubagentManager = {
+          ...createSubagentManager(adapter, options),
+          async result() {
+            managers.push(instance);
+            return {
+              id: "owned",
+              description: "Task",
+              status: "completed" as const,
+            };
+          },
+          async close() {
+            closed.push(instance);
+            if (closed.length <= failures)
+              throw new Error("Cleanup unavailable");
+          },
         };
+        return instance;
       },
     );
-    t.mock.method(
-      SubagentManager.prototype,
-      "close",
-      async function (this: SubagentManager) {
-        closed.push(this);
-        if (closed.length <= failures) throw new Error("Cleanup unavailable");
-      },
-    );
-    registerSubagents(capture.pi, {} as MuxAdapter);
     const tool = capture.definitions.get("get_subagent_result");
     const shutdown = capture.hookHandlers.get("session_shutdown");
     assert.ok(tool && shutdown);
@@ -400,17 +404,20 @@ test("canonical settings reach the subagent manager", async (t) => {
     PI_KITS_SUBAGENT_WORKER: undefined,
   });
   let options: ManagerOptions | undefined;
-  t.mock.method(
-    SubagentManager.prototype,
-    "spawn",
-    function (this: SubagentManager) {
-      options = (this as unknown as { options: ManagerOptions }).options;
-      return { id: "canonical-id", description: "test", status: "queued" };
-    },
-  );
   const capture = registrations();
   capture.pi.getThinkingLevel = () => "low";
-  subagentExtension(capture.pi);
+  subagentExtension(capture.pi, {
+    createManager: withManagerOverrides((_base, received) => {
+      options = received;
+      return {
+        spawn: () => ({
+          id: "canonical-id",
+          description: "test",
+          status: "queued" as const,
+        }),
+      };
+    }),
+  });
   const spawn = capture.definitions.get("subagent");
   assert.ok(spawn);
   await spawn.execute(
@@ -421,7 +428,23 @@ test("canonical settings reach the subagent manager", async (t) => {
     { cwd, mode: "print", hasUI: false } as ExtensionToolContext,
   );
   assert.equal(options?.maxConcurrent, 2);
-  assert.deepEqual(options?.extensionAllowlist, extensionAllowlist);
+  const piRuntime = options?.runtimes?.find((runtime) => runtime.id === "pi");
+  assert.ok(piRuntime);
+  const resolvedSources: string[] = [];
+  t.mock.method(
+    DefaultPackageManager.prototype,
+    "resolveExtensionSources",
+    async (sources: string[]) => {
+      resolvedSources.push(...sources);
+      throw new Error("stop after allowlist check");
+    },
+  );
+  const session = piRuntime.create(
+    { id: "allowlist-check", cwd },
+    { mux: {} as MuxAdapter, emit() {} },
+  );
+  await assert.rejects(session.start(), /stop after allowlist check/);
+  assert.deepEqual(resolvedSources, extensionAllowlist);
 });
 
 test("native reply notifications share the renderer without waking the parent", async (t) => {
@@ -442,15 +465,16 @@ test("native reply notifications share the renderer without waking the parent", 
     resultUpdatedAt: 123,
     resultOutcome: "completed",
   };
-  t.mock.method(
-    SubagentManager.prototype,
-    "spawn",
-    function (this: SubagentManager) {
-      options = (this as unknown as { options: ManagerOptions }).options;
-      return snapshot;
-    },
+  registerSubagents(
+    capture.pi,
+    {} as MuxAdapter,
+    undefined,
+    undefined,
+    withManagerOverrides((_base, received) => {
+      options = received;
+      return { spawn: () => snapshot };
+    }),
   );
-  registerSubagents(capture.pi, {} as MuxAdapter);
   const spawn = capture.definitions.get("subagent");
   assert.ok(spawn);
   await spawn.execute(
@@ -505,24 +529,23 @@ test("opaque runtime configuration is forwarded on spawn and resume", async (t) 
   const capture = registrations();
   const spawned: SpawnOptions[] = [];
   const resumed: ResumeOptions[] = [];
-  t.mock.method(SubagentManager.prototype, "spawn", (options: SpawnOptions) => {
-    spawned.push(options);
-    return { id: "review-id", description: "Review", status: "queued" };
-  });
-  t.mock.method(
-    SubagentManager.prototype,
-    "resume",
-    (_id: string, options: ResumeOptions) => {
-      resumed.push(options);
-      return { id: "review-id", description: "Review", status: "queued" };
-    },
+  registerSubagents(
+    capture.pi,
+    {} as MuxAdapter,
+    undefined,
+    undefined,
+    withManagerOverrides({
+      spawn(options: SpawnOptions) {
+        spawned.push(options);
+        return { id: "review-id", description: "Review", status: "queued" };
+      },
+      resume(_id: string, options: ResumeOptions) {
+        resumed.push(options);
+        return { id: "review-id", description: "Review", status: "queued" };
+      },
+      backgroundPreference: () => undefined,
+    }),
   );
-  t.mock.method(
-    SubagentManager.prototype,
-    "backgroundPreference",
-    () => undefined,
-  );
-  registerSubagents(capture.pi, {} as MuxAdapter);
   const context = { cwd, mode: "print", hasUI: false } as ExtensionToolContext;
   const target = { type: "baseBranch", branch: "main" };
   const spawn = capture.definitions.get("subagent");
@@ -620,16 +643,23 @@ test("cwd resolves against the parent while agent definitions stay parent-scoped
   const capture = registrations();
   const spawned: SpawnOptions[] = [];
   capture.pi.getThinkingLevel = () => "low";
-  t.mock.method(SubagentManager.prototype, "spawn", (options: SpawnOptions) => {
-    spawned.push(options);
-    return {
-      id: "child",
-      description: options.description,
-      cwd: options.cwd,
-      status: "queued",
-    };
-  });
-  registerSubagents(capture.pi, {} as MuxAdapter);
+  registerSubagents(
+    capture.pi,
+    {} as MuxAdapter,
+    undefined,
+    undefined,
+    withManagerOverrides({
+      spawn(options: SpawnOptions) {
+        spawned.push(options);
+        return {
+          id: "child",
+          description: options.description,
+          cwd: options.cwd,
+          status: "queued",
+        };
+      },
+    }),
+  );
   const spawn = capture.definitions.get("subagent");
   const resume = capture.definitions.get("resume_subagent");
   assert.ok(spawn && resume);
@@ -681,15 +711,22 @@ test("invalid cwd rejects before manager spawn or worker creation, including the
   const cwd = useAgentDir(t);
   writeFileSync(join(cwd, "file"), "not a directory");
   const capture = registrations();
-  t.mock.method(SubagentManager.prototype, "spawn", () => {
-    assert.fail("Invalid cwd must not reach manager spawn");
-  });
   const mux = new Proxy({} as MuxAdapter, {
     get() {
       assert.fail("Invalid cwd must not create workers");
     },
   });
-  registerSubagents(capture.pi, mux);
+  registerSubagents(
+    capture.pi,
+    mux,
+    undefined,
+    undefined,
+    withManagerOverrides({
+      spawn() {
+        assert.fail("Invalid cwd must not reach manager spawn");
+      },
+    }),
+  );
   const spawn = capture.definitions.get("subagent");
   assert.ok(spawn);
   for (const [parent, input] of [
@@ -729,7 +766,19 @@ test("keep_alive is validated and forwarded only at session creation", async (t)
   );
   const capture = registrations();
   capture.pi.getThinkingLevel = () => "low";
-  registerSubagents(capture.pi, {} as MuxAdapter);
+  let latest: SpawnOptions | undefined;
+  registerSubagents(
+    capture.pi,
+    {} as MuxAdapter,
+    undefined,
+    undefined,
+    withManagerOverrides({
+      spawn(options: SpawnOptions) {
+        latest = options;
+        return { id: "retained", description: "Task", status: "queued" };
+      },
+    }),
+  );
   const spawn = capture.definitions.get("subagent");
   const resume = capture.definitions.get("resume_subagent");
   assert.ok(spawn && resume);
@@ -739,11 +788,6 @@ test("keep_alive is validated and forwarded only at session creation", async (t)
     }
   ).properties;
   assert.equal(properties.keep_alive, undefined);
-  let latest: SpawnOptions | undefined;
-  t.mock.method(SubagentManager.prototype, "spawn", (options: SpawnOptions) => {
-    latest = options;
-    return { id: "retained", description: "Task", status: "queued" };
-  });
   const ctx = { cwd: agentDir, mode: "print" } as ExtensionToolContext;
   for (const keep_alive of [undefined, false, true]) {
     const params = { prompt: "Task", description: "Task", keep_alive };
@@ -842,17 +886,30 @@ test("context and inheritance options remain opaque to the tool entry point", as
   t.mock.method(session, "getBranch", () => {
     assert.fail("Only the selected runtime may read parent history");
   });
-  t.mock.method(SubagentManager.prototype, "runtimeCapabilities", () => {
-    assert.fail("Tool entry must not decide how a runtime uses host context");
-  });
   let latest: SpawnOptions | undefined;
-  t.mock.method(SubagentManager.prototype, "spawn", (options: SpawnOptions) => {
-    latest = options;
-    return { id: "child", description: options.description, status: "queued" };
-  });
   const capture = registrations();
   capture.pi.getThinkingLevel = () => "low";
-  registerSubagents(capture.pi, {} as MuxAdapter);
+  registerSubagents(
+    capture.pi,
+    {} as MuxAdapter,
+    undefined,
+    undefined,
+    withManagerOverrides({
+      runtimeCapabilities() {
+        assert.fail(
+          "Tool entry must not decide how a runtime uses host context",
+        );
+      },
+      spawn(options: SpawnOptions) {
+        latest = options;
+        return {
+          id: "child",
+          description: options.description,
+          status: "queued",
+        };
+      },
+    }),
+  );
   const spawn = capture.definitions.get("subagent");
   assert.ok(spawn);
   const ctx = {
@@ -911,48 +968,48 @@ test("context and inheritance options remain opaque to the tool entry point", as
   );
 });
 
-test("resume tool respects retained background preferences and aborted callers never enqueue work", async (t) => {
+test("resume tool respects retained background preferences and aborted callers never enqueue work", async () => {
   const capture = registrations();
   const adapter = new Proxy({} as MuxAdapter, {
     get() {
       assert.fail("Tool presentation must not spawn a process");
     },
   });
-  registerSubagents(capture.pi, adapter);
-  const tool = capture.definitions.get("resume_subagent");
-  assert.ok(tool);
   let preference: boolean | undefined;
   let resumed = 0;
   let waited = 0;
-  t.mock.method(
-    SubagentManager.prototype,
-    "backgroundPreference",
-    () => preference,
+  registerSubagents(
+    capture.pi,
+    adapter,
+    undefined,
+    undefined,
+    withManagerOverrides({
+      backgroundPreference: () => preference,
+      resume(id: string, options: ResumeOptions) {
+        resumed += 1;
+        assert.equal(id, "same-id");
+        assert.equal(options.prompt, "Continue");
+        return {
+          id,
+          description: "Original task",
+          status: "queued",
+          round: 2,
+        };
+      },
+      async result(id: string, wait?: boolean) {
+        assert.equal(wait, true);
+        waited += 1;
+        return {
+          id,
+          description: "Original task",
+          status: "completed",
+          round: 2,
+        };
+      },
+    }),
   );
-  t.mock.method(
-    SubagentManager.prototype,
-    "resume",
-    (id: string, options: ResumeOptions) => {
-      resumed += 1;
-      assert.equal(id, "same-id");
-      assert.equal(options.prompt, "Continue");
-      return { id, description: "Original task", status: "queued", round: 2 };
-    },
-  );
-  t.mock.method(
-    SubagentManager.prototype,
-    "result",
-    async (id: string, wait: boolean) => {
-      assert.equal(wait, true);
-      waited += 1;
-      return {
-        id,
-        description: "Original task",
-        status: "completed",
-        round: 2,
-      };
-    },
-  );
+  const tool = capture.definitions.get("resume_subagent");
+  assert.ok(tool);
   const ctx = { mode: "print" } as ExtensionToolContext;
   for (const [configured, requested, expectedWait] of [
     [undefined, undefined, false],
@@ -993,19 +1050,26 @@ test("resume tool respects retained background preferences and aborted callers n
   assert.equal(resumed, 4);
 });
 
-test("views stop command delegates to the manager and reports failures", async (t) => {
+test("views stop command delegates to the manager and reports failures", async () => {
   const capture = registrations();
-  registerSubagents(capture.pi, {} as MuxAdapter);
-  const command = capture.commandHandlers.get("subagent:views");
-  assert.ok(command);
   const stopped: string[] = [];
   const notices: string[] = [];
-  t.mock.method(SubagentManager.prototype, "get", (id: string) => ({ id }));
-  t.mock.method(SubagentManager.prototype, "stop", (id: string) => {
-    stopped.push(id);
-    if (stopped.length > 1) throw new Error("Stop failed");
-    return { id };
-  });
+  registerSubagents(
+    capture.pi,
+    {} as MuxAdapter,
+    undefined,
+    undefined,
+    withManagerOverrides({
+      get: (id: string) => ({ id, description: "Task", status: "running" }),
+      stop(id: string) {
+        stopped.push(id);
+        if (stopped.length > 1) throw new Error("Stop failed");
+        return { id, description: "Task", status: "stopped" };
+      },
+    }),
+  );
+  const command = capture.commandHandlers.get("subagent:views");
+  assert.ok(command);
   const ctx = {
     mode: "tui",
     ui: {
@@ -1023,23 +1087,30 @@ test("views stop command delegates to the manager and reports failures", async (
   assert.deepEqual(notices, ["Stop failed"]);
 });
 
-test("views command confirms deletion before execution and reports failures", async (t) => {
+test("views command confirms deletion before execution and reports failures", async () => {
   const capture = registrations();
-  registerSubagents(capture.pi, {} as MuxAdapter);
-  const command = capture.commandHandlers.get("subagent:views");
-  assert.ok(command);
   const order: string[] = [];
   let confirmed = false;
   let fail = false;
-  t.mock.method(SubagentManager.prototype, "get", (id: string) => ({
-    id,
-    description: "My task",
-    status: "queued",
-  }));
-  t.mock.method(SubagentManager.prototype, "remove", async (id: string) => {
-    order.push(`remove:${id}`);
-    if (fail) throw new Error("Cleanup failed");
-  });
+  registerSubagents(
+    capture.pi,
+    {} as MuxAdapter,
+    undefined,
+    undefined,
+    withManagerOverrides({
+      get: (id: string) => ({
+        id,
+        description: "My task",
+        status: "queued",
+      }),
+      async remove(id: string) {
+        order.push(`remove:${id}`);
+        if (fail) throw new Error("Cleanup failed");
+      },
+    }),
+  );
+  const command = capture.commandHandlers.get("subagent:views");
+  assert.ok(command);
   const ctx = {
     mode: "tui",
     ui: {
@@ -1083,15 +1154,22 @@ test("views copy command writes the full ID through Pi clipboard support", async
     WT_SESSION: "pi-kits-clipboard-test",
   });
   const capture = registrations();
-  registerSubagents(capture.pi, {} as MuxAdapter);
+  const id = "12345678-full-subagent-id";
+  registerSubagents(
+    capture.pi,
+    {} as MuxAdapter,
+    undefined,
+    undefined,
+    withManagerOverrides({
+      get: () => ({
+        id,
+        description: "Task",
+        status: "queued",
+      }),
+    }),
+  );
   const command = capture.commandHandlers.get("subagent:views");
   assert.ok(command);
-  const id = "12345678-full-subagent-id";
-  t.mock.method(SubagentManager.prototype, "get", () => ({
-    id,
-    description: "Task",
-    status: "queued",
-  }));
   const output: string[] = [];
   const originalWrite = process.stdout.write.bind(process.stdout);
   const write = t.mock.method(

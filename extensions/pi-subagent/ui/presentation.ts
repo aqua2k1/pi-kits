@@ -10,15 +10,9 @@ import {
   widgetContentBounds,
 } from "../../../shared/ui/widget.ts";
 import type { AgentSnapshot } from "../manager.ts";
-import {
-  hasDisplayError,
-  isDisplayActive as isBusy,
-  nativeViewHint,
-} from "../policy.ts";
+import { hasDisplayError, isDisplayActive } from "../policy.ts";
 
 export { oneLine } from "../../../shared/ui/renderers.ts";
-export { isDisplayActive as isBusy } from "../policy.ts";
-export { isWorkingStatus as isWorking } from "../state.ts";
 
 export interface AgentSource {
   list(): AgentSnapshot[];
@@ -85,7 +79,7 @@ export function agentStats(agent: AgentSnapshot, now = Date.now()): string {
 
 export function statusIcon(agent: AgentSnapshot, theme: Theme, now: number) {
   if (agent.sessionState === "disconnected") return theme.fg("error", "✗");
-  if (isBusy(agent)) {
+  if (isDisplayActive(agent)) {
     return theme.fg("accent", frames[Math.floor(now / 200) % frames.length]);
   }
   if (agent.status === "completed") return theme.fg("success", "✓");
@@ -93,10 +87,6 @@ export function statusIcon(agent: AgentSnapshot, theme: Theme, now: number) {
     return theme.fg("error", "✗");
   }
   return theme.fg("dim", agent.status === "queued" ? "◦" : "■");
-}
-
-export function nativeViewAvailable(agent: AgentSnapshot): boolean {
-  return nativeViewHint(agent);
 }
 
 export interface AgentWidgetHit {
@@ -124,9 +114,9 @@ export function layoutAgentWidget(
   if (width < 1 || !agents.length) return { lines: [], hits: [] };
   const bounds = widgetContentBounds(width);
   const queued = agents.filter((agent) => agent.status === "queued").length;
-  const active = agents.filter(isBusy);
+  const active = agents.filter(isDisplayActive);
   const finished = agents.filter(
-    (agent) => !isBusy(agent) && agent.status !== "queued",
+    (agent) => !isDisplayActive(agent) && agent.status !== "queued",
   );
   // Bounded height; active agents take priority over retained finished rows.
   const nodes: TreeNode<string>[] = active.slice(0, 4).map((agent) => {

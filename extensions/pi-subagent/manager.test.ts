@@ -12,7 +12,7 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import { useAgentDir } from "../../tests/helpers/agent-dir.ts";
 import { parseAgentDefinition } from "./agents.ts";
-import { SubagentManager } from "./manager.ts";
+import { createSubagentManager } from "./manager.ts";
 import type {
   MuxAdapter,
   OpenViewOptions,
@@ -21,6 +21,7 @@ import type {
   ViewHandle,
 } from "./mux/index.ts";
 import { captureParentSession } from "./runtime/pi/clone.ts";
+import { createPiRuntime } from "./runtime/pi/index.ts";
 
 test("model metadata replaces requested defaults and tracks idle, stats and resumed workers", async (t) => {
   const mux = new FakeMux();
@@ -33,7 +34,7 @@ test("model metadata replaces requested defaults and tracks idle, stats and resu
         : event,
     ),
   );
-  const manager = new SubagentManager(mux);
+  const manager = createSubagentManager(mux);
   t.after(() => manager.close());
   const agent = parseAgentDefinition(
     "---\nmodel: agent/requested\n---\nRole",
@@ -201,7 +202,7 @@ const task = {
 
 test("native session names use the agent type or '-' and stay fixed on resume", async (t) => {
   const mux = new FakeMux();
-  const manager = new SubagentManager(mux);
+  const manager = createSubagentManager(mux);
   t.after(() => manager.close());
   const named = manager.spawn({
     ...task,
@@ -246,7 +247,7 @@ test("inheritance opens one native cloned session, keeps IPC small and never rec
     timestamp: 1,
   });
   const mux = new FakeMux();
-  const manager = new SubagentManager(mux);
+  const manager = createSubagentManager(mux);
   t.after(() => manager.close());
   const agent = manager.spawn({
     keepAlive: true,
@@ -284,7 +285,7 @@ test("deletion settles waiters, removes queued work and cleans up views without 
   useAgentDir(t);
   const mux = new FakeMux();
   const notifications: string[] = [];
-  const manager = new SubagentManager(mux, {
+  const manager = createSubagentManager(mux, {
     maxConcurrent: 1,
     onComplete: (agent) => notifications.push(agent.id),
   });
@@ -331,7 +332,7 @@ test("deletion during delayed startup waits for late terminal cleanup", async (t
     await gate;
     return original(options);
   });
-  const manager = new SubagentManager(mux, { maxConcurrent: 1 });
+  const manager = createSubagentManager(mux, { maxConcurrent: 1 });
   t.after(() => manager.close());
   const agent = manager.spawn(task);
   await until(() => entered);
@@ -351,7 +352,7 @@ test("deletion during delayed startup waits for late terminal cleanup", async (t
 
 test("failed deletion retains terminal ownership and can be retried", async (t) => {
   const mux = new FakeMux();
-  const manager = new SubagentManager(mux, { maxConcurrent: 1 });
+  const manager = createSubagentManager(mux, { maxConcurrent: 1 });
   t.after(() => manager.close());
   const agent = manager.spawn(task);
   await until(() => manager.get(agent.id).status === "running");
@@ -372,7 +373,7 @@ test("failed deletion retains terminal ownership and can be retried", async (t) 
 test("manager is lazy, starts an authenticated worker and returns structured results", async (t) => {
   const mux = new FakeMux();
   const notifications: string[] = [];
-  const manager = new SubagentManager(mux, {
+  const manager = createSubagentManager(mux, {
     onComplete: (record) => notifications.push(record.id),
   });
   t.after(() => manager.close());
@@ -447,7 +448,7 @@ test("latest native replies update result metadata without changing managed exec
   const mux = new FakeMux();
   const completions: string[] = [];
   const updates: string[] = [];
-  const manager = new SubagentManager(mux, {
+  const manager = createSubagentManager(mux, {
     onComplete: (snapshot) => completions.push(snapshot.result ?? ""),
     onSessionUpdate: (snapshot, update) => {
       updates.push(`${snapshot.resultRevision}:${update.outcome}`);
@@ -551,7 +552,7 @@ test("latest native replies update result metadata without changing managed exec
 test("newer native replies survive older managed result hydration", async (t) => {
   const mux = new FakeMux();
   const updates: string[] = [];
-  const manager = new SubagentManager(mux, {
+  const manager = createSubagentManager(mux, {
     onSessionUpdate: (snapshot) => updates.push(snapshot.result ?? ""),
   });
   t.after(() => manager.close());
@@ -576,7 +577,7 @@ test("newer native replies survive older managed result hydration", async (t) =>
 test("finished tasks retain results while native session state continues changing", async (t) => {
   const mux = new FakeMux();
   const notifications: string[] = [];
-  const manager = new SubagentManager(mux, {
+  const manager = createSubagentManager(mux, {
     onComplete: (record) => notifications.push(record.id),
   });
   t.after(() => manager.close());
@@ -619,7 +620,7 @@ test("finished tasks retain results while native session state continues changin
 
 test("malformed session states fail the authenticated connection closed", async (t) => {
   const mux = new FakeMux();
-  const manager = new SubagentManager(mux);
+  const manager = createSubagentManager(mux);
   t.after(() => manager.close());
   const agent = manager.spawn(task);
   await until(() => mux.commands.get(agent.id)?.length === 1);
@@ -630,7 +631,7 @@ test("malformed session states fail the authenticated connection closed", async 
 
 test("named agent configuration controls worker argv and launch-time system instructions", async (t) => {
   const mux = new FakeMux();
-  const manager = new SubagentManager(mux);
+  const manager = createSubagentManager(mux);
   t.after(() => manager.close());
   const definition = parseAgentDefinition(
     `---\nmodel: agent-model\nthinking: high\nruntime_config:\n  tools: read, grep\n  disallowed_tools: write\ndisplay_name: Reviewer\n---\nSystem instructions`,
@@ -683,7 +684,7 @@ test("named agent configuration controls worker argv and launch-time system inst
 
 test("empty agent tools disable all tools without disabling project constraints", async (t) => {
   const mux = new FakeMux();
-  const manager = new SubagentManager(mux);
+  const manager = createSubagentManager(mux);
   t.after(() => manager.close());
   const agent = manager.spawn({
     ...task,
@@ -706,7 +707,7 @@ test("Pi prompt modes use native resource loading and preserve project constrain
   writeFileSync(join(agentDir, "APPEND_SYSTEM.md"), "Unwanted appended role");
   writeFileSync(join(cwd, "AGENTS.md"), "Project constraint");
   const mux = new FakeMux();
-  const manager = new SubagentManager(mux);
+  const manager = createSubagentManager(mux);
   t.after(() => manager.close());
   for (const mode of [undefined, "replace", "append"] as const) {
     for (const body of mode === "append"
@@ -761,7 +762,7 @@ test("Pi prompt modes use native resource loading and preserve project constrain
 
 test("Pi rejects empty replacement roles instead of restoring its default preamble", async (t) => {
   const mux = new FakeMux();
-  const manager = new SubagentManager(mux);
+  const manager = createSubagentManager(mux);
   t.after(() => manager.close());
   for (const fields of ["", "runtime_config:\n  prompt_mode: replace\n"]) {
     assert.throws(
@@ -783,7 +784,7 @@ test("Pi rejects empty replacement roles instead of restoring its default preamb
 
 test("Pi prompt files survive failed terminal cleanup and are removed on retry", async (t) => {
   const mux = new FakeMux();
-  const manager = new SubagentManager(mux);
+  const manager = createSubagentManager(mux);
   t.after(() => manager.close());
   const agent = manager.spawn({
     ...task,
@@ -809,7 +810,7 @@ test("Pi startup failure cleans up prompt files", async (t) => {
     mux.started.push(options);
     throw new Error("Startup failed");
   });
-  const manager = new SubagentManager(mux);
+  const manager = createSubagentManager(mux);
   t.after(() => manager.close());
   const agent = manager.spawn({
     ...task,
@@ -828,7 +829,9 @@ test("explicit extension allowlists replace defaults, including an empty list", 
   writeFileSync(custom, "export default () => {};");
   for (const extensionAllowlist of [[], ["builtin:mcp", custom]]) {
     const mux = new FakeMux();
-    const manager = new SubagentManager(mux, { extensionAllowlist });
+    const manager = createSubagentManager(mux, {
+      runtimes: [createPiRuntime({ extensionAllowlist })],
+    });
     t.after(() => manager.close());
     const agent = manager.spawn(task);
     await until(() => mux.commands.get(agent.id)?.length === 1);
@@ -859,9 +862,13 @@ test("package logical selections load only their declared resources in the worke
     }),
   );
   const mux = new FakeMux();
-  const manager = new SubagentManager(mux, {
-    extensionAllowlist: [
-      { source: "named-package", extensions: ["custom-name"] },
+  const manager = createSubagentManager(mux, {
+    runtimes: [
+      createPiRuntime({
+        extensionAllowlist: [
+          { source: "named-package", extensions: ["custom-name"] },
+        ],
+      }),
     ],
   });
   t.after(() => manager.close());
@@ -887,8 +894,12 @@ test("extension paths resolve from the agent directory, never the task cwd", asy
     "export default () => {};",
   );
   writeFileSync(join(agentDir, "trusted.ts"), "export default () => {};");
-  const manager = new SubagentManager(mux, {
-    extensionAllowlist: ["extensions/custom file.ts", "~/trusted.ts"],
+  const manager = createSubagentManager(mux, {
+    runtimes: [
+      createPiRuntime({
+        extensionAllowlist: ["extensions/custom file.ts", "~/trusted.ts"],
+      }),
+    ],
   });
   t.after(() => manager.close());
   const agent = manager.spawn({ ...task, cwd: "/untrusted/project" });
@@ -921,8 +932,8 @@ test("stopping during native source resolution never starts a terminal afterward
     },
   );
   const mux = new FakeMux();
-  const manager = new SubagentManager(mux, {
-    extensionAllowlist: ["native-source"],
+  const manager = createSubagentManager(mux, {
+    runtimes: [createPiRuntime({ extensionAllowlist: ["native-source"] })],
   });
   t.after(() => manager.close());
   const agent = manager.spawn(task);
@@ -936,7 +947,7 @@ test("stopping during native source resolution never starts a terminal afterward
 
 test("oversized task prompts fail before worker creation", () => {
   const mux = new FakeMux();
-  const manager = new SubagentManager(mux);
+  const manager = createSubagentManager(mux);
   assert.throws(
     () =>
       manager.spawn({
@@ -952,7 +963,7 @@ test("oversized task prompts fail before worker creation", () => {
 test("background completion notifies once and remains readable", async (t) => {
   const mux = new FakeMux();
   let notifications = 0;
-  const manager = new SubagentManager(mux, {
+  const manager = createSubagentManager(mux, {
     onComplete: () => {
       notifications += 1;
     },
@@ -969,7 +980,7 @@ test("background completion notifies once and remains readable", async (t) => {
 
 test("queue enforces concurrency and canceled queued tasks never start", async (t) => {
   const mux = new FakeMux();
-  const manager = new SubagentManager(mux, { maxConcurrent: 1 });
+  const manager = createSubagentManager(mux, { maxConcurrent: 1 });
   t.after(() => manager.close());
   const first = manager.spawn(task);
   const canceled = manager.spawn(task);
@@ -984,9 +995,9 @@ test("queue enforces concurrency and canceled queued tasks never start", async (
   assert.ok(!mux.started.some((start) => start.agentId === canceled.id));
 });
 
-test("shared manager lays out concurrent views right then down for every adapter", async (t) => {
+test("manager opens, focuses and reopens views without inspecting unrelated views", async (t) => {
   const mux = new FakeMux();
-  const manager = new SubagentManager(mux);
+  const manager = createSubagentManager(mux);
   t.after(() => manager.close());
   const agents = Array.from({ length: 3 }, () => manager.spawn(task));
   await until(() =>
@@ -996,43 +1007,34 @@ test("shared manager lays out concurrent views right then down for every adapter
     agents.map(({ id }) => manager.openView(id)),
   );
   assert.deepEqual(mux.opened, [
-    { terminal: { id: agents[0].id }, direction: "right" },
-    { terminal: { id: agents[1].id }, direction: "down", relativeTo: first },
-    { terminal: { id: agents[2].id }, direction: "down", relativeTo: second },
+    { terminal: { id: agents[0].id } },
+    { terminal: { id: agents[1].id } },
+    { terminal: { id: agents[2].id } },
   ]);
   await manager.openView(agents[0].id);
-  assert.equal(mux.opened.length, 3, "Focusing must not change stack order");
+  assert.equal(mux.opened.length, 3, "Focusing an open view must not reopen");
   assert.deepEqual(mux.focused, [first.id]);
   await manager.closeView(agents[1].id);
   const reopened = await manager.openView(agents[1].id);
-  assert.deepEqual(mux.opened.at(-1), {
-    terminal: { id: agents[1].id },
-    direction: "down",
-    relativeTo: third,
-  });
+  assert.deepEqual(mux.opened.at(-1), { terminal: { id: agents[1].id } });
+  assert.notEqual(reopened.id, second.id);
+  // Opening an unrelated agent's view must not fail when another view's
+  // inspect_view rejects (e.g., pending Herdr app attachment).
+  const inspect = mux.inspect_view.bind(mux);
+  mux.inspect_view = async (view) => {
+    if (view.id === third.id) throw new Error("view_change_unconfirmed");
+    return inspect(view);
+  };
   await manager.closeView(agents[1].id);
-  mux.missingViews.add(third.id);
   await manager.openView(agents[1].id);
-  assert.deepEqual(mux.opened.at(-1), {
-    terminal: { id: agents[1].id },
-    direction: "down",
-    relativeTo: first,
-  });
-  assert.equal(manager.get(agents[2].id).viewId, undefined);
-  assert.ok(mux.closedViews.includes(third.id));
+  assert.deepEqual(mux.opened.at(-1), { terminal: { id: agents[1].id } });
+  assert.ok(mux.closedViews.includes(second.id));
   assert.ok(mux.closedViews.includes(reopened.id));
-  await manager.closeView(agents[0].id);
-  await manager.closeView(agents[1].id);
-  await manager.openView(agents[2].id);
-  assert.deepEqual(mux.opened.at(-1), {
-    terminal: { id: agents[2].id },
-    direction: "right",
-  });
 });
 
 test("failed view creation does not occupy a slot or block other agents", async (t) => {
   const mux = new FakeMux();
-  const manager = new SubagentManager(mux);
+  const manager = createSubagentManager(mux);
   t.after(() => manager.close());
   const first = manager.spawn(task);
   const second = manager.spawn(task);
@@ -1047,17 +1049,17 @@ test("failed view creation does not occupy a slot or block other agents", async 
     return open(options);
   };
   await assert.rejects(manager.openView(first.id), /Split failed/);
-  const view = await manager.openView(second.id);
+  await manager.openView(second.id);
   await manager.openView(first.id);
   assert.deepEqual(mux.opened, [
-    { terminal: { id: second.id }, direction: "right" },
-    { terminal: { id: first.id }, direction: "down", relativeTo: view },
+    { terminal: { id: second.id } },
+    { terminal: { id: first.id } },
   ]);
 });
 
 test("view closure detaches without destroying the worker", async (t) => {
   const mux = new FakeMux();
-  const manager = new SubagentManager(mux);
+  const manager = createSubagentManager(mux);
   t.after(() => manager.close());
   const { id } = manager.spawn(task);
   await until(() => mux.commands.get(id)?.length === 1);
@@ -1074,7 +1076,7 @@ test("view closure detaches without destroying the worker", async (t) => {
 
 test("disconnect and startup timeout produce errors rather than terminal-screen results", async (t) => {
   const mux = new FakeMux();
-  const manager = new SubagentManager(mux);
+  const manager = createSubagentManager(mux);
   t.after(() => manager.close());
   const { id } = manager.spawn(task);
   await until(() => mux.commands.get(id)?.length === 1);
@@ -1084,7 +1086,7 @@ test("disconnect and startup timeout produce errors rather than terminal-screen 
 
   const badMux = new FakeMux();
   badMux.authenticate = false;
-  const rejected = new SubagentManager(badMux, { startupTimeoutMs: 30 });
+  const rejected = createSubagentManager(badMux, { startupTimeoutMs: 30 });
   t.after(() => rejected.close());
   const bad = rejected.spawn(task);
   const failure = await rejected.result(bad.id, true);
@@ -1095,7 +1097,7 @@ test("disconnect and startup timeout produce errors rather than terminal-screen 
 
 test("wait cancellation leaves the background worker running", async (t) => {
   const mux = new FakeMux();
-  const manager = new SubagentManager(mux);
+  const manager = createSubagentManager(mux);
   t.after(() => manager.close());
   const { id } = manager.spawn(task);
   await until(() => mux.commands.get(id)?.length === 1);
@@ -1109,7 +1111,7 @@ test("wait cancellation leaves the background worker running", async (t) => {
 
 test("shutdown is idempotent and rejects further work", async () => {
   const mux = new FakeMux();
-  const manager = new SubagentManager(mux);
+  const manager = createSubagentManager(mux);
   const { id } = manager.spawn(task);
   await until(() => mux.commands.get(id)?.length === 1);
   await manager.close();
@@ -1122,7 +1124,7 @@ test("shutdown is idempotent and rejects further work", async () => {
 test("resume reuses identity, terminal, view and agent configuration with fresh per-round results", async (t) => {
   const mux = new FakeMux();
   const notifications: number[] = [];
-  const manager = new SubagentManager(mux, {
+  const manager = createSubagentManager(mux, {
     onComplete: (snapshot) => notifications.push(snapshot.round ?? 0),
   });
   t.after(() => manager.close());
@@ -1193,7 +1195,7 @@ test("resume reuses identity, terminal, view and agent configuration with fresh 
 
 test("resume rejects active, interactive, disconnected, closed and invalid tasks without changing prior results", async (t) => {
   const mux = new FakeMux();
-  const manager = new SubagentManager(mux);
+  const manager = createSubagentManager(mux);
   t.after(() => manager.close());
   const first = manager.spawn({ ...task, keepAlive: true });
   assert.throws(
@@ -1227,7 +1229,7 @@ test("resume rejects active, interactive, disconnected, closed and invalid tasks
 
 test("resume shares FIFO concurrency and canceling a queued round cannot resurrect its queue entry", async (t) => {
   const mux = new FakeMux();
-  const manager = new SubagentManager(mux, { maxConcurrent: 1 });
+  const manager = createSubagentManager(mux, { maxConcurrent: 1 });
   t.after(() => manager.close());
   const first = manager.spawn({ ...task, keepAlive: true });
   await until(() => mux.commands.get(first.id)?.length === 1);
@@ -1256,7 +1258,7 @@ test("resume shares FIFO concurrency and canceling a queued round cannot resurre
 
 test("native work beginning while resume is queued rejects dispatch without canceling the user", async (t) => {
   const mux = new FakeMux();
-  const manager = new SubagentManager(mux, { maxConcurrent: 1 });
+  const manager = createSubagentManager(mux, { maxConcurrent: 1 });
   t.after(() => manager.close());
   const first = manager.spawn({ ...task, keepAlive: true });
   await until(() => mux.commands.get(first.id)?.length === 1);
@@ -1279,7 +1281,7 @@ test("native work beginning while resume is queued rejects dispatch without canc
 test("old waiters and late round events never consume or finish a resumed round", async (t) => {
   const mux = new FakeMux();
   const notifications: number[] = [];
-  const manager = new SubagentManager(mux, {
+  const manager = createSubagentManager(mux, {
     onComplete: (snapshot) => notifications.push(snapshot.round ?? 0),
   });
   t.after(() => manager.close());
@@ -1324,7 +1326,7 @@ test("old waiters and late round events never consume or finish a resumed round"
 
 test("stopped and errored retained workers resume; missing terminals do not restart", async (t) => {
   const mux = new FakeMux();
-  const manager = new SubagentManager(mux);
+  const manager = createSubagentManager(mux);
   t.after(() => manager.close());
   const first = manager.spawn({ ...task, keepAlive: true });
   await until(() => mux.commands.get(first.id)?.length === 1);
@@ -1347,7 +1349,7 @@ test("stopped and errored retained workers resume; missing terminals do not rest
 
 test("cancel before resume inspection finishes never sends a task or kills the retained process", async (t) => {
   const mux = new FakeMux();
-  const manager = new SubagentManager(mux);
+  const manager = createSubagentManager(mux);
   t.after(() => manager.close());
   const first = manager.spawn({ ...task, keepAlive: true });
   await until(() => mux.commands.get(first.id)?.length === 1);
@@ -1372,7 +1374,7 @@ test("cancel before resume inspection finishes never sends a task or kills the r
 
 test("unacknowledged resume cancellation closes an unresponsive parent-owned worker", async (t) => {
   const mux = new FakeMux();
-  const manager = new SubagentManager(mux, {
+  const manager = createSubagentManager(mux, {
     maxConcurrent: 1,
     cancelTimeoutMs: 5,
   });
@@ -1393,7 +1395,7 @@ test("unacknowledged resume cancellation closes an unresponsive parent-owned wor
 
 test("accepted resume cancellation may clean up an unresponsive owned worker", async (t) => {
   const mux = new FakeMux();
-  const manager = new SubagentManager(mux, {
+  const manager = createSubagentManager(mux, {
     cancelTimeoutMs: 5,
   });
   t.after(() => manager.close());
@@ -1418,7 +1420,7 @@ test("accepted resume cancellation may clean up an unresponsive owned worker", a
 
 test("connection loss before resume acknowledgement closes the worker and releases its slot", async (t) => {
   const mux = new FakeMux();
-  const manager = new SubagentManager(mux, { maxConcurrent: 1 });
+  const manager = createSubagentManager(mux, { maxConcurrent: 1 });
   t.after(() => manager.close());
   const first = manager.spawn({ ...task, keepAlive: true });
   await until(() => mux.commands.get(first.id)?.length === 1);
@@ -1436,7 +1438,7 @@ test("connection loss before resume acknowledgement closes the worker and releas
 
 test("a stale cancellation timer cannot change a later resumed round", async (t) => {
   const mux = new FakeMux();
-  const manager = new SubagentManager(mux);
+  const manager = createSubagentManager(mux);
   t.after(() => manager.close());
   const first = manager.spawn({ ...task, keepAlive: true });
   await until(() => mux.commands.get(first.id)?.length === 1);
@@ -1466,7 +1468,7 @@ test("a stale cancellation timer cannot change a later resumed round", async (t)
 
 test("resume cannot race an already-started terminal cleanup after cooperative completion", async (t) => {
   const mux = new FakeMux();
-  const manager = new SubagentManager(mux, { cancelTimeoutMs: 5 });
+  const manager = createSubagentManager(mux, { cancelTimeoutMs: 5 });
   t.after(() => manager.close());
   const first = manager.spawn({ ...task, keepAlive: true });
   await until(() => mux.commands.get(first.id)?.length === 1);
@@ -1504,7 +1506,7 @@ test("resume cannot race an already-started terminal cleanup after cooperative c
 
 test("Pi disconnect is one-shot: an unconfirmed resume closes and cannot reauthenticate", async (t) => {
   const mux = new FakeMux();
-  const manager = new SubagentManager(mux, { maxConcurrent: 1 });
+  const manager = createSubagentManager(mux, { maxConcurrent: 1 });
   t.after(() => manager.close());
   const first = manager.spawn({ ...task, keepAlive: true });
   await until(() => mux.commands.get(first.id)?.length === 1);
@@ -1562,8 +1564,8 @@ test("startup cancellation does not wait for another agent's blocked view operat
     },
   );
   const mux = new FakeMux();
-  const manager = new SubagentManager(mux, {
-    extensionAllowlist: ["native-source"],
+  const manager = createSubagentManager(mux, {
+    runtimes: [createPiRuntime({ extensionAllowlist: ["native-source"] })],
   });
   t.after(async () => {
     releaseResolution();

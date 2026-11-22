@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { CodexRuntime } from "./index.ts";
+import { createCodexRuntime } from "./index.ts";
 
-const runtime = new CodexRuntime();
+const runtime = createCodexRuntime();
 const target = { type: "uncommittedChanges" };
 const session = { runtime_args: ["review", "search"] };
 const options = { id: "test", cwd: "/tmp" };

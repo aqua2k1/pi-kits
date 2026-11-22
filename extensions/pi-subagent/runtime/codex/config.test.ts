@@ -295,3 +295,39 @@ test("steer/cancel remain unchanged in both modes", () => {
     ] as RuntimeCommand[])
       assert.equal(parseCodexTask(command, options), command);
 });
+
+test("codexReviewTargetSchema matches supported structured and custom targets", async () => {
+  const { Type } = await import("typebox");
+  const { Value } = await import("typebox/value");
+  const { codexReviewTargetSchema } = await import("./config.ts");
+  const schema = Type.Object({ review_target: codexReviewTargetSchema() });
+  assert.equal(Value.Check(schema, {}), true);
+  for (const valid of [
+    { type: "uncommittedChanges" },
+    { type: "baseBranch", branch: "main" },
+    { type: "commit", sha: "abc123" },
+    { type: "commit", sha: "abc123", title: null },
+    { type: "commit", sha: "abc123", title: "Fix bug" },
+    { type: "custom", instructions: "Audit auth paths" },
+  ]) {
+    assert.equal(
+      Value.Check(schema, { review_target: valid }),
+      true,
+      JSON.stringify(valid),
+    );
+  }
+  for (const invalid of [
+    null,
+    {},
+    { type: "unknown" },
+    { type: "baseBranch", branch: "   " },
+    { type: "commit", sha: "" },
+    { type: "custom", instructions: "" },
+  ]) {
+    assert.equal(
+      Value.Check(schema, { review_target: invalid }),
+      false,
+      JSON.stringify(invalid),
+    );
+  }
+});

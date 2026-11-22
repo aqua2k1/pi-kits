@@ -19,12 +19,12 @@ import {
   runDockedPanel,
 } from "../../../shared/ui/docked-panel/index.ts";
 import type { AgentSnapshot } from "../manager.ts";
+import { nativeViewHint } from "../policy.ts";
 import {
   type AgentSource,
   agentDisplayStatus,
   agentHeader,
   agentStats,
-  nativeViewAvailable,
   oneLine,
 } from "./presentation.ts";
 
@@ -131,7 +131,7 @@ export class SubagentViewsPanel {
 
   private confirm(): void {
     const { agent } = this.selected();
-    if (!agent || !nativeViewAvailable(agent)) return;
+    if (!agent || !nativeViewHint(agent)) return;
     this.finished = true;
     this.done({
       choice: { agentId: agent.id, action: agent.viewId ? "focus" : "open" },
@@ -245,7 +245,7 @@ export class SubagentViewsPanel {
       return "Closes terminal and removes record. Session files are retained.";
     if (agent.sessionState === "closed")
       return "Runtime released; result retained, resume unavailable";
-    if (!nativeViewAvailable(agent)) return "Terminal not ready; waiting…";
+    if (!nativeViewHint(agent)) return "Terminal not ready; waiting…";
     if (!agent.terminalId) return "Native view available; Enter to open";
 
     const activity =

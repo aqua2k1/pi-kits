@@ -3,8 +3,8 @@ import { randomUUID } from "node:crypto";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { type AgentSnapshot, SubagentManager } from "../manager.ts";
-import { HerdrAdapter, runHerdr } from "../mux/herdr.ts";
+import { type AgentSnapshot, createSubagentManager } from "../manager.ts";
+import { createHerdrAdapter, runHerdr } from "../mux/herdr.ts";
 import type { SessionUpdate } from "../runtime/index.ts";
 
 // Explicit opt-in: invokes real models and creates only owned Herdr resources.
@@ -16,7 +16,7 @@ if (process.env.HERDR_ENV !== "1" || process.env.PI_KITS_HERDR_LIVE !== "1") {
 const cwd = await mkdtemp(join(tmpdir(), "pi-kits-herdr-live-"));
 const rootPanes = new Map<string, string>();
 const binary = process.env.HERDR_BIN_PATH ?? "herdr";
-const adapter = new HerdrAdapter({
+const adapter = createHerdrAdapter({
   runner: async (bin, argv, options) => {
     const result = await runHerdr(bin, argv, options);
     if (
@@ -36,7 +36,7 @@ const adapter = new HerdrAdapter({
 });
 const completions: AgentSnapshot[] = [];
 const sessionUpdates: { snapshot: AgentSnapshot; update: SessionUpdate }[] = [];
-const manager = new SubagentManager(adapter, {
+const manager = createSubagentManager(adapter, {
   maxConcurrent: 1,
   startupTimeoutMs: 60_000,
   runtimeExecutables: { codex: process.env.PI_KITS_CODEX_BIN },

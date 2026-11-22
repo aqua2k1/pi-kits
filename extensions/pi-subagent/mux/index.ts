@@ -27,14 +27,19 @@ export interface StartOptions {
   env: Record<string, string>;
 }
 
-/** Shared manager chooses placement; adapters only execute this instruction. */
-export type OpenViewOptions = { terminal: TerminalHandle } & (
-  | { direction: "right"; relativeTo?: never }
-  | { direction: "down"; relativeTo: ViewHandle }
-);
+/** Adapters own their native view placement (tabs vs split panes). */
+export interface OpenViewOptions {
+  terminal: TerminalHandle;
+}
+
+export interface MuxFactoryOptions {
+  warn?: (message: string) => void;
+  env?: NodeJS.ProcessEnv;
+}
 
 /** Handles are opaque and scoped to the adapter instance that created them. */
 export interface MuxAdapter {
+  readonly id?: string;
   check_env(): boolean;
   start(options: StartOptions): Promise<TerminalHandle>;
   inspect(terminal: TerminalHandle): Promise<{ alive: boolean }>;

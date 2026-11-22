@@ -25,11 +25,3 @@ export function isTerminalStatus(status: AgentStatus): boolean {
 export function isWorkingStatus(status: AgentStatus): boolean {
   return status === "starting" || status === "running" || status === "stopping";
 }
-
-/** Pi preflight also observes non-agent operations via the host idle flag. */
-export function nativeInputPending(
-  state: BackendSessionState,
-  hostIdle: boolean,
-): boolean {
-  return state === "interactive" || !hostIdle;
-}
