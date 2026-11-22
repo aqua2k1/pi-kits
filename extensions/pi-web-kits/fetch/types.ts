@@ -1,7 +1,7 @@
 import type { Static } from "typebox";
-import type { FetchSourceSchema, FetchTruncationSchema } from "../schema.ts";
 import type { ghRequest } from "../shared/gh-request.ts";
 import type { FetchLike } from "../shared/request.ts";
+import type { FetchSourceSchema, FetchTruncationSchema } from "./schema.ts";
 
 export type FetchSource = Static<typeof FetchSourceSchema>;
 
@@ -33,7 +33,7 @@ export interface FetchHandler {
 export interface FetchRuntime {
   readonly fetch?: FetchLike;
   readonly ghRequest?: typeof ghRequest;
-  readonly github?: import("./github.ts").GitHubHandler;
+  readonly github?: FetchHandler;
   /** Effect capabilities supplied by the composition boundary. */
   readonly now?: () => number;
   readonly uuid?: () => string;

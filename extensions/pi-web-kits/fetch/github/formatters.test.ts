@@ -2,10 +2,10 @@ import assert from "node:assert/strict";
 import { readFile, rm } from "node:fs/promises";
 import { dirname } from "node:path";
 import { test } from "node:test";
-import { resolveFetchConfig } from "../config.ts";
-import type { ghRequest } from "../shared/gh-request.ts";
-import { WebFetchError } from "./errors.ts";
-import { GitHubHandler } from "./github.ts";
+import { resolveFetchConfig } from "../../config.ts";
+import type { ghRequest } from "../../shared/gh-request.ts";
+import { WebFetchError } from "../errors.ts";
+import { createGitHubFetchHandler } from "./handler.ts";
 
 test("GitHub API README uses its returned filename and preserves unknown/plain formats", async () => {
   for (const metadata of [
@@ -28,7 +28,7 @@ test("GitHub API README uses its returned filename and preserves unknown/plain f
         content: Buffer.from(text).toString("base64"),
       };
     };
-    const handler = new GitHubHandler({
+    const handler = createGitHubFetchHandler({
       config: resolveFetchConfig({ github: { enabled: true } }).github,
       apiTimeoutMs: 5_000,
       runtime: { ghRequest: request },
@@ -86,7 +86,7 @@ test("GitHub API formats base64 source blobs before storage", async () => {
       content: Buffer.from(text).toString("base64"),
     };
   };
-  const handler = new GitHubHandler({
+  const handler = createGitHubFetchHandler({
     config: resolveFetchConfig({ github: { enabled: true } }).github,
     apiTimeoutMs: 5_000,
     runtime: { ghRequest: request },
@@ -131,7 +131,7 @@ for (const kind of ["blob", "root"] as const) {
         content: Buffer.from("# Heading\n\n-   item\n").toString("base64"),
       };
     };
-    const handler = new GitHubHandler({
+    const handler = createGitHubFetchHandler({
       config: { enabled: true },
       apiTimeoutMs: 5_000,
       runtime: { ghRequest: request },

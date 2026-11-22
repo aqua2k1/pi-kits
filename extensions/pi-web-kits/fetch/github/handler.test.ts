@@ -2,14 +2,15 @@ import assert from "node:assert/strict";
 import { readFile, rm } from "node:fs/promises";
 import { dirname } from "node:path";
 import { test } from "node:test";
-import { resolveFetchConfig } from "../config.ts";
-import { GhRequestError } from "../shared/gh-request.ts";
-import { MAX_GITHUB_TREE_ENTRIES } from "../shared/limits.ts";
-import { GitHubHandler } from "./github.ts";
+import { resolveFetchConfig } from "../../config.ts";
+import { GhRequestError } from "../../shared/gh-request.ts";
+import { MAX_GITHUB_TREE_ENTRIES } from "../../shared/limits.ts";
+import type { FetchHandler } from "../types.ts";
+import { createGitHubFetchHandler } from "./handler.ts";
 
 function setup(respond: (endpoint: string) => unknown, enabled = true) {
   const calls: string[] = [];
-  const handler = new GitHubHandler({
+  const handler = createGitHubFetchHandler({
     config: resolveFetchConfig({ github: { enabled } }).github,
     apiTimeoutMs: 5000,
     runtime: {
@@ -79,7 +80,7 @@ test("null README JSON is invalid content, not a missing resource", async () => 
   );
 });
 
-async function fetched(handler: GitHubHandler, suffix: string) {
+async function fetched(handler: FetchHandler, suffix: string) {
   const response = await handler.fetch({
     url: new URL(`https://github.com/acme/project${suffix}`),
   });
@@ -148,7 +149,7 @@ test("GitHub repository root reads metadata and README, not the recursive tree",
 });
 
 test("missing README preserves the repository overview", async () => {
-  const handler = new GitHubHandler({
+  const handler = createGitHubFetchHandler({
     config: { enabled: true },
     apiTimeoutMs: 5000,
     runtime: {

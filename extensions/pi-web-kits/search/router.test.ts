@@ -1,8 +1,21 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { WebSearchError } from "./errors.ts";
-import { WebSearchRouter } from "./router.ts";
+import { createWebSearchRouter, resolveFallbackProvider } from "./router.ts";
 import type { SearchProvider, SearchRequest, SearchResponse } from "./types.ts";
+
+test("fallback comes from provider inventory, with explicit configuration taking priority", () => {
+  assert.equal(resolveFallbackProvider("searxng"), "codex-alpha-search");
+  assert.equal(resolveFallbackProvider("codex-alpha-search"), "searxng");
+  assert.equal(
+    resolveFallbackProvider("searxng", undefined, ["searxng"]),
+    undefined,
+  );
+  assert.equal(
+    resolveFallbackProvider("searxng", "codex-alpha-search", []),
+    "codex-alpha-search",
+  );
+});
 
 const request: SearchRequest = { query: "test", maxResults: 2 };
 
@@ -18,7 +31,7 @@ test("WebSearchRouter: uses injected providers without runtime dependencies", as
   const factoryCalls: string[] = [];
   let received: SearchRequest | undefined;
   let receivedSignal: AbortSignal | undefined;
-  const router = new WebSearchRouter({
+  const router = createWebSearchRouter({
     searxng: () => {
       factoryCalls.push("searxng");
       return provider(async (input, signal) => {
@@ -46,7 +59,7 @@ test("WebSearchRouter: uses injected providers without runtime dependencies", as
 
 test("WebSearchRouter: fallback is opt-in", async () => {
   const noFallbackCalls: string[] = [];
-  const noFallbackRouter = new WebSearchRouter({
+  const noFallbackRouter = createWebSearchRouter({
     searxng: () => {
       noFallbackCalls.push("searxng");
       return provider(async () => {
@@ -70,7 +83,7 @@ test("WebSearchRouter: fallback is opt-in", async () => {
   assert.deepEqual(noFallbackCalls, ["searxng"]);
 
   const fallbackCalls: string[] = [];
-  const fallbackRouter = new WebSearchRouter({
+  const fallbackRouter = createWebSearchRouter({
     searxng: () => {
       fallbackCalls.push("searxng");
       return provider(async () => {
@@ -94,7 +107,7 @@ test("WebSearchRouter: fallback is opt-in", async () => {
 
 test("WebSearchRouter: uses the configured fallback provider", async () => {
   const calls: string[] = [];
-  const router = new WebSearchRouter({
+  const router = createWebSearchRouter({
     searxng: () => {
       calls.push("searxng");
       return provider(async () => response("searxng"));
@@ -119,7 +132,7 @@ test("WebSearchRouter: uses the configured fallback provider", async () => {
 test("WebSearchRouter: does not fallback invalid-config, request, or cancelled failures", async () => {
   for (const code of ["invalid-config", "request", "cancelled"] as const) {
     const calls: string[] = [];
-    const router = new WebSearchRouter({
+    const router = createWebSearchRouter({
       searxng: () => {
         calls.push("searxng");
         return provider(async () => {
@@ -143,7 +156,7 @@ test("WebSearchRouter: does not fallback invalid-config, request, or cancelled f
 
 test("WebSearchRouter: exhaustion reports safe per-attempt error codes", async () => {
   const calls: string[] = [];
-  const router = new WebSearchRouter({
+  const router = createWebSearchRouter({
     searxng: () => {
       calls.push("searxng");
       return provider(async () => {
@@ -177,7 +190,7 @@ test("WebSearchRouter: exhaustion reports safe per-attempt error codes", async (
 test("WebSearchRouter: cancellation between attempts does not start fallback", async () => {
   const controller = new AbortController();
   const calls: string[] = [];
-  const router = new WebSearchRouter({
+  const router = createWebSearchRouter({
     searxng: () => {
       calls.push("searxng");
       return provider(async (_input, signal) => {
@@ -212,7 +225,7 @@ test("WebSearchRouter: pre-cancelled requests do not construct a provider", asyn
   const controller = new AbortController();
   controller.abort(new Error("synthetic parent reason"));
   const calls: string[] = [];
-  const router = new WebSearchRouter({
+  const router = createWebSearchRouter({
     searxng: () => {
       calls.push("searxng");
       return provider(async () => response());

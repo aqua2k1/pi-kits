@@ -2,7 +2,9 @@ import type {
   ResolvedWebFetchConfig,
   ResolvedWebSearchConfig,
 } from "./config.ts";
-import { fetchWeb as routeFetchWeb } from "./fetch/router.ts";
+import { fetchDocument } from "./fetch/document.ts";
+import { createGitHubFetchHandler } from "./fetch/github/handler.ts";
+import { createFetchRuntime, routeFetchWeb } from "./fetch/router.ts";
 import type { FetchResponse, FetchRuntime } from "./fetch/types.ts";
 import { assertNotCancelled, WebSearchError } from "./search/errors.ts";
 import { searchGitHub } from "./search/github/service.ts";
@@ -13,7 +15,7 @@ import {
 } from "./search/providers/codex/auth.ts";
 import { createCodexProvider } from "./search/providers/codex/provider.ts";
 import { createSearxngProvider } from "./search/providers/searxng/provider.ts";
-import { WebSearchRouter } from "./search/router.ts";
+import { routeWebSearch } from "./search/router.ts";
 import type {
   RoutedSearchResponse,
   SearchExecutionResponse,
@@ -22,10 +24,17 @@ import type {
 import type { ghRequest } from "./shared/gh-request.ts";
 import type { FetchLike } from "./shared/request.ts";
 
+export const WEB_TOOLS_NAMESPACE = {
+  name: "pi-web-kits",
+  description:
+    "Search the web or GitHub and fetch URL content into local files for reading.",
+};
+
 export interface SearchRuntime {
   modelRegistry?: CodexModelRegistry;
   fetch?: FetchLike;
   ghRequest?: typeof ghRequest;
+  env?: NodeJS.ProcessEnv;
 }
 
 /** The only place that assembles concrete search providers. */
@@ -39,30 +48,30 @@ export function searchWeb(
   if (!config.enabled || !config.sources.web.enabled) {
     throw new WebSearchError("unsupported", "Web search is disabled.");
   }
-  const router = new WebSearchRouter({
-    searxng: () =>
-      createSearxngProvider({
-        baseUrl: config.searxngUrl,
-        apiKey: config.searxngApiKey,
-        timeoutMs: config.timeoutMs,
-        fetch: runtime.fetch,
-      }),
-    "codex-alpha-search": () =>
-      createCodexProvider({
-        model: config.codexModel,
-        timeoutMs: config.timeoutMs,
-        fetch: runtime.fetch,
-        resolveAuth: (authSignal) =>
-          resolveCodexAuth(runtime.modelRegistry, authSignal),
-      }),
-  });
-  return router.search(
+  return routeWebSearch(
     request,
     {
       provider: config.provider,
       fallback: config.fallback,
       fallbackProvider: config.fallbackProvider,
       providers: config.sources.web.routing,
+    },
+    {
+      searxng: () =>
+        createSearxngProvider({
+          baseUrl: config.searxngUrl,
+          apiKey: config.searxngApiKey,
+          timeoutMs: config.timeoutMs,
+          fetch: runtime.fetch,
+        }),
+      "codex-alpha-search": () =>
+        createCodexProvider({
+          model: config.codexModel,
+          timeoutMs: config.timeoutMs,
+          fetch: runtime.fetch,
+          resolveAuth: (authSignal) =>
+            resolveCodexAuth(runtime.modelRegistry, authSignal),
+        }),
     },
     signal,
   );
@@ -99,7 +108,11 @@ export async function search(
     }
     const response = await searchGitHub(
       request,
-      { timeoutMs: config.timeoutMs, request: runtime.ghRequest },
+      {
+        timeoutMs: config.timeoutMs,
+        request: runtime.ghRequest,
+        env: runtime.env,
+      },
       signal,
     );
     return {
@@ -116,11 +129,35 @@ export interface FetchWebRequest {
   url: string;
 }
 
+/** The only place that assembles concrete fetch handlers. */
 export function fetchWeb(
   request: FetchWebRequest,
   config: ResolvedWebFetchConfig,
-  runtime: FetchRuntime = {},
+  runtime: FetchRuntime = createFetchRuntime(),
   signal?: AbortSignal,
 ): Promise<FetchResponse> {
-  return routeFetchWeb(request, config, runtime, signal);
+  const github =
+    runtime.github ??
+    createGitHubFetchHandler({
+      config: { ...config.github },
+      apiTimeoutMs: config.timeoutMs,
+      runtime,
+    });
+  return routeFetchWeb(
+    request,
+    {
+      github,
+      document: (documentRequest, documentSignal) =>
+        fetchDocument(
+          documentRequest,
+          {
+            timeoutMs: config.timeoutMs,
+            fetch: runtime.fetch,
+            now: runtime.now,
+          },
+          documentSignal,
+        ),
+    },
+    signal,
+  );
 }

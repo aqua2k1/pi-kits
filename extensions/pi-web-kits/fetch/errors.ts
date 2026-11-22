@@ -81,68 +81,57 @@ function errorCodeForStatus(status: number): WebFetchErrorCode {
   return status >= 500 ? "network" : "invalid-response";
 }
 
+function fetchError(
+  code: WebFetchErrorCode,
+  options?: WebFetchErrorOptions,
+): WebFetchError {
+  return new WebFetchError(code, errorMessageForCode(code), options);
+}
+
 export function errorFromStatus(
   status: number,
   source?: string,
 ): WebFetchError {
-  const code = errorCodeForStatus(status);
-  return new WebFetchError(code, errorMessageForCode(code), {
-    status,
-    source,
-  });
+  return fetchError(errorCodeForStatus(status), { status, source });
 }
 
 export function assertNotCancelled(signal?: AbortSignal): void {
   if (signal?.aborted) {
-    throw new WebFetchError("cancelled", errorMessageForCode("cancelled"));
+    throw fetchError("cancelled");
   }
 }
 
 export function toWebFetchError(error: unknown): WebFetchError {
   if (error instanceof GhRequestError) {
-    if (error.code === "status")
+    if (error.code === "status") {
       return errorFromStatus(error.status ?? 0, "github-gh");
-    return new WebFetchError(error.code, errorMessageForCode(error.code), {
+    }
+    return fetchError(error.code, {
       source: "github-gh",
       status: error.status,
     });
   }
   if (error instanceof RequestError) {
-    if (error.code === "status")
+    if (error.code === "status") {
       return errorFromStatus(error.status ?? 0, "native-http");
-    return new WebFetchError(error.code, errorMessageForCode(error.code), {
-      source: "native-http",
-    });
+    }
+    return fetchError(error.code, { source: "native-http" });
   }
   if (error instanceof WebFetchError) {
-    return new WebFetchError(error.code, errorMessageForCode(error.code), {
+    return fetchError(error.code, {
       status: error.status,
       source: error.source,
     });
   }
   if (error instanceof Error) {
     const code = "code" in error ? error.code : undefined;
-    if (code === "invalid-config") {
-      return new WebFetchError(
-        "invalid-config",
-        errorMessageForCode("invalid-config"),
-      );
+    if (code === "invalid-config") return fetchError("invalid-config");
+    if (code === "cancelled" || error.name === "AbortError") {
+      return fetchError("cancelled");
     }
-    if (code === "cancelled") {
-      return new WebFetchError("cancelled", errorMessageForCode("cancelled"));
-    }
-    if (error.name === "AbortError") {
-      return new WebFetchError("cancelled", errorMessageForCode("cancelled"));
-    }
-    if (/timeout|timed out/i.test(`${error.name} ${error.message}`)) {
-      return new WebFetchError("timeout", errorMessageForCode("timeout"));
-    }
-    if (/enoent|not found/i.test(`${error.name} ${error.message}`)) {
-      return new WebFetchError(
-        "tool-unavailable",
-        errorMessageForCode("tool-unavailable"),
-      );
-    }
+    const detail = `${error.name} ${error.message}`;
+    if (/timeout|timed out/i.test(detail)) return fetchError("timeout");
+    if (/enoent|not found/i.test(detail)) return fetchError("tool-unavailable");
   }
-  return new WebFetchError("network", errorMessageForCode("network"));
+  return fetchError("network");
 }

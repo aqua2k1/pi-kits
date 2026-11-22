@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { GhRequestError } from "../shared/gh-request.ts";
-import { WebFetchError } from "./errors.ts";
-import { resolveGitHubRef } from "./github-refs.ts";
-import { parseGitHubUrl } from "./github-url.ts";
+import { GhRequestError } from "../../shared/gh-request.ts";
+import { WebFetchError } from "../errors.ts";
+import { resolveGitHubRef } from "./refs.ts";
+import { parseGitHubUrl } from "./url.ts";
 
 function info(tail = "feature/topic/src/file.ts", type = "blob") {
   const parsed = parseGitHubUrl(

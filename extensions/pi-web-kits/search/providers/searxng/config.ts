@@ -1,28 +1,35 @@
+import { SEARXNG_DEFAULT_URL } from "../../../shared/limits.ts";
 import { WebSearchError } from "../../errors.ts";
 import { isSafeHeaderValue } from "../../validation.ts";
 
-export const SEARXNG_DEFAULT_URL = "http://localhost:8080";
+export { SEARXNG_DEFAULT_URL };
+
+function tryParseUrl(raw: string): URL | undefined {
+  try {
+    return new URL(raw);
+  } catch {
+    return undefined;
+  }
+}
 
 export function normalizeSearxngBaseUrl(raw = SEARXNG_DEFAULT_URL): string {
-  try {
-    const url = new URL(raw.trim());
-    if (
-      !["http:", "https:"].includes(url.protocol) ||
-      url.username ||
-      url.password ||
-      url.search ||
-      url.hash ||
-      raw.length > 2_048
-    )
-      throw new Error();
-    return url.toString().replace(/\/+$/, "");
-  } catch {
+  const url = tryParseUrl(raw.trim());
+  if (
+    !url ||
+    !["http:", "https:"].includes(url.protocol) ||
+    url.username ||
+    url.password ||
+    url.search ||
+    url.hash ||
+    raw.length > 2_048
+  ) {
     throw new WebSearchError(
       "invalid-config",
       "SearXNG URL must be HTTP(S), without credentials, query or fragment.",
       { provider: "searxng" },
     );
   }
+  return url.toString().replace(/\/+$/, "");
 }
 
 export function validateSearxngAuth(apiKey?: string): void {

@@ -11,6 +11,7 @@ import {
   type readConfig,
   readConfigSnapshot,
   resolveConfig,
+  type WebSearchFileConfig,
   type WebToolsConfigFileSnapshot,
 } from "./config.ts";
 import { errorMessageForCode, toWebSearchError } from "./search/errors.ts";
@@ -29,6 +30,9 @@ const COMMAND_ARGUMENTS = [
   "test github",
 ];
 const DEFAULT_SEARCH_QUERY = "pi web search connectivity";
+const GITHUB_TEST_QUERY = "repo:github/docs";
+const USAGE_TEXT =
+  "/pi-web-kits status\n/pi-web-kits test <searxng|codex-alpha-search|github>";
 type ConfigSource = "env" | "config" | "default" | "none";
 
 export interface WebToolsConfigSnapshot
@@ -52,6 +56,10 @@ function commandErrorText(error: unknown): string {
   return `${errorMessageForCode(classified.code)} [${classified.code}]`;
 }
 
+function formatResultCount(count: number): string {
+  return `${count} result${count === 1 ? "" : "s"}`;
+}
+
 function source(
   envValue: string | undefined,
   configValue: string | undefined,
@@ -62,6 +70,47 @@ function source(
   return hasDefault ? "default" : "none";
 }
 
+function describeRoutingStatus(
+  rawSearch: WebSearchFileConfig,
+  routing: readonly WebSearchProviderName[],
+) {
+  const web = rawSearch.sources?.web;
+  const fallbackProvider = routing[1];
+  if (web) {
+    return {
+      routingSource:
+        web.routing === undefined ? "default" : "search.sources.web.routing",
+      providerSource: source(undefined, web.routing?.[0], true),
+      fallbackSource: source(undefined, web.routing?.[0], true),
+      fallbackProvider,
+      fallbackProviderSource: source(undefined, web.routing?.[1], true),
+      codexModel: web.codex?.model,
+    };
+  }
+  return {
+    routingSource:
+      rawSearch.routing === undefined ? "default" : "search.routing (legacy)",
+    providerSource: source(undefined, rawSearch.routing?.provider, true),
+    fallbackSource:
+      rawSearch.routing?.fallback === undefined ? "default" : "config",
+    fallbackProvider,
+    fallbackProviderSource:
+      rawSearch.routing?.fallbackProvider === undefined ? "default" : "config",
+    codexModel: rawSearch.codex?.model,
+  };
+}
+
+function readCodexAuthStatus(ctx: ExtensionCommandContext): string {
+  try {
+    return ctx.modelRegistry.getProviderAuthStatus("openai-codex").configured
+      ? "configured (OAuth required)"
+      : "not configured";
+  } catch {
+    // Keep status useful when the host registry is unavailable.
+    return "unavailable";
+  }
+}
+
 function statusText(
   snapshot: WebToolsConfigSnapshot,
   ctx: ExtensionCommandContext,
@@ -70,42 +119,12 @@ function statusText(
   const { rawConfig: raw, resolvedConfig: config } = snapshot;
   const searchEnabled = config.enabled && config.search.enabled;
   const fetchEnabled = config.enabled && config.fetch.enabled;
-  const search = raw.search ?? {};
   const webEnabled = searchEnabled && config.search.sources.web.enabled;
   const githubEnabled = searchEnabled && config.search.sources.github.enabled;
-  const web = search.sources?.web;
   const routing = config.search.sources.web.routing;
-  const routingSource = web
-    ? web.routing === undefined
-      ? "default"
-      : "search.sources.web.routing"
-    : search.routing === undefined
-      ? "default"
-      : "search.routing (legacy)";
-  const providerSource = web
-    ? source(undefined, web.routing?.[0], true)
-    : source(undefined, search.routing?.provider, true);
-  const fallbackSource = web
-    ? source(undefined, web.routing?.[0], true)
-    : search.routing?.fallback === undefined
-      ? "default"
-      : "config";
-  const fallbackProvider = routing[1];
-  const fallbackProviderSource = web
-    ? source(undefined, web.routing?.[1], true)
-    : search.routing?.fallbackProvider === undefined
-      ? "default"
-      : "config";
-  const codexModel = web ? web.codex?.model : search.codex?.model;
+  const routingStatus = describeRoutingStatus(raw.search ?? {}, routing);
   const keySource = source(env.SEARXNG_API_KEY, undefined, false);
-  let auth = "unavailable";
-  try {
-    auth = ctx.modelRegistry.getProviderAuthStatus("openai-codex").configured
-      ? "configured (OAuth required)"
-      : "not configured";
-  } catch {
-    // Keep status useful when the host registry is unavailable.
-  }
+  const auth = readCodexAuthStatus(ctx);
   return [
     "Web tools configuration:",
     `  config file: ${snapshot.configPath ?? getConfigPath()}`,
@@ -115,15 +134,15 @@ function statusText(
     `  web_fetch: ${fetchEnabled ? "enabled" : "disabled"}`,
     `  Web search: ${webEnabled ? "enabled" : "disabled"}`,
     `  GitHub search: ${githubEnabled ? "enabled" : "disabled"} (gh api)`,
-    `  search routing: ${routing.join(" -> ")} (${routingSource})`,
-    `  search provider: ${PROVIDER_LABELS[config.search.provider]} (${providerSource})`,
-    `  search fallback: ${webEnabled && routing.length > 1 ? "enabled" : "disabled"} (${fallbackSource})`,
-    `  search fallback provider: ${fallbackProvider ? PROVIDER_LABELS[fallbackProvider] : "none"} (${fallbackProviderSource})`,
+    `  search routing: ${routing.join(" -> ")} (${routingStatus.routingSource})`,
+    `  search provider: ${PROVIDER_LABELS[config.search.provider]} (${routingStatus.providerSource})`,
+    `  search fallback: ${webEnabled && routing.length > 1 ? "enabled" : "disabled"} (${routingStatus.fallbackSource})`,
+    `  search fallback provider: ${routingStatus.fallbackProvider ? PROVIDER_LABELS[routingStatus.fallbackProvider] : "none"} (${routingStatus.fallbackProviderSource})`,
     `  search timeout: ${config.search.timeoutMs} ms`,
     `  search default max results: ${config.search.maxResults}`,
     `  SearXNG URL: configured (${source(env.SEARXNG_URL, undefined, true)})`,
     `  SearXNG Bearer key: ${keySource === "none" ? "not set" : `set (${keySource})`}`,
-    `  Codex model: configured (${source(undefined, codexModel, true)})`,
+    `  Codex model: configured (${source(undefined, routingStatus.codexModel, true)})`,
     `  Codex authentication: ${auth}`,
     `  fetch timeout: ${config.fetch.timeoutMs} ms`,
     `  GitHub fetch: ${fetchEnabled && config.fetch.github.enabled ? "enabled" : "disabled"}`,
@@ -156,11 +175,70 @@ async function testProvider(
     { modelRegistry: ctx.modelRegistry },
     ctx.signal,
   );
-  const count = response.results.length;
   ctx.ui.notify(
-    `${PROVIDER_LABELS[response.provider]} test succeeded (${count} result${count === 1 ? "" : "s"}).`,
+    `${PROVIDER_LABELS[response.provider]} test succeeded (${formatResultCount(response.results.length)}).`,
     "info",
   );
+}
+
+async function testGitHub(
+  ctx: ExtensionCommandContext,
+  config: ResolvedWebToolsConfig,
+  searchGitHub: typeof searchCapabilities,
+  env: NodeJS.ProcessEnv,
+): Promise<void> {
+  const response = await searchGitHub(
+    {
+      source: "github",
+      kind: "repositories",
+      query: GITHUB_TEST_QUERY,
+      maxResults: 1,
+    },
+    config.search,
+    { modelRegistry: ctx.modelRegistry, env },
+    ctx.signal,
+  );
+  ctx.ui.notify(
+    `GitHub test succeeded (${formatResultCount(response.results.length)}).`,
+    "info",
+  );
+}
+
+async function handleTestCommand(
+  target: string | undefined,
+  loadCurrentSnapshot: () => Promise<WebToolsConfigSnapshot>,
+  ctx: ExtensionCommandContext,
+  search: typeof searchWeb,
+  searchGitHub: typeof searchCapabilities,
+  env: NodeJS.ProcessEnv,
+): Promise<void> {
+  const provider = normalizeProviderName(target);
+  const isGitHub = target === "github";
+  if (!provider && !isGitHub) {
+    ctx.ui.notify(
+      "Choose a test target: searxng, codex-alpha-search or github.",
+      "error",
+    );
+    return;
+  }
+  const { resolvedConfig } = await loadCurrentSnapshot();
+  if (!resolvedConfig.enabled || !resolvedConfig.search.enabled) {
+    ctx.ui.notify("Web search is disabled by configuration.", "info");
+    return;
+  }
+  const capability = isGitHub ? "github" : "web";
+  if (!resolvedConfig.search.sources[capability].enabled) {
+    ctx.ui.notify(
+      `${isGitHub ? "GitHub" : "Web"} search is disabled by configuration.`,
+      "info",
+    );
+    return;
+  }
+  if (isGitHub) {
+    await testGitHub(ctx, resolvedConfig, searchGitHub, env);
+  } else if (provider) {
+    await testProvider(ctx, provider, resolvedConfig, search);
+  }
 }
 
 async function loadSnapshot(
@@ -213,58 +291,20 @@ export function registerWebToolsCommand(
     },
     handler: async (args, ctx) => {
       try {
-        const [command, providerValue] = args.trim().split(/\s+/, 2);
+        const [command, target] = args.trim().split(/\s+/, 2);
         if (command === "status") {
           ctx.ui.notify(statusText(await snapshot(), ctx, env), "info");
         } else if (command === "test") {
-          const provider = normalizeProviderName(providerValue);
-          const github = providerValue === "github";
-          if (!provider && !github) {
-            ctx.ui.notify(
-              "Choose a test target: searxng, codex-alpha-search or github.",
-              "error",
-            );
-            return;
-          }
-          const { resolvedConfig } = await snapshot();
-          if (!resolvedConfig.enabled || !resolvedConfig.search.enabled) {
-            ctx.ui.notify("Web search is disabled by configuration.", "info");
-            return;
-          }
-          if (
-            !resolvedConfig.search.sources[github ? "github" : "web"].enabled
-          ) {
-            ctx.ui.notify(
-              `${github ? "GitHub" : "Web"} search is disabled by configuration.`,
-              "info",
-            );
-            return;
-          }
-          if (github) {
-            const response = await searchGitHub(
-              {
-                source: "github",
-                kind: "repositories",
-                query: "repo:github/docs",
-                maxResults: 1,
-              },
-              resolvedConfig.search,
-              { modelRegistry: ctx.modelRegistry },
-              ctx.signal,
-            );
-            const count = response.results.length;
-            ctx.ui.notify(
-              `GitHub test succeeded (${count} result${count === 1 ? "" : "s"}).`,
-              "info",
-            );
-          } else if (provider) {
-            await testProvider(ctx, provider, resolvedConfig, search);
-          }
-        } else {
-          ctx.ui.notify(
-            "/pi-web-kits status\n/pi-web-kits test <searxng|codex-alpha-search|github>",
-            "info",
+          await handleTestCommand(
+            target,
+            snapshot,
+            ctx,
+            search,
+            searchGitHub,
+            env,
           );
+        } else {
+          ctx.ui.notify(USAGE_TEXT, "info");
         }
       } catch (error) {
         ctx.ui.notify(commandErrorText(error), "error");

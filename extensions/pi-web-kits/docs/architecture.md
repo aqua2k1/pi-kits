@@ -14,7 +14,7 @@ flowchart LR
   composition --> github["search/github/<br/>GitHub 搜索与 gh API"]
   composition --> fetch["fetch/router.ts<br/>抓取路由"]
   search --> providers["search/providers/<br/>认证与搜索请求"]
-  fetch --> handlers["fetch/document.ts 与 fetch/github.ts<br/>文档与仓库内容获取"]
+  fetch --> handlers["fetch/document.ts 与 fetch/github/<br/>文档与仓库内容获取"]
   providers --> transport["shared/request.ts<br/>统一 HTTP 请求"]
   handlers -->|普通 HTTP 文档| transport
 ```
@@ -23,25 +23,24 @@ flowchart LR
 
 | 文件 | 职责 |
 |---|---|
-| `index.ts` | 工具注册、参数 schema（结构契约）、启动快照、进度及错误边界 |
+| `index.ts` | 扩展启动快照、过期缓存清理及工具／命令注册编排 |
 | `commands.ts` | 能力开关、路由来源与认证状态展示，网页／GitHub 连接测试及参数补全 |
-| `composition.ts` | `search` 按来源分派；保留 `searchWeb` 网页入口，组装具体服务与抓取入口 |
+| `composition.ts` | 统一组装搜索与抓取的具体处理器并按来源分派，提供共享 namespace |
 | `config.ts` | 扩展配置读取、服务名归一化、搜索与抓取配置解析 |
-| `schema.ts` | 公开机器输出及派生类型 |
-| `search/format.ts`、`renderers.ts` | 搜索文本／机器输出与工具界面渲染 |
-| `search/types.ts`、`search/validation.ts` | 搜索内部契约及请求归一化 |
-| `search/router.ts`、`search/routing.ts`、`search/errors.ts` | 网页主备搜索路由、回退选择与分类错误 |
-| `search/github/types.ts`、`search/github/service.ts`、`search/github/index.ts` | GitHub 类型、查询校验、只读搜索 API 与结果归一化 |
+| `schema.ts`、`search/schema.ts`、`fetch/schema.ts` | 各域公开输出契约、派生类型及根部聚合导出 |
+| `search/tool.ts`、`fetch/tool.ts`、`renderers.ts` | 工具参数 schema、提示指南、执行错误边界与工具界面渲染 |
+| `search/format.ts`、`search/types.ts`、`search/validation.ts` | 搜索输出格式化、内部契约及请求归一化 |
+| `search/router.ts`、`search/errors.ts` | 网页主备搜索路由、回退选择与分类错误 |
+| `search/github/types.ts`、`search/github/service.ts` | GitHub 类型、查询校验、只读搜索 API 与结果归一化 |
 | `search/providers/searxng/config.ts`、`search/providers/searxng/provider.ts` | SearXNG 地址、认证和搜索请求转换 |
 | `search/providers/codex/config.ts`、`search/providers/codex/auth.ts`、`search/providers/codex/provider.ts` | Codex 模型配置、Pi 认证及搜索请求转换 |
 | `shared/request.ts` | 原生 fetch 的统一入口，负责截止时间、取消、重定向、有界 JSON 读取与文件下载 |
 | `search/results.ts` | 搜索结果过滤、去重和脱敏 |
-| `shared/url.ts`、`shared/limits.ts` | 搜索与抓取共用的 URL 脱敏规则和资源边界 |
-| `fetch/router.ts`、`fetch/types.ts` | 抓取请求解析、处理器选择及运行时能力 |
+| `shared/guards.ts`、`shared/url.ts`、`shared/limits.ts` | 共用的类型与错误守卫、URL 脱敏规则和资源边界 |
+| `fetch/router.ts`、`fetch/types.ts` | 抓取请求校验、纯路由分派及运行时能力 |
 | `fetch/document.ts`、`fetch/content.ts` | 文档下载编排、解码和标题提取 |
 | `fetch/formatters/index.ts`、`fetch/formatters/prettier-worker.mjs` | 按 MIME（媒体类型）／文件名选择格式化器及独立工作线程 |
-| `fetch/github-url.ts`、`fetch/github-refs.ts` | GitHub URL 和引用／路径边界解析 |
-| `fetch/github.ts` | 只读 API 编排与仓库内容生成 |
+| `fetch/github/url.ts`、`fetch/github/refs.ts`、`fetch/github/handler.ts` | GitHub URL／引用解析、只读 API 编排与仓库内容生成 |
 | `shared/gh-request.ts` | 只读 gh API 请求、有界子进程执行与传输错误 |
 | `fetch/spool.ts`、`fetch/format.ts`、`fetch/errors.ts` | 临时存储、公开元数据与抓取分类错误 |
 
@@ -126,13 +125,13 @@ sequenceDiagram
 - `schema.ts` 统一用 TypeBox 构造公开输出并派生类型，字符串枚举显式声明 `type: "string"`，注册处引用同一输出契约，防止机器字段与类型分歧；`schema.test.ts` 检查枚举和类型推导，`index.test.ts` 检查工具返回值。
 - 两个输出格式器以完整序列化返回值计算预算，计入文本、详情和机器数据副本，避免单份内容合规而总返回值超限；边界见 `shared/limits.ts`，测试见两份 `format.test.ts`。
 - 抓取格式器仅公开保存元数据，布局基于最终文本计算，使 `read` 的偏移与返回行数一致；`fetch/format.test.ts` 和 `fetch/read-integration.test.ts` 覆盖空行、UTF-8 与分页。
-- 格式化在线程中使用固定选项和资源预算，失败返回输入；调用方在保存前检查取消，避免阻塞主线程或将已取消请求当作成功保存；实现见 `fetch/formatters/`、`fetch/document.ts` 与 `fetch/github.ts`。
+- 格式化在线程中使用固定选项和资源预算，失败返回输入；调用方在保存前检查取消，避免阻塞主线程或将已取消请求当作成功保存；实现见 `fetch/formatters/`、`fetch/document.ts` 与 `fetch/github/handler.ts`。
 - `fetch/spool.ts` 串行写入并在写前预留容量，最终化后拒绝重复保存，保证并发写入与短写处理仍满足存储边界；`fetch/spool.test.ts` 覆盖状态和容量竞争。
-- GitHub 引用解析只接受唯一分支／标签划分，避免把含 `/` 的引用误当目录；`fetch/github-refs.test.ts` 和 `fetch/github-url.test.ts` 覆盖歧义与显式编码。
+- GitHub 引用解析只接受唯一分支／标签划分，避免把含 `/` 的引用误当目录；`fetch/github/refs.test.ts` 和 `fetch/github/url.test.ts` 覆盖歧义与显式编码。
 - GitHub 处理器无状态且不使用处理器缓存，直接调用 `gh api`，不进行 `--version` 探测或自动克隆；根仅获取描述、默认分支和 README，目录通过 contents API 非递归读取，避免隐式仓库副本及多余请求。
 - GitHub Issue／PR 查询启用 advanced search，并将完整用户表达式分组后与资源类型求交；响应再次校验资源类型，避免 OR 分支绕过 `kind`。代码搜索显式请求 text-match JSON，缺少片段时返回路径摘要。
 - `shared/gh-request.ts` 校验相对端点、固定 GET 与 github.com 并关闭 shell，仅允许固定的 text-match JSON Accept 类型，避免绝对 URL、任意头部或命令参数绕过只读主机边界；`shared/gh-request.test.ts` 覆盖参数、有界输出、取消、超时与进程组 TERM→KILL 清理。
-- gh 传输只返回 JSON 值并抛出脱敏的 `GhRequestError`；`fetch/github.ts` 提取仓库元数据，根 README 的 404 保留概览，其余资源的 404 拒绝抓取，引用发现的 404 返回未解析，避免传输层依赖抓取策略。
+- gh 传输只返回 JSON 值并抛出脱敏的 `GhRequestError`；`fetch/github/handler.ts` 提取仓库元数据，根 README 的 404 保留概览，其余资源的 404 拒绝抓取，引用发现的 404 返回未解析，避免传输层依赖抓取策略。
 - 工具与诊断边界重建分类错误消息，避免上游正文、凭据和原始子进程诊断进入返回值；依据见两份 `errors.ts` 及 `commands.test.ts`、`index.test.ts`。
 
 ## 测试
@@ -149,14 +148,14 @@ npm run typecheck --workspace=pi-web-kits
 | `index.test.ts`、`commands.test.ts`、`composition.test.ts`、`config.test.ts`、`search-capabilities.test.ts` | 工具注册、启动快照、能力分派、开关、参数、命令、服务组装与配置 |
 | `search/github/service.test.ts` | GitHub 各类查询、布尔表达式范围、响应校验、截断、取消及错误脱敏 |
 | `search/format.test.ts`、`fetch/format.test.ts` | 文本／机器契约、脱敏、布局与完整输出预算 |
-| `search/{errors,router,routing,validation}.test.ts` | 搜索分类、回退、取消和归一化 |
+| `search/{errors,router,validation}.test.ts` | 搜索分类、回退、取消和归一化 |
 | `shared/{request,url}.test.ts`、`search/results.test.ts` | HTTP JSON／文件流边界、截止时间、取消、重定向、清理、过滤和脱敏 |
 | `search/providers/codex/{auth,provider}.test.ts` | OAuth、固定端点、请求结构与取消 |
 | `search/providers/searxng/{provider,redirect}.test.ts` | 地址配置、搜索参数及真实 HTTP 重定向 |
 | `fetch/{content,document,errors,router,spool}.test.ts` | 解码、抓取分类、传输、处理器隔离及存储状态 |
-| `fetch/formatters.test.ts`、`fetch/github-formatters.test.ts` | 格式选择、工作线程、取消与 GitHub 保存视图 |
-| `fetch/github.test.ts` | 只读 API、取消与错误映射 |
-| `shared/gh-request.test.ts`、`fetch/{github-readme,github-refs,github-url}.test.ts` | gh 传输、进程清理、README 边界及引用解析 |
+| `fetch/formatters.test.ts`、`fetch/github/formatters.test.ts` | 格式选择、工作线程、取消与 GitHub 保存视图 |
+| `fetch/github/handler.test.ts` | 只读 API、取消与错误映射 |
+| `shared/gh-request.test.ts`、`fetch/github/{readme,refs,url}.test.ts` | gh 传输、进程清理、README 边界及引用解析 |
 | `fetch/read-integration.test.ts` | 本地 HTTP 与 Pi `read` 的实际分页；`PI_KITS_LIVE_FETCH=1` 启用外网用例 |
 | `fetch/model-read.test.ts` | `PI_KITS_MODEL_READ=1` 启用真实模型会话，检查完整审查与定点查询 |
 

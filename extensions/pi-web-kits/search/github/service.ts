@@ -1,4 +1,5 @@
 import { GhRequestError, ghRequest } from "../../shared/gh-request.ts";
+import { isRecord } from "../../shared/guards.ts";
 import {
   assertNotCancelled,
   errorCodeForStatus,
@@ -7,7 +8,7 @@ import {
   WebSearchError,
   type WebSearchErrorCode,
 } from "../errors.ts";
-import { isRecord, normalizeSearchResponse } from "../results.ts";
+import { normalizeSearchResponse } from "../results.ts";
 import { normalizeSearchRequest, validateTimeout } from "../validation.ts";
 
 import {
@@ -16,6 +17,10 @@ import {
   type GitHubSearchRequest,
   type GitHubSearchResponse,
 } from "./types.ts";
+
+const ISSUE_PATH_PATTERN = /^\/[^/]+\/[^/]+\/issues\/[1-9]\d*$/;
+const PULL_PATH_PATTERN = /^\/[^/]+\/[^/]+\/pull\/[1-9]\d*$/;
+const MAX_GITHUB_SEARCH_ITEMS = 100;
 
 function failure(code: WebSearchErrorCode, status?: number): WebSearchError {
   return new WebSearchError(code, errorMessageForCode(code, "GitHub"), {
@@ -58,6 +63,55 @@ function resultUrl(value: unknown): string {
   }
 }
 
+function parseCodeItem(
+  item: Record<string, unknown>,
+  url: string,
+): GitHubSearchResponse["results"][number] {
+  const name = requiredString(item.name);
+  const path = requiredString(item.path);
+  if (!isRecord(item.repository)) throw failure("invalid-response");
+  const repository = requiredString(item.repository.full_name);
+  const fragments: string[] = [];
+  if (item.text_matches !== undefined) {
+    if (!Array.isArray(item.text_matches)) throw failure("invalid-response");
+    for (const match of item.text_matches) {
+      if (!isRecord(match) || typeof match.fragment !== "string") {
+        throw failure("invalid-response");
+      }
+      fragments.push(match.fragment);
+    }
+  }
+  return {
+    title: `${repository}: ${name}`,
+    url,
+    // Even with the text-match media type, matches may be absent. Keep a
+    // useful path summary without issuing a second API request.
+    snippet: fragments.some((fragment) => fragment.trim())
+      ? fragments.join("\n")
+      : `${repository}/${path}`,
+  };
+}
+
+function parseIssueOrPullItem(
+  item: Record<string, unknown>,
+  url: string,
+  kind: "issues" | "pull-requests",
+): GitHubSearchResponse["results"][number] {
+  const isPull = kind === "pull-requests";
+  const pathPattern = isPull ? PULL_PATH_PATTERN : ISSUE_PATH_PATTERN;
+  if (
+    (isPull ? !isRecord(item.pull_request) : "pull_request" in item) ||
+    !pathPattern.test(new URL(url).pathname)
+  ) {
+    throw failure("invalid-response");
+  }
+  return {
+    title: requiredString(item.title),
+    url,
+    snippet: nullableText(item.body),
+  };
+}
+
 function parseItem(
   item: unknown,
   kind: GitHubSearchRequest["kind"],
@@ -71,49 +125,11 @@ function parseItem(
         url,
         snippet: nullableText(item.description),
       };
-    case "code": {
-      const name = requiredString(item.name);
-      const path = requiredString(item.path);
-      if (!isRecord(item.repository)) throw failure("invalid-response");
-      const repository = requiredString(item.repository.full_name);
-      const fragments: string[] = [];
-      if (item.text_matches !== undefined) {
-        if (!Array.isArray(item.text_matches))
-          throw failure("invalid-response");
-        for (const match of item.text_matches) {
-          if (!isRecord(match) || typeof match.fragment !== "string") {
-            throw failure("invalid-response");
-          }
-          fragments.push(match.fragment);
-        }
-      }
-      return {
-        title: `${repository}: ${name}`,
-        url,
-        // Even with the text-match media type, matches may be absent. Keep a
-        // useful path summary without issuing a second API request.
-        snippet: fragments.some((fragment) => fragment.trim())
-          ? fragments.join("\n")
-          : `${repository}/${path}`,
-      };
-    }
+    case "code":
+      return parseCodeItem(item, url);
     case "issues":
-    case "pull-requests": {
-      const pull = kind === "pull-requests";
-      if (
-        (pull ? !isRecord(item.pull_request) : "pull_request" in item) ||
-        !new RegExp(
-          `^/[^/]+/[^/]+/${pull ? "pull" : "issues"}/[1-9]\\d*$`,
-        ).test(new URL(url).pathname)
-      ) {
-        throw failure("invalid-response");
-      }
-      return {
-        title: requiredString(item.title),
-        url,
-        snippet: nullableText(item.body),
-      };
-    }
+    case "pull-requests":
+      return parseIssueOrPullItem(item, url, kind);
     case "commits": {
       requiredString(item.sha);
       if (!isRecord(item.commit)) throw failure("invalid-response");
@@ -142,6 +158,48 @@ function normalizeRequest(request: GitHubSearchRequest): GitHubSearchRequest {
     kind: request.kind,
     query: normalized.query,
     maxResults: normalized.maxResults,
+  };
+}
+
+function buildSearchEndpoint(request: GitHubSearchRequest): string {
+  const { kind } = request;
+  const isIssueKind = kind === "issues" || kind === "pull-requests";
+  const query = isIssueKind
+    ? `(${request.query}) AND is:${kind === "issues" ? "issue" : "pr"}`
+    : request.query;
+  const params = new URLSearchParams({
+    q: query,
+    per_page: String(request.maxResults),
+    page: "1",
+  });
+  if (isIssueKind) {
+    // Parentheses/AND must be evaluated by the advanced issue search engine.
+    params.set("advanced_search", "true");
+  }
+  return `search/${kind === "pull-requests" ? "issues" : kind}?${params}`;
+}
+
+function parseSearchEnvelope(raw: unknown): {
+  totalCount: number;
+  incompleteResults: boolean;
+  items: unknown[];
+} {
+  if (
+    !isRecord(raw) ||
+    typeof raw.total_count !== "number" ||
+    !Number.isSafeInteger(raw.total_count) ||
+    raw.total_count < 0 ||
+    typeof raw.incomplete_results !== "boolean" ||
+    !Array.isArray(raw.items) ||
+    raw.items.length > MAX_GITHUB_SEARCH_ITEMS ||
+    raw.total_count < raw.items.length
+  ) {
+    throw failure("invalid-response");
+  }
+  return {
+    totalCount: raw.total_count,
+    incompleteResults: raw.incomplete_results,
+    items: raw.items,
   };
 }
 
@@ -188,58 +246,37 @@ export async function searchGitHub(
     const timeoutMs = validateTimeout(options.timeoutMs);
     // Match gh's github.com token precedence without discovering or logging
     // credentials from gh's own config. Snapshot only for local output cleanup.
-    const secrets = [process.env.GH_TOKEN, process.env.GITHUB_TOKEN].filter(
+    const env = options.env ?? process.env;
+    const secrets = [env.GH_TOKEN, env.GITHUB_TOKEN].filter(
       (value): value is string => Boolean(value),
     );
-    const kind = normalized.kind;
-    const query =
-      kind === "issues" || kind === "pull-requests"
-        ? `(${normalized.query}) AND is:${kind === "issues" ? "issue" : "pr"}`
-        : normalized.query;
-    const params = new URLSearchParams({
-      q: query,
-      per_page: String(normalized.maxResults),
-      page: "1",
-    });
-    if (kind === "issues" || kind === "pull-requests") {
-      // Parentheses/AND must be evaluated by the advanced issue search engine.
-      params.set("advanced_search", "true");
-    }
-    const endpoint = `search/${kind === "pull-requests" ? "issues" : kind}?${params}`;
-    const raw = await (options.request ?? ghRequest)(endpoint, {
-      timeoutMs,
-      signal,
-      ...(kind === "code"
-        ? { accept: "application/vnd.github.text-match+json" as const }
-        : {}),
-    });
+    const raw = await (options.request ?? ghRequest)(
+      buildSearchEndpoint(normalized),
+      {
+        timeoutMs,
+        signal,
+        ...(normalized.kind === "code"
+          ? { accept: "application/vnd.github.text-match+json" as const }
+          : {}),
+      },
+    );
     assertNotCancelled(signal);
-    if (
-      !isRecord(raw) ||
-      !Number.isSafeInteger(raw.total_count) ||
-      (raw.total_count as number) < 0 ||
-      typeof raw.incomplete_results !== "boolean" ||
-      !Array.isArray(raw.items) ||
-      raw.items.length > 100 ||
-      (raw.total_count as number) < raw.items.length
-    ) {
-      throw failure("invalid-response");
-    }
+    const { totalCount, incompleteResults, items } = parseSearchEnvelope(raw);
     // Validate every returned item, not only the first maxResults entries.
-    const candidates = raw.items.map((item) => parseItem(item, kind));
+    const candidates = items.map((item) => parseItem(item, normalized.kind));
     const response = normalizeSearchResponse(
       normalized,
       candidates,
       undefined,
       secrets,
     );
+    const truncated =
+      incompleteResults ||
+      totalCount > response.results.length ||
+      candidates.length > response.results.length;
     return {
       ...response,
-      ...(raw.incomplete_results ||
-      (raw.total_count as number) > response.results.length ||
-      candidates.length > response.results.length
-        ? { truncated: true }
-        : {}),
+      ...(truncated ? { truncated: true } : {}),
     };
   } catch (error) {
     if (signal?.aborted) throw failure("cancelled");

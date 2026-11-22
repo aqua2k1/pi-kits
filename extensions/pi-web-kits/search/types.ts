@@ -1,19 +1,18 @@
 import type { Static } from "typebox";
-import type { SearchResultSchema } from "../schema.ts";
+import type { GitHubSearchKind } from "./github/types.ts";
+import type {
+  SearchBackendName,
+  SearchResultSchema,
+  WebSearchProviderName,
+} from "./schema.ts";
 
-export const WEB_SEARCH_PROVIDER_NAMES = [
-  "searxng",
-  "codex-alpha-search",
-] as const;
+export {
+  SEARCH_BACKEND_NAMES,
+  type SearchBackendName,
+  WEB_SEARCH_PROVIDER_NAMES,
+  type WebSearchProviderName,
+} from "./schema.ts";
 
-export type WebSearchProviderName = (typeof WEB_SEARCH_PROVIDER_NAMES)[number];
-
-// Execution provenance is not an inventory of interchangeable web adapters.
-export const SEARCH_BACKEND_NAMES = [
-  ...WEB_SEARCH_PROVIDER_NAMES,
-  "github-gh",
-] as const;
-export type SearchBackendName = (typeof SEARCH_BACKEND_NAMES)[number];
 export type SearchSource = "web" | "github";
 
 export interface SearchRequest {
@@ -46,5 +45,5 @@ export interface RoutedSearchResponse extends SearchResponse {
 export interface SearchExecutionResponse extends SearchResponse {
   readonly provider: SearchBackendName;
   readonly source?: SearchSource;
-  readonly kind?: import("./github/types.ts").GitHubSearchKind;
+  readonly kind?: GitHubSearchKind;
 }

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { encodeGitHubPath, parseGitHubUrl } from "./github-url.ts";
+import { encodeGitHubPath, parseGitHubUrl } from "./url.ts";
 
 test("parseGitHubUrl recognizes root, blob and tree URLs", () => {
   assert.deepEqual(parseGitHubUrl("https://github.com/acme/project"), {

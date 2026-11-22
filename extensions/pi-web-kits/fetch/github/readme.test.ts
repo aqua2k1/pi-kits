@@ -2,11 +2,11 @@ import assert from "node:assert/strict";
 import { readFile, rm } from "node:fs/promises";
 import { dirname } from "node:path";
 import { test } from "node:test";
-import { GhRequestError, type ghRequest } from "../shared/gh-request.ts";
-import { MAX_FETCH_CONTENT_BYTES } from "../shared/limits.ts";
-import { WebFetchError } from "./errors.ts";
-import { buildFetchOutput } from "./format.ts";
-import { GitHubHandler } from "./github.ts";
+import { GhRequestError, type ghRequest } from "../../shared/gh-request.ts";
+import { MAX_FETCH_CONTENT_BYTES } from "../../shared/limits.ts";
+import { WebFetchError } from "../errors.ts";
+import { buildFetchOutput } from "../format.ts";
+import { createGitHubFetchHandler } from "./handler.ts";
 
 function readmeHandler(readme: string, stdoutTruncated = false) {
   const endpoints: string[] = [];
@@ -24,7 +24,7 @@ function readmeHandler(readme: string, stdoutTruncated = false) {
     };
   };
   return {
-    handler: new GitHubHandler({
+    handler: createGitHubFetchHandler({
       config: { enabled: true },
       apiTimeoutMs: 1_000,
       runtime: { ghRequest: request },

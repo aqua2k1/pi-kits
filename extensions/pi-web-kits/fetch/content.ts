@@ -24,8 +24,21 @@ const BINARY_MIME_TYPES = new Set([
 
 const ANY_TAG = /<[^>]*>/g;
 const TITLE_TAG = /<title\b[^>]*>([\s\S]*?)<\/title\s*>/i;
+const HTML_DOCUMENT_PATTERN = /<!doctype\s+html|<(?:html|head|body|title|p)\b/i;
 const NAMED_ENTITY = /&(?:amp|lt|gt|quot|apos|#39|nbsp);/gi;
+const NAMED_ENTITIES: Readonly<Record<string, string>> = {
+  "&amp;": "&",
+  "&lt;": "<",
+  "&gt;": ">",
+  "&quot;": '"',
+  "&apos;": "'",
+  "&#39;": "'",
+  "&nbsp;": " ",
+};
 const NUMERIC_ENTITY = /&#(?:x([0-9a-f]+)|(\d+));/gi;
+// Strip ASCII control characters except tab (\x09) and newline (\x0a).
+// biome-ignore lint/suspicious/noControlCharactersInRegex: intentional stripping of control characters
+const CONTROL_CHARACTERS = /[\x00-\x08\x0b-\x1f\x7f]/g;
 const BINARY_EXTENSIONS = new Set([
   "png",
   "jpg",
@@ -129,25 +142,10 @@ function decodeBody(bytes: Uint8Array, contentType: string): string {
 }
 
 function decodeEntities(text: string): string {
-  const named = text.replace(NAMED_ENTITY, (entity) => {
-    switch (entity.toLowerCase()) {
-      case "&amp;":
-        return "&";
-      case "&lt;":
-        return "<";
-      case "&gt;":
-        return ">";
-      case "&quot;":
-        return '"';
-      case "&apos;":
-      case "&#39;":
-        return "'";
-      case "&nbsp;":
-        return " ";
-      default:
-        return entity;
-    }
-  });
+  const named = text.replace(
+    NAMED_ENTITY,
+    (entity) => NAMED_ENTITIES[entity.toLowerCase()] ?? entity,
+  );
   return named.replace(
     NUMERIC_ENTITY,
     (_entity, hex: string, decimal: string) => {
@@ -159,23 +157,9 @@ function decodeEntities(text: string): string {
   );
 }
 
-function removeControlCharacters(text: string): string {
-  let result = "";
-  for (const character of text) {
-    const code = character.codePointAt(0) ?? 0;
-    if (
-      character === "\n" ||
-      character === "\t" ||
-      (code >= 0x20 && code !== 0x7f)
-    ) {
-      result += character;
-    }
-  }
-  return result;
-}
-
 function normalizeText(text: string): string {
-  return removeControlCharacters(stripVTControlCharacters(text))
+  return stripVTControlCharacters(text)
+    .replace(CONTROL_CHARACTERS, "")
     .replace(/[ \t]+/g, " ")
     .replace(/\n[ \t]+/g, "\n")
     .replace(/[ \t]+\n/g, "\n")
@@ -211,8 +195,7 @@ export async function decodeDocument(
   }
   const body = decodeBody(bytes, contentType);
   const looksLikeHtml =
-    mime.includes("html") ||
-    (!mime && /<!doctype\s+html|<(?:html|head|body|title|p)\b/i.test(body));
+    mime.includes("html") || (!mime && HTML_DOCUMENT_PATTERN.test(body));
   const formatted = await formatDocument({
     text: body,
     contentType,

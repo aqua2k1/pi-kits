@@ -111,6 +111,23 @@ export function errorFromStatus(
   });
 }
 
+const FALLBACK_ELIGIBLE_CODES: ReadonlySet<WebSearchErrorCode> = new Set([
+  "auth",
+  "unsupported",
+  "rate-limit",
+  "network",
+  "timeout",
+  "invalid-response",
+  "server",
+]);
+
+export function formatSearchAttempts(
+  attempts: readonly SearchAttempt[] | undefined,
+): string {
+  if (!attempts?.length) return "";
+  return ` Tried: ${attempts.map((attempt) => `${attempt.provider} (${attempt.code})`).join(", ")}.`;
+}
+
 /** Convert an arbitrary provider failure to a safe, classified error. */
 export function toWebSearchError(
   error: unknown,
@@ -123,8 +140,9 @@ export function toWebSearchError(
   let code: WebSearchErrorCode = "network";
   if (classified) {
     code =
-      WEB_SEARCH_ERROR_CODES.find((code) => code === classified.code) ??
-      "network";
+      WEB_SEARCH_ERROR_CODES.find(
+        (candidate) => candidate === classified.code,
+      ) ?? "network";
   } else if (error instanceof RequestError) {
     code =
       error.code === "status"
@@ -142,13 +160,10 @@ export function toWebSearchError(
         WEB_SEARCH_ERROR_CODES.includes(attempt.code),
     )
     .slice(0, 2)
-    .map(({ provider, code }) => ({ provider, code }));
-  const tried = attempts?.length
-    ? ` Tried: ${attempts.map((attempt) => `${attempt.provider} (${attempt.code})`).join(", ")}.`
-    : "";
+    .map((attempt) => ({ provider: attempt.provider, code: attempt.code }));
   return new WebSearchError(
     code,
-    errorMessageForCode(code, safeProvider) + tried,
+    errorMessageForCode(code, safeProvider) + formatSearchAttempts(attempts),
     {
       provider: safeProvider,
       status:
@@ -169,13 +184,5 @@ export function assertNotCancelled(signal?: AbortSignal): void {
 }
 
 export function isFallbackEligible(error: WebSearchError): boolean {
-  return [
-    "auth",
-    "unsupported",
-    "rate-limit",
-    "network",
-    "timeout",
-    "invalid-response",
-    "server",
-  ].includes(error.code);
+  return FALLBACK_ELIGIBLE_CODES.has(error.code);
 }

@@ -1,6 +1,6 @@
 import type { ModelRegistry } from "@earendil-works/pi-coding-agent";
+import { isRecord } from "../../../shared/guards.ts";
 import { assertNotCancelled, WebSearchError } from "../../errors.ts";
-import { isRecord } from "../../results.ts";
 import { isSafeHeaderValue } from "../../validation.ts";
 
 const CODEX_PROVIDER_NAME = "openai-codex";
@@ -35,36 +35,42 @@ export function extractCodexAccountId(token: string): string | undefined {
   }
 }
 
+function codexAuthError(): WebSearchError {
+  return new WebSearchError(
+    "auth",
+    "OpenAI Codex OAuth is unavailable. Run /login openai-codex.",
+    { provider: "codex-alpha-search" },
+  );
+}
+
 /** Pi owns storage/refresh. No model lookup, auth.json access or provider URL overrides. */
 export async function resolveCodexAuth(
   registry?: CodexModelRegistry,
   signal?: AbortSignal,
 ): Promise<CodexRequestAuth> {
   assertNotCancelled(signal);
+  let resolved: Awaited<ReturnType<CodexModelRegistry["getProviderAuth"]>>;
   try {
-    const resolved = await registry?.getProviderAuth(CODEX_PROVIDER_NAME);
-    assertNotCancelled(signal);
-    const accessToken = resolved?.auth.apiKey;
-    // Pi's OAuth resolver stamps this source; API-key/config overrides must not qualify.
-    if (
-      resolved?.source !== "OAuth" ||
-      !accessToken ||
-      !isSafeHeaderValue(accessToken)
-    )
-      throw new Error();
-    const accountId = extractCodexAccountId(accessToken);
-    if (!accountId) throw new Error();
-    return { accessToken, accountId };
+    resolved = await registry?.getProviderAuth(CODEX_PROVIDER_NAME);
   } catch (error) {
     if (error instanceof WebSearchError && error.code === "cancelled") {
       throw error;
     }
-    throw new WebSearchError(
-      "auth",
-      "OpenAI Codex OAuth is unavailable. Run /login openai-codex.",
-      { provider: "codex-alpha-search" },
-    );
+    throw codexAuthError();
   }
+  assertNotCancelled(signal);
+  const accessToken = resolved?.auth.apiKey;
+  // Pi's OAuth resolver stamps this source; API-key/config overrides must not qualify.
+  if (
+    resolved?.source !== "OAuth" ||
+    !accessToken ||
+    !isSafeHeaderValue(accessToken)
+  ) {
+    throw codexAuthError();
+  }
+  const accountId = extractCodexAccountId(accessToken);
+  if (!accountId) throw codexAuthError();
+  return { accessToken, accountId };
 }
 
 export function buildCodexHeaders(auth: CodexRequestAuth): Headers {

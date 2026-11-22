@@ -1,4 +1,12 @@
-import { chmod, mkdtemp, open, rm, writeFile } from "node:fs/promises";
+import {
+  chmod,
+  mkdtemp,
+  open,
+  readdir,
+  rm,
+  stat,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -186,7 +194,6 @@ export async function cleanupExpiredSpools(
 ): Promise<void> {
   // Deliberately keep this best-effort: a missing or unreadable temp directory
   // must not prevent the extension from starting.
-  const { readdir, stat } = await import("node:fs/promises");
   let entries: string[];
   try {
     entries = await readdir(baseDir);

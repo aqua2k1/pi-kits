@@ -1,6 +1,7 @@
 import { readFile } from "node:fs/promises";
 import {
   MAX_FETCH_CONTENT_BYTES,
+  MAX_FETCH_TIMEOUT_MS,
   TEMP_SPOOL_TTL_MS,
 } from "../shared/limits.ts";
 import {
@@ -34,21 +35,25 @@ function contentLength(headers: Headers): number | undefined {
   return Number.isSafeInteger(parsed) ? parsed : undefined;
 }
 
-export async function fetchDocument(
-  request: FetchRequest,
-  options: FetchDocumentOptions,
-  parentSignal?: AbortSignal,
-): Promise<FetchResponse> {
+function assertValidTimeout(timeoutMs: number): void {
   if (
-    !Number.isInteger(options.timeoutMs) ||
-    options.timeoutMs < 1 ||
-    options.timeoutMs > 120_000
+    !Number.isInteger(timeoutMs) ||
+    timeoutMs < 1 ||
+    timeoutMs > MAX_FETCH_TIMEOUT_MS
   ) {
     throw new WebFetchError(
       "invalid-config",
       "Web tools fetch configuration is invalid.",
     );
   }
+}
+
+export async function fetchDocument(
+  request: FetchRequest,
+  options: FetchDocumentOptions,
+  parentSignal?: AbortSignal,
+): Promise<FetchResponse> {
+  assertValidTimeout(options.timeoutMs);
   try {
     return await withRequestDeadline(
       options.timeoutMs,

@@ -6,15 +6,26 @@ import {
 } from "../shared/url.ts";
 import type { SearchRequest, SearchResponse, SearchResult } from "./types.ts";
 
+export { isRecord } from "../shared/guards.ts";
+
 const REDACTED = "[redacted]";
 const URL_IN_TEXT =
   /https?(?::\/\/|%(?:25)*3a%(?:25)*2f%(?:25)*2f)[^\s<>"'`)\]]+/gi;
+const BEARER_TOKEN_PATTERN = /Bearer\s+[A-Za-z0-9._~+/=-]+/gi;
+const JWT_PATTERN = /\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b/g;
+const SECRET_ASSIGNMENT_PATTERN =
+  /\b((?:access[_-]?token|refresh[_-]?token|api[_-]?key|secret|password|authorization|credential)\s*[=:]\s*)(?:"[^"]*"|'[^']*'|[^\s&<>"'`)\]]+)/gi;
+const ENCODED_BYTE_PATTERN = /%[a-f0-9]{2}/i;
+const NESTED_URL_OR_ENCODED_PATTERN = /https?:\/\/|%[a-f0-9]{2}/i;
+const TRACKING_PARAM_PATTERN = /^utm_|^(?:fbclid|gclid|mc_cid|mc_eid)$/i;
+
 const MAX_ENCODING_DEPTH = 4;
 const MAX_URL_BYTES = 2_048;
-
-export function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
+const MAX_TITLE_BYTES = 500;
+const MAX_SNIPPET_BYTES = 2_000;
+const MAX_QUERY_BYTES = 2_000;
+const MAX_SUMMARY_BYTES = 4_000;
+const ELLIPSIS_BYTES = Buffer.byteLength("…", "utf8");
 
 export function stringField(
   value: Record<string, unknown>,
@@ -61,15 +72,9 @@ export function createRedactor(
   return (text) => {
     const redacted = exact ? text.replace(exact, REDACTED) : text;
     return redacted
-      .replace(/Bearer\s+[A-Za-z0-9._~+/=-]+/gi, `Bearer ${REDACTED}`)
-      .replace(
-        /\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b/g,
-        REDACTED,
-      )
-      .replace(
-        /\b((?:access[_-]?token|refresh[_-]?token|api[_-]?key|secret|password|authorization|credential)\s*[=:]\s*)(?:"[^"]*"|'[^']*'|[^\s&<>"'`)\]]+)/gi,
-        `$1${REDACTED}`,
-      );
+      .replace(BEARER_TOKEN_PATTERN, `Bearer ${REDACTED}`)
+      .replace(JWT_PATTERN, REDACTED)
+      .replace(SECRET_ASSIGNMENT_PATTERN, `$1${REDACTED}`);
   };
 }
 
@@ -92,20 +97,24 @@ function safeUrl(
       .map((segment) => {
         const decoded = decode(segment);
         const clean = redact(decoded);
-        if (sensitivePath || clean !== decoded || /%[a-f0-9]{2}/i.test(decoded))
+        if (
+          sensitivePath ||
+          clean !== decoded ||
+          ENCODED_BYTE_PATTERN.test(decoded)
+        )
           return REDACTED;
         sensitivePath = isSensitiveName(decoded);
         return segment;
       })
       .join("/");
     for (const [key, value] of [...url.searchParams]) {
-      if (isSensitiveQueryName(key) || /%[a-f0-9]{2}/i.test(decode(key))) {
+      if (isSensitiveQueryName(key) || ENCODED_BYTE_PATTERN.test(decode(key))) {
         url.searchParams.delete(key);
         continue;
       }
       const decoded = decode(value);
       // Nested URLs can themselves contain credentials. Do not expose redirect payloads.
-      const clean = /https?:\/\/|%[a-f0-9]{2}/i.test(decoded)
+      const clean = NESTED_URL_OR_ENCODED_PATTERN.test(decoded)
         ? REDACTED
         : redact(decoded);
       if (clean !== decoded) url.searchParams.set(key, clean);
@@ -151,11 +160,26 @@ function withinDomains(
 function resultKey(url: string): string {
   const parsed = new URL(url);
   for (const key of [...parsed.searchParams.keys()]) {
-    if (/^utm_|^(?:fbclid|gclid|mc_cid|mc_eid)$/i.test(key))
-      parsed.searchParams.delete(key);
+    if (TRACKING_PARAM_PATTERN.test(key)) parsed.searchParams.delete(key);
   }
   parsed.searchParams.sort();
   return parsed.toString();
+}
+
+function truncateUtf8WithEllipsis(
+  clean: string,
+  maxBytes: number,
+): { text: string; truncated: boolean } {
+  if (Buffer.byteLength(clean) <= maxBytes) {
+    return { text: clean, truncated: false };
+  }
+  let end = Math.max(0, maxBytes - ELLIPSIS_BYTES);
+  const bytes = Buffer.from(clean);
+  while (end > 0 && (bytes[end] & 0xc0) === 0x80) end--;
+  return {
+    text: `${bytes.subarray(0, end).toString("utf8")}…`,
+    truncated: true,
+  };
 }
 
 /** Both adapters share one output policy; wire-shape parsing stays with the adapter. */
@@ -167,14 +191,10 @@ export function normalizeSearchResponse(
 ): SearchResponse {
   const redact = createRedactor(secrets);
   let truncated = false;
-  const text = (raw: string, maxBytes: number) => {
-    const clean = safeText(raw, redact);
-    if (Buffer.byteLength(clean) <= maxBytes) return clean;
-    truncated = true;
-    let end = maxBytes - 3;
-    const bytes = Buffer.from(clean);
-    while ((bytes[end] & 0xc0) === 0x80) end--;
-    return `${bytes.subarray(0, end).toString("utf8")}…`;
+  const sanitizeField = (raw: string, maxBytes: number) => {
+    const bounded = truncateUtf8WithEllipsis(safeText(raw, redact), maxBytes);
+    if (bounded.truncated) truncated = true;
+    return bounded.text;
   };
   const results: SearchResult[] = [];
   const seen = new Set<string>();
@@ -189,14 +209,16 @@ export function normalizeSearchResponse(
     if (seen.has(key)) continue;
     seen.add(key);
     results.push({
-      title: text(candidate.title || url, 500),
+      title: sanitizeField(candidate.title || url, MAX_TITLE_BYTES),
       url,
-      snippet: text(candidate.snippet, 2_000),
+      snippet: sanitizeField(candidate.snippet, MAX_SNIPPET_BYTES),
     });
     if (results.length >= request.maxResults) break;
   }
-  const query = text(request.query, 2_000);
-  const safeSummary = summary ? text(summary, 4_000) : undefined;
+  const query = sanitizeField(request.query, MAX_QUERY_BYTES);
+  const safeSummary = summary
+    ? sanitizeField(summary, MAX_SUMMARY_BYTES)
+    : undefined;
   return {
     query,
     results,

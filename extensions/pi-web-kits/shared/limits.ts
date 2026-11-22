@@ -1,5 +1,6 @@
 import { WEB_DEFAULTS } from "@pi-kits/config";
 
+export const SEARXNG_DEFAULT_URL = "http://localhost:8080";
 export const DEFAULT_SEARCH_TIMEOUT_MS = WEB_DEFAULTS.searchTimeoutMs;
 export const MIN_SEARCH_TIMEOUT_MS = 1_000;
 export const MAX_SEARCH_TIMEOUT_MS = 120_000;
@@ -19,7 +20,6 @@ export const MAX_FETCH_CONTENT_MIB = 50;
 export const MAX_FETCH_CONTENT_BYTES = MAX_FETCH_CONTENT_MIB * 1_024 * 1_024;
 export const MAX_FETCH_CONTENT_LABEL = `${MAX_FETCH_CONTENT_MIB} MiB`;
 export const FETCH_RESPONSE_SIZE_LIMIT_MESSAGE = `The fetch response exceeds the ${MAX_FETCH_CONTENT_LABEL} limit.`;
-export const FETCH_FILE_CONTENT_LIMIT_MESSAGE = `[File content is limited to ${MAX_FETCH_CONTENT_LABEL}.]`;
 export const MAX_FETCH_OUTPUT_BYTES = 50 * 1_024;
 export const MAX_OUTPUT_BYTES = MAX_FETCH_OUTPUT_BYTES;
 export const MAX_GITHUB_COMMAND_OUTPUT_BYTES = 2 * 1_024 * 1_024;

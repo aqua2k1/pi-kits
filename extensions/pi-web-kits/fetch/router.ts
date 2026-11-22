@@ -1,10 +1,20 @@
 import { randomUUID } from "node:crypto";
-import type { ResolvedWebFetchConfig } from "../config.ts";
 import { MAX_URL_LENGTH } from "../shared/limits.ts";
-import { fetchDocument } from "./document.ts";
 import { assertNotCancelled, WebFetchError } from "./errors.ts";
-import { GitHubHandler } from "./github.ts";
-import type { FetchRequest, FetchResponse, FetchRuntime } from "./types.ts";
+import type {
+  FetchHandler,
+  FetchRequest,
+  FetchResponse,
+  FetchRuntime,
+} from "./types.ts";
+
+export interface FetchRouteHandlers {
+  readonly github: FetchHandler;
+  readonly document: (
+    request: FetchRequest,
+    signal?: AbortSignal,
+  ) => Promise<FetchResponse>;
+}
 
 export function createFetchRuntime(): FetchRuntime {
   return { now: Date.now, uuid: randomUUID };
@@ -31,64 +41,21 @@ export function normalizeFetchRequest(request: { url: string }): FetchRequest {
   if (!rawUrl || rawUrl.length > MAX_URL_LENGTH) {
     throw new WebFetchError("invalid-url", "The fetch URL is invalid.");
   }
-  const url = parseHttpUrl(rawUrl);
-  return { url };
+  return { url: parseHttpUrl(rawUrl) };
 }
 
-export class WebFetchRouter {
-  private readonly github: GitHubHandler;
-  private readonly config: ResolvedWebFetchConfig;
-  private readonly runtime: FetchRuntime;
-
-  constructor(
-    config: ResolvedWebFetchConfig,
-    runtime: FetchRuntime = createFetchRuntime(),
-  ) {
-    this.config = {
-      enabled: config.enabled,
-      timeoutMs: config.timeoutMs,
-      github: { ...config.github },
-    };
-    this.runtime = { ...runtime };
-    this.github =
-      this.runtime.github ??
-      new GitHubHandler({
-        config: this.config.github,
-        apiTimeoutMs: this.config.timeoutMs,
-        runtime: this.runtime,
-      });
-  }
-
-  async fetch(
-    request: FetchRequest,
-    signal?: AbortSignal,
-  ): Promise<FetchResponse> {
-    assertNotCancelled(signal);
-    const stableRequest: FetchRequest = {
-      url: new URL(request.url.toString()),
-    };
-    const githubResponse = await this.github.fetch(stableRequest, signal);
-    if (githubResponse) return githubResponse;
-
-    return fetchDocument(
-      stableRequest,
-      {
-        timeoutMs: this.config.timeoutMs,
-        fetch: this.runtime.fetch,
-        now: this.runtime.now,
-      },
-      signal,
-    );
-  }
-}
-
-export async function fetchWeb(
+/** Only routing policy lives here. Composition owns concrete handler wiring. */
+export async function routeFetchWeb(
   request: { url: string },
-  config: ResolvedWebFetchConfig,
-  runtime: FetchRuntime = createFetchRuntime(),
+  handlers: FetchRouteHandlers,
   signal?: AbortSignal,
 ): Promise<FetchResponse> {
   const normalized = normalizeFetchRequest(request);
   assertNotCancelled(signal);
-  return new WebFetchRouter(config, runtime).fetch(normalized, signal);
+  const stableRequest: FetchRequest = {
+    url: new URL(normalized.url.toString()),
+  };
+  const githubResponse = await handlers.github.fetch(stableRequest, signal);
+  if (githubResponse) return githubResponse;
+  return handlers.document(stableRequest, signal);
 }

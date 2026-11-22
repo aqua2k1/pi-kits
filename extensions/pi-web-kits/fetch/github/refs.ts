@@ -1,6 +1,7 @@
-import { GhRequestError } from "../shared/gh-request.ts";
-import { assertNotCancelled } from "./errors.ts";
-import type { GitHubUrlInfo } from "./github-url.ts";
+import { GhRequestError } from "../../shared/gh-request.ts";
+import { isRecord } from "../../shared/guards.ts";
+import { assertNotCancelled } from "../errors.ts";
+import type { GitHubUrlInfo } from "./url.ts";
 
 /** Resolve only a unique ref/path split; never silently choose a shorter ref. */
 export async function resolveGitHubRef(
@@ -23,15 +24,16 @@ export async function resolveGitHubRef(
       throw error;
     }
     if (!Array.isArray(result)) return null;
+    const prefix = `refs/${namespace}/`;
     for (const entry of result) {
       if (
-        !entry ||
-        typeof entry !== "object" ||
+        !isRecord(entry) ||
         typeof entry.ref !== "string" ||
-        !entry.ref.startsWith(`refs/${namespace}/`)
-      )
+        !entry.ref.startsWith(prefix)
+      ) {
         return null;
-      names.add(entry.ref.slice(`refs/${namespace}/`.length));
+      }
+      names.add(entry.ref.slice(prefix.length));
     }
   }
   assertNotCancelled(signal);

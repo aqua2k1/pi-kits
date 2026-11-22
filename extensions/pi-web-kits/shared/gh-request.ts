@@ -1,5 +1,10 @@
 import { spawn } from "node:child_process";
+import { isEnoentError } from "./guards.ts";
 import { MAX_GITHUB_COMMAND_OUTPUT_BYTES } from "./limits.ts";
+
+const TEXT_MATCH_ACCEPT = "application/vnd.github.text-match+json";
+const MAX_GITHUB_STDERR_BYTES = 16 * 1_024;
+const KILL_GRACE_MS = 250;
 
 type CommandResult = {
   code: number | null;
@@ -17,7 +22,7 @@ type GhRequestOptions = {
   timeoutMs: number;
   signal?: AbortSignal;
   /** Fixed JSON media type for search excerpts; arbitrary headers are not accepted. */
-  accept?: "application/vnd.github.text-match+json";
+  accept?: typeof TEXT_MATCH_ACCEPT;
   /** Internal effect seam; production uses node:child_process. */
   spawn?: typeof spawn;
 };
@@ -45,28 +50,19 @@ function checkCancelled(signal?: AbortSignal): void {
   if (signal?.aborted) throw new GhRequestError("cancelled");
 }
 
-function terminate(child: ReturnType<typeof spawn>): void {
+function signalChildProcess(
+  child: ReturnType<typeof spawn>,
+  signal: "SIGTERM" | "SIGKILL",
+): void {
   if (child.pid && process.platform !== "win32") {
     try {
-      process.kill(-child.pid, "SIGTERM");
+      process.kill(-child.pid, signal);
       return;
     } catch {
       // The process may have exited between the check and kill.
     }
   }
-  child.kill("SIGTERM");
-}
-
-function forceTerminate(child: ReturnType<typeof spawn>): void {
-  if (child.pid && process.platform !== "win32") {
-    try {
-      process.kill(-child.pid, "SIGKILL");
-      return;
-    } catch {
-      // The process may have exited between the check and kill.
-    }
-  }
-  child.kill("SIGKILL");
+  child.kill(signal);
 }
 
 function appendBounded(
@@ -85,6 +81,45 @@ function appendBounded(
   return { size: limit, truncated: true };
 }
 
+function buildGhArgs(
+  endpoint: string,
+  accept?: typeof TEXT_MATCH_ACCEPT,
+): string[] {
+  return [
+    "api",
+    "--method",
+    "GET",
+    "--hostname",
+    "github.com",
+    ...(accept ? ["--header", `Accept: ${accept}`] : []),
+    endpoint,
+  ];
+}
+
+function isValidGhRequest(
+  endpoint: string,
+  accept: GhRequestOptions["accept"],
+): boolean {
+  // Only relative REST paths: gh accepts absolute URLs despite --hostname.
+  return (
+    (accept === undefined || accept === TEXT_MATCH_ACCEPT) &&
+    /^[A-Za-z0-9]/.test(endpoint) &&
+    !/[^A-Za-z0-9_./?%=&~+,!()*'-]/.test(endpoint)
+  );
+}
+
+function classifyExitFailure(result: CommandResult): GhRequestError {
+  const status = Number(/\bHTTP\s+(\d{3})\b/i.exec(result.stderr)?.[1]);
+  if (status === 429 || (status === 403 && /rate limit/i.test(result.stderr))) {
+    return new GhRequestError("rate-limit", status);
+  }
+  if (status) return new GhRequestError("status", status);
+  const auth =
+    result.code === 4 ||
+    /gh auth login|GH_TOKEN|authentication/i.test(result.stderr);
+  return new GhRequestError(auth ? "auth" : "request");
+}
+
 function execute(
   endpoint: string,
   options: GhRequestOptions,
@@ -94,15 +129,7 @@ function execute(
     try {
       child = (options.spawn ?? spawn)(
         "gh",
-        [
-          "api",
-          "--method",
-          "GET",
-          "--hostname",
-          "github.com",
-          ...(options.accept ? ["--header", `Accept: ${options.accept}`] : []),
-          endpoint,
-        ],
+        buildGhArgs(endpoint, options.accept),
         {
           env: { ...process.env, GH_PROMPT_DISABLED: "1" },
           detached: process.platform !== "win32",
@@ -136,11 +163,25 @@ function execute(
       options.signal?.removeEventListener("abort", onAbort);
     };
 
-    const finish = (result: CommandResult) => {
+    const finish = (
+      code: number | null,
+      signal: NodeJS.Signals | null,
+      notFound: boolean,
+    ) => {
       if (settled) return;
       settled = true;
       cleanup();
-      resolve(result);
+      resolve({
+        code,
+        signal,
+        stdout: Buffer.concat(stdoutChunks).toString("utf8"),
+        stderr: Buffer.concat(stderrChunks).toString("utf8"),
+        notFound,
+        timedOut,
+        aborted,
+        stdoutTruncated,
+        stderrTruncated,
+      });
     };
 
     const stop = (reason: "timeout" | "abort" | "overflow") => {
@@ -149,11 +190,11 @@ function execute(
       if (reason === "abort") aborted = true;
       if (stopping) return;
       stopping = true;
-      terminate(child);
+      signalChildProcess(child, "SIGTERM");
       killTimer = setTimeout(() => {
         killTimer = undefined;
-        if (!settled) forceTerminate(child);
-      }, 250);
+        if (!settled) signalChildProcess(child, "SIGKILL");
+      }, KILL_GRACE_MS);
     };
 
     onAbort = () => stop("abort");
@@ -176,7 +217,7 @@ function execute(
         stderrChunks,
         Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk),
         stderrSize,
-        16 * 1_024,
+        MAX_GITHUB_STDERR_BYTES,
       );
       stderrSize = result.size;
       if (result.truncated) stderrTruncated = true;
@@ -184,17 +225,7 @@ function execute(
 
     child.once("error", (error: NodeJS.ErrnoException) => {
       if (error.code === "ENOENT") {
-        finish({
-          code: null,
-          signal: null,
-          stdout: Buffer.concat(stdoutChunks).toString("utf8"),
-          stderr: Buffer.concat(stderrChunks).toString("utf8"),
-          notFound: true,
-          timedOut,
-          aborted,
-          stdoutTruncated,
-          stderrTruncated,
-        });
+        finish(null, null, true);
         return;
       }
       if (!settled) {
@@ -205,17 +236,7 @@ function execute(
     });
 
     child.once("close", (code, signal) => {
-      finish({
-        code,
-        signal,
-        stdout: Buffer.concat(stdoutChunks).toString("utf8"),
-        stderr: Buffer.concat(stderrChunks).toString("utf8"),
-        notFound: false,
-        timedOut,
-        aborted,
-        stdoutTruncated,
-        stderrTruncated,
-      });
+      finish(code, signal, false);
     });
 
     options.signal?.addEventListener("abort", onAbort, { once: true });
@@ -229,13 +250,7 @@ export async function ghRequest(
   options: GhRequestOptions,
 ): Promise<unknown> {
   checkCancelled(options.signal);
-  // Only relative REST paths: gh accepts absolute URLs despite --hostname.
-  if (
-    (options.accept !== undefined &&
-      options.accept !== "application/vnd.github.text-match+json") ||
-    !/^[A-Za-z0-9]/.test(endpoint) ||
-    /[^A-Za-z0-9_./?%=&~+,!()*'-]/.test(endpoint)
-  ) {
+  if (!isValidGhRequest(endpoint, options.accept)) {
     throw new GhRequestError("request");
   }
   let result: CommandResult;
@@ -243,12 +258,7 @@ export async function ghRequest(
     result = await execute(endpoint, options);
   } catch (error) {
     checkCancelled(options.signal);
-    if (
-      error &&
-      typeof error === "object" &&
-      "code" in error &&
-      error.code === "ENOENT"
-    ) {
+    if (isEnoentError(error)) {
       throw new GhRequestError("tool-unavailable");
     }
     throw new GhRequestError("network");
@@ -259,18 +269,7 @@ export async function ghRequest(
   if (result.notFound) throw new GhRequestError("tool-unavailable");
   if (result.stdoutTruncated) throw new GhRequestError("invalid-response");
   if (result.code !== 0) {
-    const status = Number(/\bHTTP\s+(\d{3})\b/i.exec(result.stderr)?.[1]);
-    if (
-      status === 429 ||
-      (status === 403 && /rate limit/i.test(result.stderr))
-    ) {
-      throw new GhRequestError("rate-limit", status);
-    }
-    if (status) throw new GhRequestError("status", status);
-    const auth =
-      result.code === 4 ||
-      /gh auth login|GH_TOKEN|authentication/i.test(result.stderr);
-    throw new GhRequestError(auth ? "auth" : "request");
+    throw classifyExitFailure(result);
   }
   try {
     return JSON.parse(result.stdout) as unknown;

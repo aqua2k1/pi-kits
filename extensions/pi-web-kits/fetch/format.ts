@@ -1,10 +1,12 @@
-import type { FetchDetails, FetchMachineOutput } from "../schema.ts";
 import { MAX_FETCH_OUTPUT_BYTES } from "../shared/limits.ts";
 import { isSensitiveQueryName } from "../shared/url.ts";
 import { WebFetchError } from "./errors.ts";
-import type { FetchResponse } from "./types.ts";
+import type { FetchDetails, FetchMachineOutput } from "./schema.ts";
+import type { FetchResponse, FetchTruncation } from "./types.ts";
 
-export type { FetchDetails } from "../schema.ts";
+export type { FetchDetails } from "./schema.ts";
+
+const READ_MAX_LINE_BYTES = 50 * 1_024;
 
 function escapeHeader(value: string): string {
   return value.replace(/[\r\n]/g, " ").trim();
@@ -45,33 +47,11 @@ function textLayout(text: string): { lines: number; maxLineBytes: number } {
   }
 }
 
-/** Fetch saves content; both model and machine outputs expose only metadata. */
-export function buildFetchOutput(response: FetchResponse): {
-  content: { type: "text"; text: string }[];
-  details: FetchDetails;
-  structuredContent: FetchMachineOutput;
-} {
-  const truncation = response.truncation
-    ? { ...response.truncation }
-    : undefined;
-  const details: FetchDetails = {
-    url: displayUrl(response.finalUrl),
-    finalUrl: displayUrl(response.finalUrl),
-    ...(response.title ? { title: response.title } : {}),
-    ...(response.contentType ? { contentType: response.contentType } : {}),
-    ...(response.contentLength !== undefined
-      ? { contentLength: response.contentLength }
-      : {}),
-    source: response.source,
-    savedContent: {
-      path: response.fullOutputPath,
-      bytes: Buffer.byteLength(response.text, "utf8"),
-      ...textLayout(response.text),
-      truncated: Boolean(truncation),
-      ...(response.expiresAt ? { expiresAt: response.expiresAt } : {}),
-      ...(truncation ? { truncation } : {}),
-    },
-  };
+function formatFetchText(
+  response: FetchResponse,
+  details: FetchDetails,
+  truncation: FetchTruncation | undefined,
+): string {
   const lines = [
     `**Fetched:** ${details.finalUrl}`,
     ...(response.title ? [`**Title:** ${escapeHeader(response.title)}`] : []),
@@ -88,7 +68,7 @@ export function buildFetchOutput(response: FetchResponse): {
     "",
     "Content is not returned inline. Use the `read` tool to inspect the saved file.",
     "Read returns at most 2000 lines or 50 KiB per call. For full-file analysis, start at line 1 and follow each returned offset until no content remains; a single read is not proof of full coverage. For targeted questions, search first and read relevant ranges.",
-    ...(details.savedContent.maxLineBytes > 50 * 1_024
+    ...(details.savedContent.maxLineBytes > READ_MAX_LINE_BYTES
       ? [
           "Warning: a saved line exceeds read's 50 KiB limit. Line offsets cannot read that line; use UTF-8-safe byte chunking or structured processing via bash, not repeated line reads.",
         ]
@@ -101,15 +81,52 @@ export function buildFetchOutput(response: FetchResponse): {
         ]
       : []),
   ];
+  return lines.join("\n");
+}
+
+/** Fetch saves content; both model and machine outputs expose only metadata. */
+export function buildFetchOutput(response: FetchResponse): {
+  content: { type: "text"; text: string }[];
+  details: FetchDetails;
+  structuredContent: FetchMachineOutput;
+} {
+  const finalUrl = displayUrl(response.finalUrl);
+  const truncation = response.truncation
+    ? { ...response.truncation }
+    : undefined;
+  const details: FetchDetails = {
+    url: finalUrl,
+    finalUrl,
+    ...(response.title ? { title: response.title } : {}),
+    ...(response.contentType ? { contentType: response.contentType } : {}),
+    ...(response.contentLength !== undefined
+      ? { contentLength: response.contentLength }
+      : {}),
+    source: response.source,
+    savedContent: {
+      path: response.fullOutputPath,
+      bytes: Buffer.byteLength(response.text, "utf8"),
+      ...textLayout(response.text),
+      truncated: Boolean(truncation),
+      ...(response.expiresAt ? { expiresAt: response.expiresAt } : {}),
+      ...(truncation ? { truncation } : {}),
+    },
+  };
   const output = {
-    content: [{ type: "text" as const, text: lines.join("\n") }],
+    content: [
+      {
+        type: "text" as const,
+        text: formatFetchText(response, details, truncation),
+      },
+    ],
     details,
     structuredContent: details,
   };
-  if (Buffer.byteLength(JSON.stringify(output)) > MAX_FETCH_OUTPUT_BYTES)
+  if (Buffer.byteLength(JSON.stringify(output)) > MAX_FETCH_OUTPUT_BYTES) {
     throw new WebFetchError(
       "invalid-response",
       "Fetch output exceeds the size limit.",
     );
+  }
   return output;
 }

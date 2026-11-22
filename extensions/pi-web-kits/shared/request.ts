@@ -84,6 +84,63 @@ type RequestOptions = Pick<RequestInit, "method" | "headers" | "body"> & {
 };
 type FileResult = ResponseMeta & { bytes: number };
 
+type FileHandle = Awaited<ReturnType<typeof open>>;
+
+async function writeChunkToFile(
+  file: FileHandle,
+  chunk: Uint8Array,
+  signal: AbortSignal,
+): Promise<void> {
+  let offset = 0;
+  while (offset < chunk.byteLength) {
+    checkAbort(signal);
+    const { bytesWritten } = await file.write(
+      chunk,
+      offset,
+      chunk.byteLength - offset,
+    );
+    if (bytesWritten <= 0) throw new RequestError("network");
+    offset += bytesWritten;
+  }
+}
+
+async function readResponseBody(
+  reader: ReadableStreamDefaultReader<Uint8Array> | undefined,
+  maxBytes: number,
+  file: FileHandle | undefined,
+  signal: AbortSignal,
+): Promise<{ chunks: Uint8Array[]; bytes: number }> {
+  const chunks: Uint8Array[] = [];
+  let bytes = 0;
+  while (reader) {
+    checkAbort(signal);
+    const { done, value } = await withRequestDeadline(undefined, signal, () =>
+      reader.read(),
+    );
+    checkAbort(signal);
+    if (done) break;
+    bytes += value.byteLength;
+    if (bytes > maxBytes) {
+      throw new RequestError("invalid-response");
+    }
+    if (file) {
+      await writeChunkToFile(file, value, signal);
+    } else {
+      // Own the bytes even if an injected stream reuses its backing buffer.
+      chunks.push(value.slice());
+    }
+  }
+  return { chunks, bytes };
+}
+
+function parseJsonBody(chunks: Uint8Array[], bytes: number): unknown {
+  try {
+    return JSON.parse(Buffer.concat(chunks, bytes).toString("utf8")) as unknown;
+  } catch {
+    throw new RequestError("invalid-response");
+  }
+}
+
 export function request(
   url: string | URL,
   options: RequestOptions & { response: "json" },
@@ -103,7 +160,7 @@ export function request(
     async (signal) => {
       let response: Response | undefined;
       let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
-      let file: Awaited<ReturnType<typeof open>> | undefined;
+      let file: FileHandle | undefined;
       let complete = false;
       let validationFailed = false;
       const onAbort = () => cancel(reader ?? response?.body);
@@ -129,7 +186,7 @@ export function request(
         if (options.redirect === "error" && response.redirected) {
           throw new RequestError("invalid-response");
         }
-        const meta = {
+        const meta: ResponseMeta = {
           headers: response.headers,
           finalUrl: response.url || String(url),
         };
@@ -151,39 +208,12 @@ export function request(
           throw new RequestError("invalid-response");
         }
         reader = response.body?.getReader();
-        const chunks: Uint8Array[] = [];
-        let bytes = 0;
-        while (reader) {
-          checkAbort(signal);
-          const currentReader = reader;
-          const { done, value } = await withRequestDeadline(
-            undefined,
-            signal,
-            () => currentReader.read(),
-          );
-          checkAbort(signal);
-          if (done) break;
-          bytes += value.byteLength;
-          if (bytes > options.maxBytes) {
-            throw new RequestError("invalid-response");
-          }
-          if (file) {
-            let offset = 0;
-            while (offset < value.byteLength) {
-              checkAbort(signal);
-              const { bytesWritten } = await file.write(
-                value,
-                offset,
-                value.byteLength - offset,
-              );
-              if (bytesWritten <= 0) throw new RequestError("network");
-              offset += bytesWritten;
-            }
-          } else {
-            // Own the bytes even if an injected stream reuses its backing buffer.
-            chunks.push(value.slice());
-          }
-        }
+        const { chunks, bytes } = await readResponseBody(
+          reader,
+          options.maxBytes,
+          file,
+          signal,
+        );
         checkAbort(signal);
         if (file) {
           await file.close();
@@ -191,13 +221,7 @@ export function request(
           complete = true;
           return { ...meta, bytes };
         }
-        try {
-          return JSON.parse(
-            Buffer.concat(chunks, bytes).toString("utf8"),
-          ) as unknown;
-        } catch {
-          throw new RequestError("invalid-response");
-        }
+        return parseJsonBody(chunks, bytes);
       } catch (error) {
         if (validationFailed) throw error;
         if (signal.aborted) throw abortError(signal);

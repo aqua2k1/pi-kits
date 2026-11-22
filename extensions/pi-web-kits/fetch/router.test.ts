@@ -1,11 +1,12 @@
 import assert from "node:assert/strict";
 import { readFile, rm, stat } from "node:fs/promises";
 import { test } from "node:test";
+import { fetchWeb } from "../composition.ts";
 import { resolveConfig } from "../config.ts";
 import { GhRequestError } from "../shared/gh-request.ts";
 import { TEMP_SPOOL_TTL_MS } from "../shared/limits.ts";
 import { WebFetchError } from "./errors.ts";
-import { fetchWeb, normalizeFetchRequest } from "./router.ts";
+import { normalizeFetchRequest } from "./router.ts";
 
 async function cleanup(path: string): Promise<void> {
   await rm(path.substring(0, path.lastIndexOf("/")), {

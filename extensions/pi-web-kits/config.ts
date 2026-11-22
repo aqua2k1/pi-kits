@@ -5,12 +5,12 @@ import {
   resolvePiKitsConfig,
 } from "@pi-kits/config";
 import { errorMessageForCode, WebSearchError } from "./search/errors.ts";
-import { SEARXNG_DEFAULT_URL } from "./search/providers/searxng/config.ts";
-import { isRecord } from "./search/results.ts";
 import {
   WEB_SEARCH_PROVIDER_NAMES,
   type WebSearchProviderName,
 } from "./search/types.ts";
+import { isEnoentError, isRecord } from "./shared/guards.ts";
+import { SEARXNG_DEFAULT_URL } from "./shared/limits.ts";
 
 export interface WebSearchRouteConfig {
   provider?: string;
@@ -107,95 +107,130 @@ function readField<T>(
   return value as T;
 }
 
+function readRecordField(
+  record: Record<string, unknown>,
+  field: string,
+  fieldPath: string = field,
+): Record<string, unknown> | undefined {
+  if (!Object.hasOwn(record, field)) return undefined;
+  const value = record[field];
+  if (!isRecord(value)) invalidField(fieldPath);
+  return value;
+}
+
+function parseSearchRoutingConfig(
+  routing: Record<string, unknown>,
+): WebSearchRouteConfig {
+  const provider = readField<string>(routing, "provider", "string");
+  const fallback = readField<boolean>(routing, "fallback", "boolean");
+  const fallbackProvider = readField<string>(
+    routing,
+    "fallbackProvider",
+    "string",
+  );
+  return {
+    ...(provider !== undefined ? { provider } : {}),
+    ...(fallback !== undefined ? { fallback } : {}),
+    ...(fallbackProvider !== undefined ? { fallbackProvider } : {}),
+  };
+}
+
+function parseCodexSection(codex: Record<string, unknown>): { model?: string } {
+  const model = readField<string>(codex, "model", "string");
+  return model === undefined ? {} : { model };
+}
+
+function parseSearchSourcesConfig(
+  sources: Record<string, unknown>,
+): NonNullable<WebSearchFileConfig["sources"]> {
+  const web = isRecord(sources.web) ? sources.web : undefined;
+  const github = isRecord(sources.github) ? sources.github : undefined;
+  const webEnabled = web
+    ? readField<boolean>(web, "enabled", "boolean")
+    : undefined;
+  const githubEnabled = github
+    ? readField<boolean>(github, "enabled", "boolean")
+    : undefined;
+  return {
+    ...(web
+      ? {
+          web: {
+            ...(webEnabled !== undefined ? { enabled: webEnabled } : {}),
+            ...(Array.isArray(web.routing)
+              ? { routing: [...(web.routing as WebSearchProviderName[])] }
+              : {}),
+            ...(isRecord(web.codex)
+              ? { codex: parseCodexSection(web.codex) }
+              : {}),
+          },
+        }
+      : {}),
+    ...(github
+      ? {
+          github: githubEnabled === undefined ? {} : { enabled: githubEnabled },
+        }
+      : {}),
+  };
+}
+
 function parseSearchConfig(
   source: Record<string, unknown>,
 ): WebSearchFileConfig {
-  const config: WebSearchFileConfig = {};
+  const searxng = readRecordField(source, "searxng", "search.searxng");
+  if (
+    searxng &&
+    (Object.hasOwn(searxng, "url") || Object.hasOwn(searxng, "apiKey"))
+  ) {
+    invalid(
+      "SearXNG URL and API key must be configured through SEARXNG_URL and SEARXNG_API_KEY.",
+    );
+  }
   const enabled = readField<boolean>(source, "enabled", "boolean");
-  if (enabled !== undefined) config.enabled = enabled;
   const timeoutMs = readField<number>(source, "timeoutMs", "number");
   const maxResults = readField<number>(source, "maxResults", "number");
-  if (timeoutMs !== undefined) config.timeoutMs = timeoutMs;
-  if (maxResults !== undefined) config.maxResults = maxResults;
-
-  if (Object.hasOwn(source, "routing")) {
-    if (!isRecord(source.routing)) invalidField("search.routing");
-    const routing = source.routing;
-    const provider = readField<string>(routing, "provider", "string");
-    const fallback = readField<boolean>(routing, "fallback", "boolean");
-    const fallbackProvider = readField<string>(
-      routing,
-      "fallbackProvider",
-      "string",
-    );
-    config.routing = {
-      ...(provider !== undefined ? { provider } : {}),
-      ...(fallback !== undefined ? { fallback } : {}),
-      ...(fallbackProvider !== undefined ? { fallbackProvider } : {}),
-    };
-  }
-
-  if (Object.hasOwn(source, "searxng")) {
-    if (!isRecord(source.searxng)) invalidField("search.searxng");
-    if (
-      Object.hasOwn(source.searxng, "url") ||
-      Object.hasOwn(source.searxng, "apiKey")
-    ) {
-      invalid(
-        "SearXNG URL and API key must be configured through SEARXNG_URL and SEARXNG_API_KEY.",
-      );
-    }
-  }
-
-  if (Object.hasOwn(source, "codex")) {
-    if (!isRecord(source.codex)) invalidField("search.codex");
-    const model = readField<string>(source.codex, "model", "string");
-    config.codex = model === undefined ? {} : { model };
-  }
-  if (isRecord(source.sources)) {
-    config.sources = {};
-    if (isRecord(source.sources.web)) {
-      const web = source.sources.web;
-      config.sources.web = {
-        ...(web.enabled !== undefined
-          ? { enabled: web.enabled as boolean }
-          : {}),
-        ...(web.routing !== undefined
-          ? { routing: [...(web.routing as WebSearchProviderName[])] }
-          : {}),
-        ...(isRecord(web.codex)
-          ? {
-              codex:
-                web.codex.model === undefined
-                  ? {}
-                  : { model: web.codex.model as string },
-            }
-          : {}),
-      };
-    }
-    if (isRecord(source.sources.github)) {
-      config.sources.github =
-        source.sources.github.enabled === undefined
-          ? {}
-          : { enabled: source.sources.github.enabled as boolean };
-    }
-  }
-  return config;
+  const routing = readRecordField(source, "routing", "search.routing");
+  const codex = readRecordField(source, "codex", "search.codex");
+  return {
+    ...(enabled !== undefined ? { enabled } : {}),
+    ...(timeoutMs !== undefined ? { timeoutMs } : {}),
+    ...(maxResults !== undefined ? { maxResults } : {}),
+    ...(routing ? { routing: parseSearchRoutingConfig(routing) } : {}),
+    ...(codex ? { codex: parseCodexSection(codex) } : {}),
+    ...(isRecord(source.sources)
+      ? { sources: parseSearchSourcesConfig(source.sources) }
+      : {}),
+  };
 }
 
 function parseFetchConfig(source: Record<string, unknown>): WebFetchFileConfig {
-  const config: WebFetchFileConfig = {};
   const enabled = readField<boolean>(source, "enabled", "boolean");
-  if (enabled !== undefined) config.enabled = enabled;
   const timeoutMs = readField<number>(source, "timeoutMs", "number");
-  if (timeoutMs !== undefined) config.timeoutMs = timeoutMs;
+  const github = readRecordField(source, "github", "fetch.github");
+  const githubEnabled = github
+    ? readField<boolean>(github, "enabled", "boolean")
+    : undefined;
+  return {
+    ...(enabled !== undefined ? { enabled } : {}),
+    ...(timeoutMs !== undefined ? { timeoutMs } : {}),
+    ...(github
+      ? {
+          github: githubEnabled === undefined ? {} : { enabled: githubEnabled },
+        }
+      : {}),
+  };
+}
 
-  if (Object.hasOwn(source, "github")) {
-    if (!isRecord(source.github)) invalidField("fetch.github");
-    const enabled = readField<boolean>(source.github, "enabled", "boolean");
-    config.github = enabled === undefined ? {} : { enabled };
-  }
-  return config;
+function extractConfigSection(
+  raw: Record<string, unknown>,
+): WebToolsFileConfig {
+  const enabled = readField<boolean>(raw, "enabled", "boolean");
+  const search = readRecordField(raw, "search");
+  const fetch = readRecordField(raw, "fetch");
+  return {
+    ...(enabled !== undefined ? { enabled } : {}),
+    ...(search ? { search: parseSearchConfig(search) } : {}),
+    ...(fetch ? { fetch: parseFetchConfig(fetch) } : {}),
+  };
 }
 
 /** Parse the internal pi-web-kits section, not a complete configuration file. */
@@ -206,26 +241,15 @@ export function parseConfig(text: string): WebToolsFileConfig {
   } catch {
     return invalid("Web tools configuration is not valid JSON.");
   }
-  if (!isRecord(raw))
+  if (!isRecord(raw)) {
     return invalid("Web tools configuration must be an object.");
-
+  }
   try {
     parsePiKitsFile(JSON.stringify({ "pi-web-kits": raw }));
   } catch {
     return invalid("Web tools configuration is invalid.");
   }
-  const config: WebToolsFileConfig = {};
-  const enabled = readField<boolean>(raw, "enabled", "boolean");
-  if (enabled !== undefined) config.enabled = enabled;
-  if (Object.hasOwn(raw, "search")) {
-    if (!isRecord(raw.search)) invalidField("search");
-    config.search = parseSearchConfig(raw.search);
-  }
-  if (Object.hasOwn(raw, "fetch")) {
-    if (!isRecord(raw.fetch)) invalidField("fetch");
-    config.fetch = parseFetchConfig(raw.fetch);
-  }
-  return config;
+  return extractConfigSection(raw);
 }
 
 export function getConfigPath(agentDir?: string): string {
@@ -244,18 +268,14 @@ export async function readConfigSnapshot(
 ): Promise<WebToolsConfigFileSnapshot> {
   try {
     const file = parsePiKitsFile(await readFile(path, "utf8"));
+    const section = file["pi-web-kits"];
     return {
-      rawConfig: parseConfig(JSON.stringify(file["pi-web-kits"] ?? {})),
+      rawConfig: isRecord(section) ? extractConfigSection(section) : {},
       configPath: path,
       source: "pi-kits",
     };
   } catch (error) {
-    if (
-      typeof error === "object" &&
-      error !== null &&
-      "code" in error &&
-      error.code === "ENOENT"
-    ) {
+    if (isEnoentError(error)) {
       return { rawConfig: {}, configPath: path, source: "defaults" };
     }
     if (error instanceof WebSearchError) throw error;
@@ -295,11 +315,10 @@ export function normalizeProviderName(
     : undefined;
 }
 
-export function resolveSearchConfig(
-  config: WebSearchFileConfig = {},
-  env: NodeJS.ProcessEnv = process.env,
+function toResolvedSearchConfig(
+  search: ReturnType<typeof resolveShared>["search"],
+  env: NodeJS.ProcessEnv,
 ): ResolvedWebSearchConfig {
-  const search = resolveShared({ search: config }).search;
   const searxngUrl = stringValue(env.SEARXNG_URL) ?? SEARXNG_DEFAULT_URL;
   const searxngApiKey = stringValue(env.SEARXNG_API_KEY);
   return {
@@ -324,6 +343,13 @@ export function resolveSearchConfig(
   };
 }
 
+export function resolveSearchConfig(
+  config: WebSearchFileConfig = {},
+  env: NodeJS.ProcessEnv = process.env,
+): ResolvedWebSearchConfig {
+  return toResolvedSearchConfig(resolveShared({ search: config }).search, env);
+}
+
 export function resolveFetchConfig(
   config: WebFetchFileConfig = {},
 ): ResolvedWebFetchConfig {
@@ -334,9 +360,10 @@ export function resolveConfig(
   config: WebToolsFileConfig = {},
   env: NodeJS.ProcessEnv = process.env,
 ): ResolvedWebToolsConfig {
+  const shared = resolveShared(config);
   return {
-    enabled: resolveShared(config).enabled,
-    search: resolveSearchConfig(config.search, env),
-    fetch: resolveFetchConfig(config.fetch),
+    enabled: shared.enabled,
+    search: toResolvedSearchConfig(shared.search, env),
+    fetch: shared.fetch,
   };
 }

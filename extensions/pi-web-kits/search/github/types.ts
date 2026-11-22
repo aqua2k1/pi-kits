@@ -32,4 +32,5 @@ export interface GitHubSearchResponse {
 export interface GitHubSearchOptions {
   readonly timeoutMs: number;
   readonly request?: typeof ghRequest;
+  readonly env?: NodeJS.ProcessEnv;
 }

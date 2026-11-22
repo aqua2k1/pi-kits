@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { isRecord } from "../../../shared/guards.ts";
 import {
   DEFAULT_SEARCH_TIMEOUT_MS,
   MAX_RESPONSE_BYTES,
@@ -9,11 +10,7 @@ import {
   withRequestDeadline,
 } from "../../../shared/request.ts";
 import { toWebSearchError, WebSearchError } from "../../errors.ts";
-import {
-  isRecord,
-  normalizeSearchResponse,
-  stringField,
-} from "../../results.ts";
+import { normalizeSearchResponse, stringField } from "../../results.ts";
 import type {
   SearchProvider,
   SearchRequest,
