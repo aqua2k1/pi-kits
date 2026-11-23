@@ -27,13 +27,8 @@ import {
   oneLine,
 } from "./presentation.ts";
 
-export type ViewAction =
-  | "open"
-  | "focus"
-  | "close"
-  | "copy"
-  | "stop"
-  | "delete";
+export type ViewAction = "open" | "focus" | "close" | "stop" | "delete";
+
 export interface ViewChoice {
   agentId: string;
   action: ViewAction;
@@ -44,7 +39,6 @@ export interface ViewActionResult {
   closePanel?: boolean;
 }
 
-/** A choice still needs execution; an empty result means the action already ran. */
 export interface ViewPanelResult {
   choice?: ViewChoice;
 }
@@ -109,7 +103,7 @@ export function createSubagentViewsPanel(
       message = result.message;
       if (result.closePanel) {
         finished = true;
-        done({});
+        done({ choice });
       }
     } catch (error) {
       message = oneLine(error instanceof Error ? error.message : String(error));
@@ -122,9 +116,9 @@ export function createSubagentViewsPanel(
   const confirm = (): void => {
     const { agent } = selected();
     if (!agent || !nativeViewHint(agent)) return;
-    finished = true;
-    done({
-      choice: { agentId: agent.id, action: agent.viewId ? "focus" : "open" },
+    void act({
+      agentId: agent.id,
+      action: agent.viewId ? "focus" : "open",
     });
   };
 
@@ -155,9 +149,6 @@ export function createSubagentViewsPanel(
     if (!agent) return;
 
     switch (data) {
-      case "y":
-        void act({ agentId: agent.id, action: "copy" });
-        return;
       case "c":
         if (agent.viewId) {
           void act({ agentId: agent.id, action: "close" });
@@ -178,7 +169,7 @@ export function createSubagentViewsPanel(
     if (deleteId) return "Delete subagent? Enter confirm · Esc cancel";
     return (
       message ??
-      "Enter open/focus · y copy ID · c close view · s stop · d delete · Esc close"
+      "Enter open/focus · c close view · s stop · d delete · Esc close"
     );
   };
 
@@ -206,7 +197,7 @@ export function createSubagentViewsPanel(
       agent.sessionState === "interactive"
         ? "User interaction"
         : agentStats(agent);
-    return `${agent.id.slice(0, 8)} · ${agentDisplayStatus(agent)} · ${activity}`;
+    return `${agent.id} · ${agentDisplayStatus(agent)} · ${activity}`;
   };
 
   const renderCompact = (

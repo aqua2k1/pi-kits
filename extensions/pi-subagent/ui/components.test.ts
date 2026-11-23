@@ -114,13 +114,19 @@ function panel(
   };
 }
 
-test("views uses a single agent list and Enter opens the selected view when available", () => {
+test("views uses a single agent list and Enter opens the selected view when available", async () => {
   const source = createSource();
   source.agents = [agent("sub-1"), agent("sub-2")];
-  const h = panel(source);
+  const actions: ViewChoice[] = [];
+  const h = panel(source, undefined, 24, async (choice) => {
+    actions.push(choice);
+    return { closePanel: true };
+  });
   assert.match(h.component.render(80).join("\n"), /Subagent views/);
   h.component.handleInput("\x1b[B");
   h.component.handleInput("\r");
+  await Promise.resolve();
+  assert.deepEqual(actions, [{ agentId: "sub-2", action: "open" }]);
   assert.deepEqual(h.result, { agentId: "sub-2", action: "open" });
   h.component.dispose();
   assert.equal(source.listeners.size, 0);
@@ -197,7 +203,7 @@ test("docked panel is half-height and width safe at narrow/short sizes", () => {
 test("showSubagentViews distinguishes cancellation from an executed action", async () => {
   for (const [input, status] of [
     ["\x1b", "cancelled"],
-    ["y", "completed"],
+    ["\r", "completed"],
   ]) {
     const source = createSource();
     source.agents = [agent()];
@@ -225,7 +231,12 @@ test("showSubagentViews distinguishes cancellation from an executed action", asy
         onClosed: (s) => events.push(s),
       },
     );
-    assert.deepEqual(result, status === "completed" ? {} : undefined);
+    assert.deepEqual(
+      result,
+      status === "completed"
+        ? { choice: { agentId: "sub-1", action: "open" } }
+        : undefined,
+    );
     assert.deepEqual(events, ["opened", status]);
   }
 });

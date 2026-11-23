@@ -3,7 +3,6 @@ import { statSync } from "node:fs";
 import { resolve } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import {
-  copyToClipboard,
   defineTool,
   type ExtensionAPI,
   type ExtensionContext,
@@ -305,8 +304,7 @@ export function registerSubagents(
   );
 
   pi.registerCommand("subagent:views", {
-    description:
-      "View/control a subagent: [id] [open|focus|close|copy|stop|delete]",
+    description: "Inspect and control subagents and their terminal views",
     async handler(args, ctx) {
       if (ctx.mode !== "tui") {
         ctx.ui.notify("Subagent views require interactive Pi.", "error");
@@ -314,84 +312,39 @@ export function registerSubagents(
       }
       try {
         const current = getManager(ctx);
-        const tokens = args.trim().split(/\s+/).filter(Boolean);
-        if (tokens.length > 2) {
-          throw new Error(
-            "Usage: /subagent:views [id] [open|focus|close|copy|stop|delete]",
-          );
-        }
-        const executeAction = async (
-          agentId: string,
-          action: string,
-          fromPanel: boolean,
-        ): Promise<ViewActionResult> => {
-          switch (action) {
-            case "copy":
-              await copyToClipboard(current.get(agentId).id);
-              if (!fromPanel) ctx.ui.notify("Copied subagent ID.", "info");
-              return { closePanel: true };
-            case "stop":
-              current.stop(agentId);
-              return {};
-            case "close":
-              await current.closeView(agentId);
-              return {};
-            case "delete": {
-              if (!fromPanel) {
-                const agent = current.get(agentId);
-                if (
-                  !(await ctx.ui.confirm(
-                    "Delete subagent?",
-                    `Delete ${agent.description} (${agent.id})? This closes its terminal and removes the manager record. Session files are retained.`,
-                  ))
-                ) {
-                  return {};
-                }
-              }
-              await current.remove(agentId);
-              return {};
+        const initialId = args.trim() || undefined;
+        if (initialId) current.get(initialId);
+        const payload = { panelId: "subagent:views", instanceId: randomUUID() };
+        await showSubagentViews(
+          ctx.ui,
+          current,
+          async ({ agentId, action }): Promise<ViewActionResult> => {
+            switch (action) {
+              case "open":
+              case "focus":
+                await current.openView(agentId);
+                return { closePanel: true };
+              case "close":
+                await current.closeView(agentId);
+                return {};
+              case "stop":
+                current.stop(agentId);
+                return {};
+              case "delete":
+                await current.remove(agentId);
+                return {};
             }
-            case "open":
-            case "focus":
-              if (fromPanel) {
-                throw new Error(`Unsupported panel action: ${action}`);
-              }
-              await current.openView(agentId);
-              return {};
-            default:
-              throw new Error(
-                fromPanel
-                  ? `Unsupported panel action: ${action}`
-                  : "View action must be open, focus, close, copy, stop, or delete.",
-              );
-          }
-        };
-        let [id, action] = tokens;
-        if (id) current.get(id);
-        if (!action) {
-          const instanceId = randomUUID();
-          const payload = { panelId: "subagent:views", instanceId };
-          const result = await showSubagentViews(
-            ctx.ui,
-            current,
-            ({ agentId, action: panelAction }) =>
-              executeAction(agentId, panelAction, true),
-            id,
-            {
-              onOpen: () => pi.events.emit(DOCKED_PANEL_OPENED, payload),
-              onClosed: (closeStatus) =>
-                pi.events.emit(DOCKED_PANEL_CLOSED, {
-                  ...payload,
-                  status: closeStatus,
-                }),
-            },
-          );
-          if (!result?.choice) return;
-          id = result.choice.agentId;
-          action = result.choice.action;
-        }
-        if (!id) return;
-        await executeAction(id, action, false);
+          },
+          initialId,
+          {
+            onOpen: () => pi.events.emit(DOCKED_PANEL_OPENED, payload),
+            onClosed: (closeStatus) =>
+              pi.events.emit(DOCKED_PANEL_CLOSED, {
+                ...payload,
+                status: closeStatus,
+              }),
+          },
+        );
       } catch (error) {
         ctx.ui.notify(
           error instanceof Error ? error.message : String(error),

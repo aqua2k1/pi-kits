@@ -33,16 +33,14 @@ export type WorkerCommand =
   | { type: "cancel"; round?: number };
 
 export type WorkerEvent = (
-  | (SessionUpdate & { id: string; round?: never })
+  | (SessionUpdate & { round?: never })
   | {
       type: "session_state";
-      id: string;
       state: WorkerSessionState;
       activity?: string;
     }
   | {
       type: "stats";
-      id: string;
       turnCount: number;
       toolUses: number;
       totalTokens: number;
@@ -50,12 +48,8 @@ export type WorkerEvent = (
       compactionCount: number;
     }
   | { type: "ready"; id: string; token: string; sessionPath?: string }
-  | { type: "model_select"; id: string }
-  | { type: "started"; id: string }
-  | { type: "activity"; id: string; event: string; toolName?: string }
   | {
       type: "completed";
-      id: string;
       result: string;
       error?: string;
       canceled?: boolean;
@@ -216,12 +210,16 @@ export function registerWorkerBridge(
     }
   };
 
-  const reportState = (next: WorkerSessionState, activity?: string) => {
+  const reportState = (
+    next: WorkerSessionState,
+    activity?: string,
+    m = ctx?.model,
+  ) => {
     state = next;
     send({
       type: "session_state",
-      id: config.id,
       state,
+      ...modelMeta(m),
       ...(activity
         ? { activity: truncateUtf8(activity, MAX_ACTIVITY_BYTES).text }
         : {}),
@@ -233,7 +231,6 @@ export function registerWorkerBridge(
     reportState("idle");
     send({
       type: "completed",
-      id: config.id,
       result,
       ...(error ? { error } : {}),
       ...(canceling || aborted ? { canceled: true } : {}),
@@ -273,7 +270,6 @@ export function registerWorkerBridge(
       if (state === "interactive" || !ctx.isIdle()) {
         send({
           type: "completed",
-          id: config.id,
           result: "",
           ...(cmd.round !== undefined ? { round: cmd.round } : {}),
           error: "Subagent is busy with user interaction; wait until idle.",
@@ -291,7 +287,7 @@ export function registerWorkerBridge(
       toolUses = 0;
       totalTokens = 0;
       compactionCount = 0;
-      reportState("running");
+      reportState("running", "Thinking…");
     }
     try {
       pi.sendUserMessage(cmd.prompt, {
@@ -348,7 +344,7 @@ export function registerWorkerBridge(
 
   pi.on("model_select", (ev, c) => {
     ctx = c;
-    send({ type: "model_select", id: config.id, ...modelMeta(ev.model) });
+    reportState(state, undefined, ev.model);
   });
 
   const onTurnStart = (c: ExtensionContext) => {
@@ -362,8 +358,9 @@ export function registerWorkerBridge(
         response: "",
         outcome: "completed",
       };
-    } else if (canceling) c.abort();
-    else send({ type: "started", id: config.id });
+    } else if (canceling) {
+      c.abort();
+    }
   };
   pi.on("before_agent_start", (_e, c) => onTurnStart(c));
   pi.on("agent_start", (_e, c) => onTurnStart(c));
@@ -374,26 +371,17 @@ export function registerWorkerBridge(
       if (state === "interactive") reportState("interactive", ev.toolName);
     } else {
       toolUses += 1;
-      send({
-        type: "activity",
-        id: config.id,
-        event: "tool_execution_start",
-        toolName: ev.toolName,
-      });
+      reportState("running", ev.toolName);
     }
   });
 
-  pi.on("tool_execution_end", (ev, c) => {
+  pi.on("tool_execution_end", (_ev, c) => {
     ctx = c;
     if (activeRound === undefined) {
       if (state === "interactive") reportState("interactive", "Thinking…");
-    } else
-      send({
-        type: "activity",
-        id: config.id,
-        event: "tool_execution_end",
-        toolName: ev.toolName,
-      });
+    } else {
+      reportState("running", "Thinking…");
+    }
   });
 
   pi.on("session_compact", (_e, c) => {
@@ -432,7 +420,6 @@ export function registerWorkerBridge(
     const pct = c.getContextUsage?.()?.percent;
     send({
       type: "stats",
-      id: config.id,
       turnCount,
       toolUses,
       totalTokens,
@@ -465,7 +452,7 @@ export function registerWorkerBridge(
     if (activeRound !== undefined) completeTask();
     else {
       reportState("idle");
-      if (settled) send({ ...settled, id: config.id });
+      if (settled) send(settled);
     }
   });
 

@@ -395,6 +395,7 @@ function createWorkerSession(
   executor: Executor,
   managerOptions: ManagerOptions,
   emit: (event: WorkerEvent) => void,
+  onDisconnect: () => void,
 ): WorkerSession {
   const token = randomBytes(32).toString("hex");
   const sockets = new Set<Socket>();
@@ -469,14 +470,7 @@ function createWorkerSession(
       if (socket !== client) return;
       socket = undefined;
       rejectReady?.(new Error("Pi worker disconnected."));
-      if (!closed) {
-        emit({
-          type: "session_state",
-          id: entity.id,
-          state: "idle",
-          activity: "__disconnected__",
-        });
-      }
+      if (!closed) onDisconnect();
     });
   };
 
@@ -867,7 +861,7 @@ export function createSubagentManager(
       e.model = event.model;
     }
 
-    if (event.type === "ready" || event.type === "model_select") {
+    if (event.type === "ready") {
       changed();
       return;
     }
@@ -891,23 +885,20 @@ export function createSubagentManager(
       } catch {}
       return;
     }
-    if (
-      event.type === "session_state" &&
-      event.activity === "__disconnected__"
-    ) {
-      if (e.turn && !e.turn.dispatched && e.turn.launching) return;
-      const outcome = e.turn?.canceling ? "stopped" : "error";
-      void destroyWorker(e, () =>
-        settleTurn(e, outcome, "Pi worker disconnected."),
-      );
-      return;
-    }
     if (event.type === "session_state") {
       if (!isBackendSessionState(event.state)) return;
       e.worker.interactiveActivity =
         event.state === "interactive"
           ? (event.activity?.slice(0, 4096) ?? "Thinking…")
           : undefined;
+      if (
+        e.turn &&
+        event.state === "running" &&
+        typeof event.activity === "string" &&
+        (event.round === undefined || event.round === e.turn.round)
+      ) {
+        e.turn.activity = event.activity.slice(0, 4096);
+      }
       changed();
       reconcile();
       return;
@@ -917,9 +908,7 @@ export function createSubagentManager(
     if (!turn || (event.round !== undefined && event.round !== turn.round)) {
       return;
     }
-    if (event.type === "started") {
-      changed();
-    } else if (event.type === "stats") {
+    if (event.type === "stats") {
       for (const k of [
         "turnCount",
         "toolUses",
@@ -939,12 +928,6 @@ export function createSubagentManager(
           ? event.contextPercent
           : undefined;
       changed();
-    } else if (event.type === "activity") {
-      if (typeof event.toolName === "string") {
-        turn.activity =
-          event.event === "tool_execution_end" ? "Thinking…" : event.toolName;
-        changed();
-      }
     } else if (event.type === "completed") {
       applyReply(e, event.result, event.truncated === true);
       if (event.canceled) settleTurn(e, "stopped");
@@ -969,8 +952,19 @@ export function createSubagentManager(
       }
       if (!alive) {
         if (e.worker) await destroyWorker(e);
-        const session = createWorkerSession(e, executor, options, (ev) =>
-          handleWorkerEvent(e, session, ev),
+        const session = createWorkerSession(
+          e,
+          executor,
+          options,
+          (ev) => handleWorkerEvent(e, session, ev),
+          () => {
+            if (e.worker?.session !== session) return;
+            if (e.turn && !e.turn.dispatched && e.turn.launching) return;
+            const outcome = e.turn?.canceling ? "stopped" : "error";
+            void destroyWorker(e, () =>
+              settleTurn(e, outcome, "Pi worker disconnected."),
+            );
+          },
         );
         e.worker = { session };
         await session.start();

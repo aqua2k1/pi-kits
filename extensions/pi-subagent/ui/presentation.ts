@@ -50,7 +50,7 @@ export function agentHeader(
   theme: Theme,
   now = Date.now(),
 ): string {
-  return `${statusIcon(agent, theme, now)} ${agentName(agent)} · ${agentModel(agent)} · ${oneLine(agent.description)} · ${oneLine(agent.id.slice(0, 8)) || "—"} · ${oneLine(agentDisplayStatus(agent))}`;
+  return `${statusIcon(agent, theme, now)} ${agentName(agent)} · ${agentModel(agent)} · ${oneLine(agent.description)} · ${oneLine(agent.id) || "—"} · ${oneLine(agentDisplayStatus(agent))}`;
 }
 
 export function duration(agent: AgentSnapshot, now = Date.now()): string {
