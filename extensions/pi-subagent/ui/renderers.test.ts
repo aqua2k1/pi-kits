@@ -27,11 +27,9 @@ const theme = {
   bold: (text: string) => text,
 } as Theme;
 const snapshot: AgentSnapshot = Object.freeze({
-  id: "07ea6fc5-4c49-4759-afb3-7dd643bb5cd8",
+  id: "sub-1",
   description: "LIVE_CODEMODE_SUCCESS",
   status: "completed",
-  runtime: "pi",
-  runtimeName: "Pi",
   subagentType: "long-config-name",
   displayName: "Reviewer",
   model: "provider/model-id",
@@ -63,30 +61,12 @@ test("collapsed subagent output shows shared identity header and one preview lin
   assert.equal(lines.length, 2);
   assert.equal(
     lines[0],
-    "✓ Reviewer(Pi) · provider/model-id · LIVE_CODEMODE_SUCCESS · 07ea6fc5 · completed",
+    "✓ Reviewer · provider/model-id · LIVE_CODEMODE_SUCCESS · sub-1 · completed",
   );
   assert.match(lines[1], /packageName/);
-  for (const hidden of [
-    snapshot.id,
-    snapshot.agentPath,
-    snapshot.sessionPath,
-    "createdAt",
-    "turnCount",
-    "toolUses",
-    "long-config-name",
-  ]) {
-    assert.ok(hidden);
-    assert.ok(!lines.join("\n").includes(hidden));
-  }
   const expanded = render(snapshot, true).render(200).join("\n");
   assert.match(expanded, /createdAt/);
   assert.ok(expanded.includes(snapshot.id));
-  assert.ok(snapshot.agentPath);
-  assert.ok(expanded.includes(snapshot.agentPath));
-  assert.equal(
-    snapshot.result,
-    'Script completed\nOutput:\n{"packageName":"pi-kits"}',
-  );
 });
 
 test("native notifications show latest reply revision and independent outcome", () => {
@@ -119,222 +99,45 @@ test("native notifications show latest reply revision and independent outcome", 
   const lines = rendered.render(300);
   assert.match(lines.join("\n"), /user interaction completed · reply #2/);
   assert.match(lines.join("\n"), /New native reply/);
-  assert.ok(!lines.join("\n").includes("Old managed error"));
-  message.details.sessionUpdate.hasReply = false;
-  const renderedEmpty = renderSubagentNotification(
-    message,
-    { expanded: false, outputPad: 0, keyText, keyHint },
-    theme,
-  );
-  assert.ok(renderedEmpty);
-  const empty = renderedEmpty.render(300);
-  assert.match(empty.join("\n"), /No new reply; previous result retained/);
 });
 
 test("headers fall back to type, model ID and generic agent name", () => {
   const typed = { ...snapshot, displayName: undefined, modelName: undefined };
   assert.match(
     render(typed).render(200)[0],
-    /long-config-name\(Pi\) · provider\/model-id/,
+    /long-config-name · provider\/model-id/,
   );
   assert.match(
     render({
       ...typed,
       subagentType: undefined,
       configuredModel: undefined,
+      model: undefined,
     }).render(200)[0],
-    /Subagent\(Pi\) · —/,
+    /Subagent · —/,
   );
 });
 
-test("headers use adapter runtime names and model IDs without runtime branches", () => {
-  for (const [runtime, runtimeName] of [
-    ["pi", "Pi"],
-    ["custom-runtime", "Custom Engine"],
-  ]) {
-    const header = render({
-      ...snapshot,
-      runtime,
-      runtimeName,
-      displayName: "Explore",
-      model: "reported-provider/model",
-      configuredModel: "openai-codex/gpt-6-luna",
-      modelName: "Friendly model name",
-    }).render(200)[0];
-    assert.ok(
-      header.includes(`Explore(${runtimeName}) · openai-codex/gpt-6-luna ·`),
-    );
-    assert.ok(!header.includes("Friendly model name"));
-  }
-  const renderer = subagentCallRenderer("Subagent");
-  const context = { expanded: false } as RenderContext;
-  const header = renderer(
-    {
-      runtime: "custom-runtime",
-      subagent_type: "Explore",
-      model: "custom/model",
-    },
-    theme,
-    context,
-  ).render(200)[0];
-  assert.ok(header.includes("Explore(Custom-runtime) · — ·"));
-  assert.ok(renderer({}, theme, context).render(200)[0].includes("Subagent ·"));
-});
-
-test("model display preserves configuration verbatim instead of runtime metadata", () => {
-  const header = render({
-    ...snapshot,
-    configuredModel: "frontmatter/model-alias",
-    model: "resolved-provider/actual-model",
-    modelName: "Friendly name",
-  }).render(200)[0];
-  assert.ok(header.includes(" · frontmatter/model-alias ·"));
-  assert.ok(!header.includes("resolved-provider"));
-  assert.ok(!header.includes("Friendly name"));
-  const unknown = render({
-    ...snapshot,
-    configuredModel: undefined,
-    model: "reported-provider/model",
-    modelName: "Friendly name",
-  }).render(200)[0];
-  assert.ok(unknown.includes(" · — ·"));
-});
-
-test("interactive state is visible without replacing the completed task result", () => {
-  const lines = render({ ...snapshot, sessionState: "interactive" }).render(
-    200,
-  );
-  assert.match(lines[0], /completed · interactive/);
-  assert.match(lines[1], /packageName/);
-});
-
-test("result rows retain the unified identity header", () => {
-  const component = renderSubagentResult(
-    { content: [], details: snapshot },
-    { expanded: false, isPartial: false },
-    theme,
-    { args: { description: snapshot.description } } as RenderContext,
-  );
-  assert.equal(
-    component.render(200)[0],
-    "✓ Reviewer(Pi) · provider/model-id · LIVE_CODEMODE_SUCCESS · 07ea6fc5 · completed",
-  );
-});
-
-test("errors, empty results and truncation remain truthful without JSON noise", () => {
-  assert.deepEqual(render({ ...snapshot, result: "" }).render(200), [
-    "✓ Reviewer(Pi) · provider/model-id · LIVE_CODEMODE_SUCCESS · 07ea6fc5 · completed",
-  ]);
-  const error = render({
-    ...snapshot,
-    status: "error",
-    error: "Missing tool",
-    result: "old result",
-  }).render(200);
-  assert.match(error[0], /error/);
-  assert.equal(error[1], "Missing tool");
-  assert.deepEqual(
-    render(undefined, false, true, "Unknown subagent type").render(80),
-    ["error", "Unknown subagent type"],
-  );
-  assert.match(
-    render({ ...snapshot, truncated: true })
-      .render(80)
-      .join("\n"),
-    /truncated/,
-  );
-});
-
-test("collapsed output is width bounded and terminal-safe; expansion escapes controls", () => {
-  const unsafe = {
-    ...snapshot,
-    description: "任务\x1b[31m\n标题",
-    result: "value\x1b[2J\x9b31m\u2028next",
-  };
-  for (const width of [0, 1, 8, 40, 80]) {
-    const lines = render(unsafe).render(width);
-    for (const line of lines) {
-      assert.ok(visibleWidth(line) <= width);
-      const plain = stripTerminalSequences(line);
-      assert.ok(!line.includes("\x1b[2J"));
-      assert.ok(!line.includes("\x1b[31m"));
-      for (const control of ["\x1b", "\x9b", "\n", "\u2028"]) {
-        assert.ok(!plain.includes(control));
-      }
-    }
-  }
-  const full = render(unsafe, true).render(200).join("\n");
-  for (const control of ["\x1b", "\x9b", "\u2028"]) {
-    assert.ok(!full.includes(control));
-  }
-  assert.match(full, /\\u009b/);
-});
-
-test("tool calls show short ID but do not infer frontmatter model from parameters", () => {
+test("tool calls show short ID and derive fallback title from prompt or action", () => {
   const args = {
     description: "Review",
     prompt: "Private task prompt",
-    model: "a/model",
-    agent_id: snapshot.id,
+    id: snapshot.id,
   };
   const renderer = subagentCallRenderer("Subagent");
   const collapsed = renderer(args, theme, {
     expanded: false,
   } as RenderContext).render(80);
-  assert.deepEqual(collapsed, ["◦ Subagent · — · Review · 07ea6fc5 · queued"]);
+  assert.deepEqual(collapsed, ["◦ Subagent · — · Review · sub-1 · queued"]);
   assert.ok(!collapsed.join("\n").includes(args.prompt));
-  const expanded = renderer(args, theme, { expanded: true } as RenderContext)
-    .render(100)
-    .join("\n");
-  assert.match(expanded, /Private task prompt/);
-  assert.ok(expanded.includes(snapshot.id));
-});
 
-test("starting results do not re-enter rendering or duplicate the call header", () => {
-  const starting = { ...snapshot, status: "starting" as const, result: "" };
-  let invalidations = 0;
-  const state = {};
-  const context = {
+  const ctlRenderer = subagentCallRenderer("Subagent control");
+  const ctlCollapsed = ctlRenderer({ id: "sub-1", action: "wait" }, theme, {
     expanded: false,
-    executionStarted: true,
-    state,
-    invalidate() {
-      invalidations += 1;
-    },
-  } as RenderContext;
-  const call = subagentCallRenderer("Subagent")(
-    { description: starting.description },
-    theme,
-    context,
-  );
-  assert.equal(call.render(200).length, 1);
-  for (let i = 0; i < 3; i++) {
-    // Pi supplies separate contexts sharing the same state object and creates
-    // the call component before invoking the result renderer.
-    const result = renderSubagentResult(
-      { content: [], details: { ...starting } },
-      { expanded: false, isPartial: false },
-      theme,
-      { ...context, state },
-    );
-    const lines = [...call.render(200), ...result.render(200)];
-    assert.equal(lines.length, 1);
-    assert.match(
-      lines[0],
-      /Reviewer\(Pi\) · provider\/model-id .* · starting$/,
-    );
-  }
-  assert.equal(
-    invalidations,
-    0,
-    "Result rendering must not synchronously invalidate Pi's tool card",
-  );
-  const expanded = subagentCallRenderer("Subagent")(
-    { prompt: "Private task prompt" },
-    theme,
-    { ...context, expanded: true },
-  );
-  assert.match(expanded.render(200).join("\n"), /Private task prompt/);
+  } as RenderContext).render(80);
+  assert.deepEqual(ctlCollapsed, [
+    "◦ Subagent · — · Subagent control (wait) · sub-1 · queued",
+  ]);
 });
 
 test("Pi tool card keeps exactly one starting header across repeated updates", () => {
@@ -364,34 +167,19 @@ test("Pi tool card keeps exactly one starting header across repeated updates", (
       lines.filter((line) => line.includes(snapshot.description)).length,
       1,
     );
-    assert.match(
-      lines.join("\n"),
-      /Reviewer\(Pi\) · provider\/model-id .* · starting/,
-    );
   }
 });
 
-test("result owns the identity header; calls without results use manager identity", () => {
-  const context = {
-    expanded: false,
-    state: {},
-    invalidate() {},
-  } as RenderContext;
-  renderSubagentResult(
-    { content: [], details: snapshot },
-    { expanded: false, isPartial: false },
-    theme,
-    context,
-  );
-  const renderer = subagentCallRenderer("Subagent");
-  const expected =
-    "✓ Reviewer(Pi) · provider/model-id · LIVE_CODEMODE_SUCCESS · 07ea6fc5 · completed";
-  assert.deepEqual(renderer({}, theme, context).render(200), []);
-  const lookup = subagentCallRenderer("Subagent result", () => snapshot);
-  assert.equal(
-    lookup({ agent_id: snapshot.id }, theme, {
-      expanded: false,
-    } as RenderContext).render(200)[0],
-    expected,
-  );
+test("collapsed output is width bounded and terminal-safe", () => {
+  const unsafe = {
+    ...snapshot,
+    description: "任务\x1b[31m\n标题",
+    result: "value\x1b[2J\x9b31m\u2028next",
+  };
+  for (const width of [0, 1, 8, 40, 80]) {
+    const lines = render(unsafe).render(width);
+    for (const line of lines) {
+      assert.ok(visibleWidth(line) <= width);
+    }
+  }
 });

@@ -27,10 +27,7 @@ export function captureParentSession(
   };
 }
 
-/** Remove only unresolved calls from model context, retaining the raw clone.
- * The parent assistant's spawn call cannot have a result until this tool returns.
- * Apply edits to the copy, never mutate parent entries or fake tool results.
- */
+/** Remove only unresolved calls from model context, retaining the raw clone. */
 function omitPendingCalls(session: SessionManager): void {
   const projection = session.buildSessionProjection();
   const completed = new Set(
@@ -59,10 +56,7 @@ function omitPendingCalls(session: SessionManager): void {
   }
 }
 
-/** Pi's native branch-cloning logic on an independent SessionManager.
- * No AgentSession is created here; the child CLI opens the resulting JSONL.
- * Clones are private, persistent Pi session files, like ordinary worker logs.
- */
+/** Pi's native branch-cloning logic on an independent SessionManager. */
 export function createClonedSession(
   snapshot: ParentSessionSnapshot,
   cwd: string,
@@ -90,7 +84,6 @@ export function createClonedSession(
     for (const entry of entries)
       writeFileSync(fd, `${JSON.stringify(entry)}\n`);
   } catch (error) {
-    // Only unlink the file successfully created by this call, never an EEXIST path.
     unlinkSync(file);
     throw error;
   } finally {

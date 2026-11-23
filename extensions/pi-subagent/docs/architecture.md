@@ -1,24 +1,19 @@
 # 架构
 
-入口解析工具调用和 Agent 定义，管理器拥有队列、受管轮次与资源释放，后端拥有执行资源和原生会话，Herdr 适配器拥有终端及各自的视图放置策略。展示层订阅快照；共享配置负责校验及默认化，共享 UI 提供面板、树和渲染组件。
+`pi-subagent` 采用 **Config（配置与角色解析）** 与 **Execute（宿主执行器抽象）** 两层架构。入口注册 `subagent`（派发、引导、续跑合一）与 `subagent_ctl`（等待、状态、停止合一）两个工具；管理器拥有 ECS 数据驱动状态调和循环、短 ID 分配、Loopback TCP JSONL 通信桥与按 `sessionPath` 冷热恢复的生命周期；执行器抽象统一封装 `herdr-core` 与后台 `subprocess`。
 
 ## 模块关系
 
 ```mermaid
 flowchart LR
-  entry["index.ts<br/>注册与父会话通知"] --> agents["agents.ts<br/>命名定义"]
-  entry --> manager["manager.ts<br/>队列、轮次与资源编排"]
+  entry["index.ts<br/>双工具、命令与父会话通知"] --> config["config.ts<br/>Markdown 角色定义与扩展解析"]
+  entry --> manager["manager.ts<br/>队列、轮次、TCP 桥与冷热续跑"]
   entry --> ui["ui/<br/>状态区、面板和工具卡片"]
   ui --> manager
-  manager --> policy["policy.ts、state.ts<br/>状态与操作资格"]
-  manager --> pi["runtime/pi/<br/>Pi 执行及上下文克隆"]
-  manager --> codex["runtime/codex/<br/>Codex 执行及进程组清理"]
-  manager --> mux["mux/<br/>Herdr 终端和视图"]
-  pi --> mux
-  codex --> mux
+  manager --> clone["clone.ts<br/>父分支快照与克隆会话"]
+  manager --> worker["worker.ts<br/>子 Pi JSONL 通信桥"]
+  manager --> execute["execute/<br/>Executor 宿主抽象与环境解析"]
 ```
-
-后端通过 `runtime/index.ts` 的契约向管理器发布统一事件，管理器与展示层共用状态策略。
 
 ## 文件地图
 
@@ -26,26 +21,18 @@ flowchart LR
 
 | 文件 | 职责 |
 |---|---|
-| `index.ts` | 启用条件、工具与命令、父会话通知、退出清理 |
-| `agents.ts` | Markdown 定义发现、同名覆盖、通用元数据解析 |
-| `manager.ts` | FIFO 队列、轮次、等待者、结果、视图句柄与资源释放 |
-| `state.ts`、`policy.ts` | 独立状态轴、操作资格与展示提示 |
+| `index.ts` | 启用条件、`subagent` 与 `subagent_ctl` 工具、`/subagent:views` 命令、退出清理 |
+| `config.ts` | Markdown 角色定义发现、扁平 Frontmatter 校验、工具描述注入与扩展源解析 |
+| `manager.ts` | 短 ID、FIFO 队列、Loopback TCP 服务端、Steer/热 Resume/冷 Resume 路由、下一步 `hint` 与资源释放 |
+| `worker.ts` | 子 Pi 进程通信桥扩展、JSONL 命令接收、`agent_settled` 批次完成边界与原生交互上报 |
+| `clone.ts` | 父分支快照冻结与隐藏未决工具调用的独立会话克隆 |
 | `util.ts` | 异步操作串行链与 UTF-8 字节截断 |
-| `runtime/index.ts` | 后端契约、共享协议上限、强类型事件联合与投递前拒绝错误 |
-| `runtime/pi/config.ts` | Pi 会话配置分区及任务解析 |
-| `runtime/pi/index.ts` | Pi 启动、认证 loopback TCP、终端资源与提示词文件 |
-| `runtime/pi/worker.ts` | 子 Pi 通信桥、JSONL 命令与批次结束边界 |
-| `runtime/pi/clone.ts` | 父分支快照和独立会话克隆 |
-| `runtime/pi/extensions.ts` | 扩展源解析和包声明资源选择 |
-| `runtime/codex/config.ts` | 会话开关、每轮审阅目标和工具参数结构 |
-| `runtime/codex/index.ts` | 私有 app-server、线程控制、事件转换与回复补读 |
-| `runtime/codex/transport.ts` | Bearer WebSocket 连接、JSON-RPC 请求关联、超时与审批策略 |
-| `runtime/codex/guardian.ts`、`runtime/codex/guardian.mjs` | POSIX 进程组、父进程 IPC 与后端清理 |
-| `mux/index.ts` | `MuxAdapter` 终端和视图契约 |
-| `mux/resolve.ts` | 按显式优先级根据环境变量选择 `herdr-app` 或 `herdr` |
-| `mux/herdr-app.ts`、`mux/herdr.ts` | 新版通过 `hc` 请求标签页，旧版通过 Herdr CLI 维护右分屏与纵向堆叠 |
-| `ui/presentation.ts`、`ui/renderers.ts` | 统一身份标题、统计、工具结果和通知展示 |
-| `ui/status-widget.ts`、`ui/views.ts` | 状态刷新、点击和视图面板 |
+| `execute/index.ts` | `Executor`、`TerminalHandle`、`ViewHandle`、`ExecutorError`、环境变量合成与句柄表契约 |
+| `execute/resolve.ts` | 按显式优先级选择 `herdr-core` 或兜底 `subprocess` |
+| `execute/herdr-core.ts` | Herdr Core（`hc` JSON-RPC）终端管理与基于标签的标签页视图 |
+| `execute/subprocess.ts` | 无头 Node 子进程与 POSIX 进程组清理执行器 |
+| `ui/presentation.ts`、`ui/renderers.ts` | 统一身份标题、统计、工具卡片和通知展示 |
+| `ui/status-widget.ts`、`ui/views.ts` | 编辑器上方状态区、点击打开视图和 `/subagent:views` 面板 |
 
 ## 数据流
 
@@ -53,55 +40,37 @@ flowchart LR
 sequenceDiagram
   participant Parent as 父会话工具调用
   participant Entry as index.ts
-  participant Definitions as agents.ts
+  participant Config as config.ts
   participant Manager as manager.ts
-  participant Runtime as Pi 或 Codex 后端
-  participant Herdr as Herdr 适配器
-  participant UI as 展示层
-  Parent->>Entry: 任务、目录与调用配置
-  Entry->>Definitions: 从父工作目录查找命名定义
-  Definitions-->>Entry: 定义及角色正文
-  Entry->>Manager: 创建任务
-  Manager->>Runtime: 解析配置、预检并冻结输入
-  Manager-->>Parent: 任务快照和完整 ID
-  Manager->>Runtime: 队列取得执行槽后启动并投递轮次
-  Runtime->>Herdr: 按需创建原生终端
-  Runtime-->>Manager: 状态、统计与已结束回复
-  Manager-->>UI: 快照变化
-  Manager-->>Entry: 未被等待者接收的完成结果
-  Entry-->>Parent: 后续消息
-  Manager->>Runtime: 满足释放条件时关闭资源
+  participant Exec as execute/ 执行器
+  participant Worker as worker.ts (子 Pi)
+  Parent->>Entry: subagent({ prompt, id?, agent? })
+  Entry->>Config: 解析命名角色与扩展配置
+  Entry->>Manager: spawn 或 send(id)
+  Manager-->>Parent: 短 ID (sub-1)、状态快照与下一步 hint
+  Manager->>Exec: 取得并发槽后启动进程 (--session-id 或 --session)
+  Exec->>Worker: 拉起子 Pi 并连接 Loopback TCP
+  Worker-->>Manager: ready(sessionPath)、stats、activity、completed
+  Manager->>Exec: 无视图或 subprocess 完成时释放进程
+  Manager-->>Entry: 未被 wait 接收的完成结果
+  Entry-->>Parent: followUp 后续消息
 ```
 
-前台调用等待所属轮次；续跑复用后端并进入同一队列；原生交互更新只加入父上下文；投递前拒绝结束本轮，连接或投递结果不明时进入清理路径。
+传入已有 `id` 调用 `subagent` 时：若当前轮正在运行则通过在线连接直接发送 `steer`；若上一轮已结束且终端仍在线则热发新一轮 `task`；若进程已释放则使用保存的 `sessionPath`（`pi --session <sessionPath>`）重新入队冷启动恢复完整上下文。
 
 ## 约束
 
-- 六个工具共享与扩展目录同名的 `pi-subagent` namespace 元数据，保持 Codemode 分组与发现入口一致；工具名称、参数和默认 direct 暴露保持不变。
-- `index.ts` 在 worker 标记为 `1` 时直接返回；Pi 后端显式加载通信桥，防止子 Pi 递归注册父协调工具。
-- `mux/resolve.ts` 显式优先匹配非空 `HC_TERMINAL_ID`（`herdr-app`），其次匹配 `HERDR_ENV === "1"`（`herdr`），均未匹配时不注册扩展，防止无感环境误启用或双环境优先级漂移。
-- 视图放置策略归各 mux 适配器自有：`MuxAdapter.open_view` 只接收终端句柄，管理器不探测其他任务的视图，防止新版异步标签页处于未确认态时阻塞无关任务开视图。
-- 新版 `herdr-app` 仅通过 `hc` 读取父终端的 `herdr.space`，用独立 `herdr.tab` 和 `terminal.keep` 请求标签页，防止假定 app 与任务同机；焦点属于客户端本地状态，聚焦操作提示手动切换。
-- 新版视图通过 `doc.get` 的 `herdr-app` 共享布局核对附着；请求未确认时探测报错而非声明存活或触发释放。关闭先清理所属标签及 keep，再以版本化 `doc.set` 只移除本任务窗格，冲突重读并保留其他窗格和未知字段，防止误关任务或覆盖客户端变更。
-- 新版终端在启动响应丢失时保留唯一名称与所有权标签以便 `destroy` 找回并清理；正常启动后直接沿用不可变地址执行销毁，出错保留上下文原因便于排障。
-- 旧版 `herdr` 自主维护父工作区内首视图向右、后续视图向最后存活视图向下分屏的列布局；`pane run` 参数做 shell 引号转义，销毁工作区前检查不含外部窗格，部分启动失败交回清理句柄。
-- `agents.ts` 只解析通用字段，保留原始 `runtime_config`；后端划分会话键和每轮键，Pi 专属选项（`extensionAllowlist`、`workerPath`）由 `createPiRuntime` 工厂参数持有，防止通用契约和管理器泄漏后端细节。
-- 管理器在入队前完成配置、任务和大小预检并缓存已解析命令；后端发送入口保持任务解析幂等，防止自定义审阅要求重复追加。
-- 绝对 `cwd` 沿入口、管理器、后端和终端传递，Agent 查找仍取父目录，防止任务目录切换改变定义来源。
-- `status` 与 `sessionState` 独立，操作资格读取实际完成、连接和清理事实，防止展示提示被当作投递许可。
-- 续跑复用后端，异步存活检查后再次检查连接及空闲状态，防止排队期间开始的原生交互被接管。
-- 第二轮起按 `round` 过滤旧任务事件，等待者绑定原轮次，防止旧完成、取消或发送失败修改新轮次。
-- 结果发布按交互序号过滤，空回复保留已有结果；Codex 补读后复查身份并在发布后报告空闲，防止旧回复覆盖新回复或资源提前释放。
-- `RuntimeTaskRejectedError` 只表示原生任务未受触碰的投递前拒绝；发送结果不明使用普通错误路径，防止保留仍执行任务的失联后端。
-- 管理器在启动前记录后端所有权，清理确认成功后才丢弃句柄；清理失败保留重试责任及必要的执行槽，防止资源泄漏和超额执行。
-- 自动释放在串行操作中及视图探测后重查轮次和资格，防止旧检查关闭已续跑或正在原生交互的会话。
-- 管理器串行执行视图打开、关闭与释放，打开后重查权限，回滚只关闭本次新建视图，防止影响已有视图和其他任务。
-- Pi 入队前冻结父分支，只在克隆的上下文投影中隐藏未完成工具调用，保留原始历史，防止修改父会话或伪造工具结果。
-- Pi worker 以 `agent_settled` 作为整批完成边界，父连接或协议失败触发关闭，防止重试中间结果被当作完成或孤立 worker 继续执行。
-- Codex WebSocket 传输在连接打开时同步安装消息处理器并仅通过 Bearer 请求头认证，托管阻塞请求在无原生终端接管时拒绝，防止丢失首批事件或泄漏令牌。
-- Codex 后端、原生终端和认证目录归同一会话拥有，guardian 关闭等待退出确认，防止终端脱离或父进程退出遗留执行资源。
-- 包资源名从 `extensionResources` 读取并限于启用的 Pi 清单路径，防止名称猜测或路径越界加载扩展。
-- 展示组件销毁时退订并停表，展示和通知回调失败不改执行结果，防止 UI 故障中断任务或遗留刷新资源。
+- 两个工具 `subagent` 与 `subagent_ctl` 共享 `pi-subagent` namespace 元数据，保持 Codemode 分组与发现入口一致。
+- `index.ts` 在 `PI_KITS_SUBAGENT_WORKER === "1"` 时直接返回；子 Pi 显式通过 `--no-extensions -e worker.ts` 启动，防止子会话递归注册协调工具。
+- `execute/resolve.ts` 优先匹配非空 `HC_TERMINAL_ID`（`herdr-core`），其余环境一律回退到 `subprocess`，保证扩展在任意终端或无头环境下可用。
+- `config.ts` 将角色配置拍平在 YAML Frontmatter 顶层（`model`、`thinking`、`prompt_mode`、`inherit_context`、`tools`、`disallowed_tools`、`extensions`），项目同名文件整体覆盖全局文件；角色查找始终基于父工作目录。
+- `subagent` 工具通过 `prepareLoadout` 动态将当前工作目录下已启用的角色及说明附加到工具描述中，省去独立的角色列举工具调用。
+- 任务 ID 使用会话内递增短标识（`sub-1`、`sub-2`），底层 Pi 会话使用唯一 UUID（`subagent-<uuid>`）隔离磁盘文件，防止 LLM 复制长 UUID 出错或跨会话冲突。
+- 每次快照投影通过 `buildNextHint` 生成与当前状态匹配的下一步调用提示（`hint`），引导 LLM 正确使用 `subagent` 与 `subagent_ctl`。
+- 无视图执行器（`subprocess`）在单轮任务结束时自动销毁子进程释放内存，仅保留 `sessionPath`；后续 `send` 调用在检测到连接已关闭时自动以 `--session <sessionPath>` 重新拉起子进程接续历史。
+- `clone.ts` 在入队前同步冻结父分支快照，并在克隆会话的上下文投影中隐藏未决工具调用，防止修改父会话或伪造工具结果。
+- `worker.ts` 以 `agent_settled` 作为整批完成边界，父控制连接断开或协议越界时立即中止并退出，防止孤立子进程残留。
+- 包扩展资源名从 `extensionResources` 读取并限于启用的 Pi 清单路径，防止路径越界加载扩展。
 
 ## 测试
 
@@ -113,24 +82,13 @@ npm test --workspace=pi-subagent
 
 | 测试文件 | 覆盖模块和行为 |
 |---|---|
-| `agents.test.ts`、`runtime-config.test.ts` | 定义覆盖、通用元数据、后端选项分发 |
-| `index.test.ts` | 注册条件、工具参数、目录、通知与命令 |
-| `manager.test.ts`、`manager-runtime.test.ts`、`lifecycle.test.ts` | 队列、轮次、等待、结果、视图、释放、竞态与清理重试 |
-| `policy.test.ts` | 状态组合、操作资格与展示提示 |
-| `mux/resolve.test.ts` | 显式环境优先级、环境固定与工厂隔离 |
-| `mux/herdr-app.test.ts` | 新版 RPC、终端所有权、清理、远端标签页请求、异步附着、布局 CAS 及焦点提示 |
-| `mux/herdr.test.ts` | 旧版 CLI 边界、列布局、身份核对、回滚与停止确认 |
-| `runtime/pi/config.test.ts`、`runtime/pi/index.test.ts`、`runtime/pi/extensions.test.ts` | 配置、启动参数与扩展资源解析 |
-| `runtime/pi/clone.test.ts`、`runtime/pi/inheritance.test.ts`、`runtime/pi/worker.test.ts` | 快照、上下文投影、协议、批次、原生交互 |
-| `runtime/codex/config.test.ts`、`runtime/codex/call-config.test.ts` | 开关、每轮审阅目标和参数结构 |
-| `runtime/codex/index.test.ts`、`runtime/codex/transport.test.ts`、`runtime/codex/guardian.test.ts` | 补读、WebSocket JSON-RPC 与认证、审批策略、轮次、终端和进程组清理 |
-| `ui/components.test.ts`、`ui/renderers.test.ts`、`ui/status-widget-click.test.ts` | 状态区、面板、结果展示和鼠标行为 |
-
-`tests/herdr-live.ts` 需要显式启用，会调用真实模型并创建 Herdr 资源；其环境变量 `PI_KITS_CODEX_BIN` 可指定 `<Codex可执行文件绝对路径>`：
-
-```sh
-PI_KITS_HERDR_LIVE=1 npm run test:herdr --workspace=pi-subagent
-```
+| `config.test.ts`、`clone.test.ts` | 扁平 Frontmatter 解析、同名覆盖、角色描述注入、扩展资源解析与父分支克隆 |
+| `index.test.ts` | 注册条件、双工具参数路由、目录校验、通知与命令 |
+| `manager.test.ts`、`lifecycle.test.ts` | 短 ID、`hint`、队列、热 Steer、热 Resume、按 `sessionPath` 冷启动 Resume、并发槽与清理重试 |
+| `worker.test.ts` | JSONL 帧边界、认证、批次完成、Steer、取消与原生交互上报 |
+| `execute/resolve.test.ts`、`execute/subprocess.test.ts` | 环境优先级、进程组后台执行器回退与销毁清理 |
+| `execute/herdr-core.test.ts` | Herdr Core 终端所有权、标签页请求、标签状态检查与关闭清理 |
+| `ui/components.test.ts`、`ui/renderers.test.ts`、`ui/status-widget-click.test.ts` | 状态区、视图面板、工具卡片展示和鼠标行为 |
 
 ## 相关文档
 

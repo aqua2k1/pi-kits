@@ -14,13 +14,11 @@
     ]
   },
   "scripts": {
-    "test": "node --import tsx --test *.test.ts mux/*.test.ts runtime/*/*.test.ts ui/*.test.ts",
-    "test:herdr": "node --import tsx tests/herdr-live.ts"
+    "test": "node --import tsx --test *.test.ts execute/*.test.ts ui/*.test.ts"
   },
   "dependencies": {
     "@pi-kits/config": "*",
-    "@pi-kits/shared": "*",
-    "ws": "^8.22.0"
+    "@pi-kits/shared": "*"
   },
   "peerDependencies": {
     "@earendil-works/pi-ai": "*",

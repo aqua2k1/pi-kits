@@ -9,8 +9,8 @@ import canvasNote from "../extensions/pi-canvas-note/index.ts";
 import handoff from "../extensions/pi-handoff/index.ts";
 import open from "../extensions/pi-open/index.ts";
 import outputViewer from "../extensions/pi-output-viewer/index.ts";
+import type { Executor } from "../extensions/pi-subagent/execute/index.ts";
 import { registerSubagents } from "../extensions/pi-subagent/index.ts";
-import type { MuxAdapter } from "../extensions/pi-subagent/mux/index.ts";
 import tokenMeter from "../extensions/pi-token-meter/index.ts";
 import webKits from "../extensions/pi-web-kits/index.ts";
 import { useAgentDir } from "./helpers/agent-dir.ts";
@@ -52,15 +52,8 @@ const extensions: Array<{
   },
   {
     name: "pi-subagent",
-    register: (pi) => registerSubagents(pi, {} as MuxAdapter),
-    tools: [
-      "subagent",
-      "resume_subagent",
-      "list_subagent_types",
-      "get_subagent_result",
-      "steer_subagent",
-      "stop_subagent",
-    ],
+    register: (pi) => registerSubagents(pi, {} as Executor),
+    tools: ["subagent", "subagent_ctl"],
     commands: ["subagent:views"],
   },
   { name: "pi-token-meter", register: tokenMeter, tools: [], commands: [] },

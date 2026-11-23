@@ -20,7 +20,7 @@ pi install https://github.com/aqua2k1/pi-kits.git
 | [pi-token-meter](extensions/pi-token-meter/README.md) | 编辑器下方信息行显示最近请求的 TTFT 和 TPS |
 | [pi-handoff](extensions/pi-handoff/README.md) | 克隆会话并生成交接摘要 |
 | [pi-ask](extensions/pi-ask/README.md) | 单选、多选和自定义回答 |
-| [pi-subagent](extensions/pi-subagent/README.md) | Pi/Codex 独立任务与原生终端视图；在 Herdr 内按环境自动启用 |
+| [pi-subagent](extensions/pi-subagent/README.md) | Pi 独立子会话任务、按会话无缝续跑与 Herdr/子进程多宿主执行 |
 | [pi-web-kits](extensions/pi-web-kits/README.md) | Web 搜索、网页与 GitHub 内容获取 |
 
 `terminal` 扩展已从主线移除，原实现保留在 `archive/terminal` 分支；`/vim`、`/lg`、`/fm` 不再注册，建议通过 mux 启动相应程序。

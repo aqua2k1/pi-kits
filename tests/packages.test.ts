@@ -222,7 +222,7 @@ test("Canvas Note skill loads manually from root and independent packages withou
 
 test("directory-named resource declarations select extensions without legacy aliases", async () => {
   const { resolveWorkerExtensions } = await import(
-    "../extensions/pi-subagent/runtime/pi/extensions.ts"
+    "../extensions/pi-subagent/config.ts"
   );
   assert.deepEqual(
     await resolveWorkerExtensions([

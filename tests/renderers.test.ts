@@ -11,8 +11,8 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import askExtension from "../extensions/pi-ask/index.ts";
 import openExtension from "../extensions/pi-open/index.ts";
+import type { Executor } from "../extensions/pi-subagent/execute/index.ts";
 import { registerSubagents } from "../extensions/pi-subagent/index.ts";
-import type { MuxAdapter } from "../extensions/pi-subagent/mux/index.ts";
 import webExtension from "../extensions/pi-web-kits/index.ts";
 import { useAgentDir } from "./helpers/agent-dir.ts";
 
@@ -53,14 +53,14 @@ function rendered(
     .join("\n");
 }
 
-test("all ten public tools and the completion message register shared-style renderers", async (t) => {
+test("all six public tools and the completion message register shared-style renderers", async (t) => {
   useAgentDir(t);
   const h = registrations();
   openExtension(h.pi);
   askExtension(h.pi);
-  registerSubagents(h.pi, {} as MuxAdapter);
+  registerSubagents(h.pi, {} as Executor);
   await webExtension(h.pi, { env: {}, cleanupExpiredSpools: async () => {} });
-  assert.equal(h.tools.size, 10);
+  assert.equal(h.tools.size, 6);
   for (const tool of h.tools.values()) {
     assert.equal(typeof tool.renderCall, "function", tool.name);
     assert.equal(typeof tool.renderResult, "function", tool.name);
@@ -123,22 +123,13 @@ test("tool summaries retain questions, search counts, saved fetch details and er
   const h = registrations();
   openExtension(h.pi);
   askExtension(h.pi);
-  registerSubagents(h.pi, {} as MuxAdapter);
+  registerSubagents(h.pi, {} as Executor);
   await webExtension(h.pi, { env: {}, cleanupExpiredSpools: async () => {} });
   const get = (name: string) => {
     const tool = h.tools.get(name);
     assert.ok(tool);
     return tool;
   };
-  assert.match(
-    rendered(get("list_subagent_types"), {
-      agents: [
-        { name: "Explore", enabled: true },
-        { name: "Old", enabled: false },
-      ],
-    }),
-    /2 types\nExplore · Old \(disabled\)/,
-  );
   assert.match(
     rendered(get("ask_user_question"), {
       answers: [{ answer: "Option A" }],

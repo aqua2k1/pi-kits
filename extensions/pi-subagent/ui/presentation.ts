@@ -9,8 +9,11 @@ import {
   renderWidgetFrame,
   widgetContentBounds,
 } from "../../../shared/ui/widget.ts";
-import type { AgentSnapshot } from "../manager.ts";
-import { hasDisplayError, isDisplayActive } from "../policy.ts";
+import {
+  type AgentSnapshot,
+  hasDisplayError,
+  isDisplayActive,
+} from "../manager.ts";
 
 export { oneLine } from "../../../shared/ui/renderers.ts";
 
@@ -34,18 +37,11 @@ export function agentTitle(agent: AgentSnapshot): string {
 }
 
 export function agentName(agent: AgentSnapshot): string {
-  const name = oneLine(agent.displayName || agent.subagentType || "Subagent");
-  const runtime = oneLine(
-    agent.runtimeName ||
-      (agent.runtime
-        ? agent.runtime[0].toUpperCase() + agent.runtime.slice(1)
-        : ""),
-  );
-  return runtime ? `${name}(${runtime})` : name;
+  return oneLine(agent.displayName || agent.subagentType || "Subagent");
 }
 
 export function agentModel(agent: AgentSnapshot): string {
-  return oneLine(agent.configuredModel || "—");
+  return oneLine(agent.configuredModel || agent.model || "—");
 }
 
 /** Shared identity/status row for widgets, tool cards and views. */

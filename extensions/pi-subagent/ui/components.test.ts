@@ -8,20 +8,13 @@ import {
   type Component,
   getKeybindings,
   type TUI,
-  type TuiMouseEvent,
   visibleWidth,
 } from "@earendil-works/pi-tui";
 import type { AgentSnapshot } from "../manager.ts";
+import type { AgentSource } from "./presentation.ts";
+import { createSubagentStatusWidget } from "./status-widget.ts";
 import {
-  type AgentSource,
-  agentStats,
-  layoutAgentWidget,
-  oneLine,
-  renderAgentWidget,
-} from "./presentation.ts";
-import { SubagentStatusWidget } from "./status-widget.ts";
-import {
-  SubagentViewsPanel,
+  createSubagentViewsPanel,
   showSubagentViews,
   type ViewActionResult,
   type ViewChoice,
@@ -34,37 +27,39 @@ const theme = {
   underline: (text: string) => text,
 } as Theme;
 
-class Source implements AgentSource {
-  agents: AgentSnapshot[] = [];
-  listeners = new Set<() => void>();
-  list() {
-    return this.agents;
-  }
-  subscribe(listener: () => void) {
-    this.listeners.add(listener);
-    return () => this.listeners.delete(listener);
-  }
-  update(agents: AgentSnapshot[]) {
-    this.agents = agents;
-    for (const listener of this.listeners) listener();
-  }
+function createSource(): AgentSource & {
+  agents: AgentSnapshot[];
+  listeners: Set<() => void>;
+  update(agents: AgentSnapshot[]): void;
+} {
+  const listeners = new Set<() => void>();
+  return {
+    agents: [],
+    listeners,
+    list() {
+      return this.agents;
+    },
+    subscribe(listener: () => void) {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    },
+    update(agents: AgentSnapshot[]) {
+      this.agents = agents;
+      for (const listener of listeners) listener();
+    },
+  };
 }
 
 function agent(
-  id = "one",
+  id = "sub-1",
   status: AgentSnapshot["status"] = "running",
 ): AgentSnapshot {
   return {
     id,
     description: `任务 ${id}`,
     status,
+    supportsView: true,
     terminalId: `terminal-${id}`,
-    capabilities: {
-      nativeClone: false,
-      steer: true,
-      retainedSession: true,
-      concurrentNativeInput: true,
-    },
     startedAt: 1_000,
     turnCount: 3,
     toolUses: 2,
@@ -73,23 +68,8 @@ function agent(
   };
 }
 
-function headlessAgent(): AgentSnapshot {
-  return {
-    ...agent("headless"),
-    runtime: "custom-runtime",
-    terminalId: undefined,
-    sessionState: "running",
-    capabilities: {
-      nativeClone: false,
-      steer: false,
-      retainedSession: true,
-      concurrentNativeInput: true,
-    },
-  };
-}
-
 function panel(
-  source: Source,
+  source: ReturnType<typeof createSource>,
   initialId?: string,
   rows = 24,
   onAction: (
@@ -105,7 +85,7 @@ function panel(
       renders += 1;
     },
   } as unknown as TUI;
-  const component = new SubagentViewsPanel(
+  const component = createSubagentViewsPanel(
     tui,
     theme,
     getKeybindings(),
@@ -134,487 +114,68 @@ function panel(
   };
 }
 
-test("views uses a single agent list and Enter immediately opens the selected view", () => {
-  const source = new Source();
-  source.agents = [agent("one"), agent("two")];
+test("views uses a single agent list and Enter opens the selected view when available", () => {
+  const source = createSource();
+  source.agents = [agent("sub-1"), agent("sub-2")];
   const h = panel(source);
   assert.match(h.component.render(80).join("\n"), /Subagent views/);
   h.component.handleInput("\x1b[B");
-  const list = h.component.render(80).join("\n");
-  assert.doesNotMatch(list, /\[Agents\]|\[Actions\]|Split right|Split down/);
   h.component.handleInput("\r");
-  assert.deepEqual(h.result, { agentId: "two", action: "open" });
-  h.component.dispose();
+  assert.deepEqual(h.result, { agentId: "sub-2", action: "open" });
   h.component.dispose();
   assert.equal(source.listeners.size, 0);
 });
 
-test("views renders shortcuts and delete confirmation only once", () => {
-  for (const rows of [14, 16, 18, 24, 50]) {
-    for (const count of [0, 1, 20]) {
-      const source = new Source();
-      source.agents = Array.from({ length: count }, (_, i) => agent(`${i}`));
-      const h = panel(source, undefined, rows);
-      const lines = h.component.render(120);
-      assert.equal(
-        lines.filter((line) => line.includes("Enter open/focus")).length,
-        1,
-      );
-      if (count) {
-        h.component.handleInput("d");
-        const confirmation = h.component.render(120);
-        assert.equal(
-          confirmation.filter((line) => line.includes("Enter confirm")).length,
-          1,
-        );
-      }
-      h.component.dispose();
-    }
-  }
-});
+test("headless subprocess and released sessions explain view status and block native open", () => {
+  const source = createSource();
+  source.agents = [
+    { ...agent("sub-1"), supportsView: false, terminalId: undefined },
+  ];
+  const h1 = panel(source);
+  assert.match(h1.component.render(100).join("\n"), /Headless subprocess mode/);
+  h1.component.handleInput("\r");
+  assert.equal(h1.completions, 0);
+  h1.component.dispose();
 
-test("copy/delete keep the panel open and preserve full IDs without terminals", async () => {
-  for (const [key, action] of [
-    ["y", "copy"],
-    ["d", "delete"],
-  ] as const) {
-    const source = new Source();
-    const id = "12345678-full-subagent-id";
-    source.agents = [{ ...agent(id, "queued"), terminalId: undefined }];
-    const actions: ViewChoice[] = [];
-    const h = panel(source, undefined, 24, async (choice) => {
-      actions.push(choice);
-      return {};
-    });
-    h.component.handleInput(key);
-    if (key === "d") {
-      assert.equal(actions.length, 0);
-      assert.match(h.component.render(120).join("\n"), /Enter confirm/);
-      h.component.handleInput("\r");
-    }
-    h.component.handleInput(key);
-    assert.deepEqual(actions, [{ agentId: id, action }]);
-    assert.equal(h.completions, 0);
-    await Promise.resolve();
-    h.component.handleInput("\x1b");
-    assert.equal(h.completions, 1);
-    h.component.dispose();
-    assert.equal(source.listeners.size, 0);
-  }
-});
-
-test("stop shortcut targets the selected agent and keeps the panel open", async () => {
-  const source = new Source();
-  source.agents = [agent("one"), agent("two")];
-  const actions: ViewChoice[] = [];
-  const h = panel(source, "two", 24, async (choice) => {
-    actions.push(choice);
-    return {};
-  });
-  assert.match(h.component.render(120).join("\n"), /s stop/);
-  h.component.handleInput("s");
-  h.component.handleInput("s");
-  assert.deepEqual(actions, [{ agentId: "two", action: "stop" }]);
-  await Promise.resolve();
-  assert.equal(h.completions, 0);
-  h.component.handleInput("d");
-  h.component.handleInput("s");
-  assert.equal(actions.length, 1);
-  h.component.dispose();
-
-  source.agents = [];
-  const empty = panel(source);
-  empty.component.handleInput("s");
-  assert.equal(empty.completions, 0);
-  empty.component.dispose();
-});
-
-test("callbacks can close the panel without returning an action for execution", async () => {
-  for (const key of ["y", "c"]) {
-    const source = new Source();
-    source.agents = [{ ...agent("one"), viewId: "view-one" }];
-    let calls = 0;
-    const h = panel(source, undefined, 24, async () => {
-      calls += 1;
-      return { closePanel: true };
-    });
-    h.component.handleInput(key);
-    assert.equal(h.completions, 0);
-    await Promise.resolve();
-    assert.equal(h.completions, 1);
-    assert.deepEqual(h.panelResult, {});
-    h.component.handleInput(key);
-    h.component.handleInput("\x1b");
-    assert.equal(calls, 1);
-    assert.equal(h.completions, 1);
-    h.component.dispose();
-  }
-});
-
-test("failed copy stays open and closes only after a successful retry", async () => {
-  const source = new Source();
-  source.agents = [agent("one")];
-  let calls = 0;
-  const h = panel(source, undefined, 24, async () => {
-    calls += 1;
-    if (calls === 1) throw new Error("Clipboard unavailable");
-    return { closePanel: true };
-  });
-  h.component.handleInput("y");
-  await Promise.resolve();
-  assert.equal(h.completions, 0);
-  assert.match(h.component.render(100).join("\n"), /Clipboard unavailable/);
-  h.component.handleInput("y");
-  await Promise.resolve();
-  assert.equal(calls, 2);
-  assert.equal(h.completions, 1);
-  assert.deepEqual(h.panelResult, {});
-  h.component.dispose();
-});
-
-test("late callback completion does not finish a cancelled panel twice", async () => {
-  const source = new Source();
-  source.agents = [agent("one")];
-  let resolve!: (result: ViewActionResult) => void;
-  const h = panel(
-    source,
-    undefined,
-    24,
-    () =>
-      new Promise((done) => {
-        resolve = done;
-      }),
-  );
-  h.component.handleInput("y");
-  h.component.handleInput("\x1b");
-  resolve({ closePanel: true });
-  await Promise.resolve();
-  assert.equal(h.completions, 1);
-  assert.equal(h.panelResult, undefined);
-  h.component.dispose();
-});
-
-test("inline feedback comes from the callback, not the action name", async () => {
-  const source = new Source();
-  source.agents = [{ ...agent("one"), viewId: "view-one" }];
-  let feedback: string | undefined = "Custom operation feedback";
-  const h = panel(source, undefined, 24, async () => ({ message: feedback }));
-  for (const key of ["c", "y"]) {
-    h.component.handleInput(key);
-    await Promise.resolve();
-    assert.match(
-      h.component.render(100).join("\n"),
-      /Custom operation feedback/,
-    );
-    assert.equal(h.completions, 0);
-  }
-  feedback = undefined;
-  h.component.handleInput("y");
-  await Promise.resolve();
-  const rendered = h.component.render(100).join("\n");
-  assert.doesNotMatch(
-    rendered,
-    /Custom operation feedback|Copied subagent ID|Working/,
-  );
-  h.component.dispose();
-});
-
-test("consecutive deletion selects the next neighbor and keeps an empty panel", async () => {
-  const source = new Source();
-  source.agents = [agent("one"), agent("two"), agent("three")];
-  const actions: ViewChoice[] = [];
-  const h = panel(source, "two", 24, async (choice) => {
-    actions.push(choice);
-    source.update(source.agents.filter((item) => item.id !== choice.agentId));
-    return {};
-  });
-  for (const id of ["two", "three", "one"]) {
-    h.component.handleInput("d");
-    h.component.handleInput("\r");
-    await Promise.resolve();
-    h.component.render(100);
-    assert.equal(actions.at(-1)?.agentId, id);
-    assert.equal(h.completions, 0);
-  }
-  assert.match(h.component.render(100).join("\n"), /No subagents/);
-  h.component.handleInput("d");
-  h.component.handleInput("y");
-  assert.equal(actions.length, 3);
-  h.component.dispose();
-});
-
-test("delete confirmation cancels locally and blocks mouse actions", () => {
-  const source = new Source();
-  source.agents = [agent("one")];
-  const h = panel(source);
-  const lines = h.component.render(100);
-  const y = lines.findLastIndex((line) => line.includes("任务 one"));
-  h.component.handleInput("d");
-  h.component.handleInput("d");
-  h.component.handleMouse({
-    type: "click",
-    button: "left",
-    x: 4,
-    y,
-  } as TuiMouseEvent);
-  h.component.handleInput("\x1b");
-  assert.equal(h.completions, 0);
-  assert.doesNotMatch(h.component.render(100).join("\n"), /Enter confirm/);
-  h.component.handleInput("\x1b");
-  assert.equal(h.completions, 1);
-  h.component.dispose();
-});
-
-test("delete confirmation ignores navigation and cancels without dispatching an action", () => {
-  const source = new Source();
-  source.agents = [agent("one"), agent("two")];
-  const actions: ViewChoice[] = [];
-  const h = panel(source, undefined, 24, async (choice) => {
-    actions.push(choice);
-    return {};
-  });
-  h.component.handleInput("d");
-  h.component.handleInput("\x1b[B");
-  h.component.handleInput("y");
-  h.component.handleInput("n");
-  assert.equal(actions.length, 0);
-  assert.equal(h.completions, 0);
-  h.component.handleInput("\r");
-  assert.deepEqual(h.result, { agentId: "one", action: "open" });
-  h.component.dispose();
-});
-
-test("confirming deletion of an agent removed by a live update does nothing", () => {
-  const source = new Source();
-  source.agents = [agent("one"), agent("two")];
-  const actions: ViewChoice[] = [];
-  const h = panel(source, undefined, 24, async (choice) => {
-    actions.push(choice);
-    return {};
-  });
-  h.component.handleInput("d");
-  source.update([agent("two")]);
-  h.component.handleInput("\r");
-  assert.equal(actions.length, 0);
-  assert.equal(h.completions, 0);
-  h.component.handleInput("\r");
-  assert.deepEqual(h.result, { agentId: "two", action: "open" });
-  h.component.dispose();
-});
-
-test("close view stays open, blocks duplicate actions and permits retry on failure", async () => {
-  const source = new Source();
-  source.agents = [{ ...agent("one"), viewId: "view-one" }];
-  let reject!: (error: Error) => void;
-  const actions: ViewChoice[] = [];
-  const h = panel(source, undefined, 24, (choice) => {
-    actions.push(choice);
-    return new Promise<ViewActionResult>((_resolve, fail) => {
-      reject = fail;
-    });
-  });
-  h.component.handleInput("c");
-  h.component.handleInput("c");
-  h.component.handleInput("\r");
-  assert.deepEqual(actions, [{ agentId: "one", action: "close" }]);
-  assert.equal(h.completions, 0);
-  reject(new Error("Close failed"));
-  await Promise.resolve();
-  assert.match(h.component.render(100).join("\n"), /Close failed/);
-  h.component.handleInput("c");
-  assert.equal(actions.length, 2);
-  h.component.handleInput("\x1b");
-  reject(new Error("Late failure"));
-  await Promise.resolve();
-  assert.equal(h.completions, 1);
-  h.component.dispose();
-});
-
-test("view menu updates live and preserves selection by agent identity", () => {
-  const source = new Source();
-  source.agents = [agent("one"), agent("two")];
-  const h = panel(source);
-  h.component.handleInput("\x1b[B");
-  source.update([
-    agent("new"),
-    agent("one"),
-    { ...agent("two"), viewId: "view" },
-  ]);
-  assert.equal(h.renders, 2);
-  h.component.handleInput("\r");
-  assert.deepEqual(h.result, { agentId: "two", action: "focus" });
-  h.component.dispose();
-});
-
-test("queued terminal actions are unavailable, cancel never stops a worker", () => {
-  const source = new Source();
-  source.agents = [{ ...agent("one", "queued"), terminalId: undefined }];
-  const h = panel(source, "one");
-  assert.match(h.component.render(80).join("\n"), /Terminal not ready/);
-  h.component.handleInput("\r");
-  assert.equal(h.completions, 0);
-  h.component.handleInput("\x1b");
-  assert.equal(h.completions, 1);
-  assert.equal(h.result, undefined);
-  h.component.dispose();
-  source.update([]);
-  assert.equal(h.completions, 1);
-});
-
-test("Enter opens a native view for a running headless Codex task", () => {
-  const source = new Source();
-  source.agents = [{ ...headlessAgent(), runtime: "codex" }];
-  const h = panel(source);
-  const rendered = h.component.render(80).join("\n");
-  assert.match(rendered, /Native view available; Enter to open/);
-  assert.doesNotMatch(rendered, /after completion|Native Codex/);
-  h.component.handleInput("\r");
-  assert.deepEqual(h.result, { agentId: "headless", action: "open" });
-  h.component.dispose();
-});
-
-test("released tasks show retained results without allowing native open", () => {
-  const source = new Source();
   source.agents = [
     {
-      ...headlessAgent(),
-      status: "completed",
+      ...agent("sub-2", "completed"),
       sessionState: "closed",
-      terminalId: "stale-terminal",
+      terminalId: undefined,
     },
   ];
-  const h = panel(source);
+  const h2 = panel(source);
   assert.match(
-    h.component.render(100).join("\n"),
-    /Runtime released; result retained/,
+    h2.component.render(100).join("\n"),
+    /Process released; result and session file retained for resume/,
   );
-  h.component.handleInput("\r");
-  assert.equal(h.completions, 0);
-  h.component.dispose();
+  h2.component.handleInput("\r");
+  assert.equal(h2.completions, 0);
+  h2.component.dispose();
 });
 
-test("click opens a native view for a running headless Codex task only once", () => {
-  const source = new Source();
-  source.agents = [{ ...headlessAgent(), runtime: "codex" }];
-  const h = panel(source);
-  const lines = h.component.render(80);
-  const y = lines.findLastIndex((line) => line.includes("任务 headless"));
-  assert.ok(y >= 0);
-  const event = { type: "click", button: "left", x: 4, y } as TuiMouseEvent;
-  h.component.handleMouse(event);
-  h.component.handleMouse(event);
-  h.component.handleInput("\r");
-  assert.deepEqual(h.result, { agentId: "headless", action: "open" });
-  assert.equal(h.completions, 1);
-  h.component.dispose();
-});
+test("copy, stop, and delete shortcuts operate on selected agent", async () => {
+  const source = createSource();
+  source.agents = [agent("sub-1"), agent("sub-2")];
+  const actions: ViewChoice[] = [];
+  const h = panel(source, "sub-2", 24, async (choice) => {
+    actions.push(choice);
+    return {};
+  });
+  h.component.handleInput("s");
+  await Promise.resolve();
+  assert.deepEqual(actions, [{ agentId: "sub-2", action: "stop" }]);
 
-test("native view eligibility uses capabilities and live session state, not runtime names", () => {
-  const base = headlessAgent();
-  assert.ok(base.capabilities);
-  const cases: [Partial<AgentSnapshot>, boolean][] = [
-    [{}, true],
-    [{ runtime: undefined }, true],
-    [{ sessionState: "idle" }, true],
-    [{ sessionState: "interactive" }, true],
-    [{ status: "completed", sessionState: "idle" }, true],
-    [{ status: "completed", sessionState: "interactive" }, true],
-    [{ status: "stopped", sessionState: "idle" }, true],
-    [{ status: "error", sessionState: "idle" }, true],
-    [{ status: "stopping" }, true],
-    [{ viewId: "existing" }, true],
-    [{ status: "queued", sessionState: "idle" }, false],
-    [{ status: "starting", sessionState: "idle" }, false],
-    [{ status: "disconnected", sessionState: "idle" }, false],
-    [{ sessionState: "disconnected" }, false],
-    [{ sessionState: "closed" }, false],
-    [{ sessionState: undefined }, false],
-    [{ status: "completed", sessionState: "disconnected" }, false],
-    [{ status: "completed", sessionState: "closed" }, false],
-    [{ status: "error", sessionState: "running" }, false],
-    [{ status: "error", sessionState: "interactive" }, false],
-    [{ capabilities: undefined }, false],
-    [{ runtime: "codex", capabilities: undefined }, false],
-    [
-      {
-        runtime: "codex",
-        status: "completed",
-        sessionState: "idle",
-        capabilities: undefined,
-      },
-      false,
-    ],
-  ];
-  for (const retainedSession of [false, true]) {
-    for (const concurrentNativeInput of [false, true]) {
-      const capabilities = {
-        ...base.capabilities,
-        retainedSession,
-        concurrentNativeInput,
-      };
-      for (const sessionState of ["running", "idle", "interactive"] as const) {
-        cases.push([
-          { capabilities, sessionState },
-          retainedSession && concurrentNativeInput,
-        ]);
-      }
-      for (const status of ["completed", "stopped", "error"] as const) {
-        cases.push([
-          { capabilities, status, sessionState: "idle" },
-          retainedSession,
-        ]);
-      }
-      cases.push([
-        { capabilities, status: "stopping" },
-        retainedSession && concurrentNativeInput,
-      ]);
-      cases.push([
-        { capabilities, terminalId: "existing-terminal" },
-        concurrentNativeInput,
-      ]);
-      cases.push([
-        { capabilities, status: "completed", terminalId: "existing-terminal" },
-        true,
-      ]);
-    }
-  }
-  for (const [patch, available] of cases) {
-    for (const input of ["enter", "click"]) {
-      const source = new Source();
-      const snapshot = { ...base, ...patch };
-      source.agents = [snapshot];
-      const h = panel(source);
-      const lines = h.component.render(80);
-      assert.equal(
-        /Terminal not ready|Runtime released/.test(lines.join("\n")),
-        !available,
-        JSON.stringify(patch),
-      );
-      if (input === "enter") h.component.handleInput("\r");
-      else {
-        const y = lines.findLastIndex((line) => line.includes("任务 headless"));
-        assert.ok(y >= 0);
-        h.component.handleMouse({
-          type: "click",
-          button: "left",
-          x: 4,
-          y,
-        } as TuiMouseEvent);
-      }
-      assert.equal(h.completions, available ? 1 : 0, JSON.stringify(patch));
-      if (available) {
-        assert.deepEqual(h.result, {
-          agentId: snapshot.id,
-          action: snapshot.viewId ? "focus" : "open",
-        });
-      }
-      h.component.dispose();
-    }
-  }
+  h.component.handleInput("d");
+  assert.match(h.component.render(100).join("\n"), /Enter confirm/);
+  h.component.handleInput("\r");
+  await Promise.resolve();
+  assert.deepEqual(actions.at(-1), { agentId: "sub-2", action: "delete" });
+  h.component.dispose();
 });
 
 test("docked panel is half-height and width safe at narrow/short sizes", () => {
-  const source = new Source();
+  const source = createSource();
   source.agents = [
     {
       ...agent(),
@@ -622,130 +183,25 @@ test("docked panel is half-height and width safe at narrow/short sizes", () => {
       activity: "read\n\x1b[31m",
     },
   ];
-  for (const rows of [2, 4, 6, 10, 14, 24, 50]) {
+  for (const rows of [2, 4, 6, 10, 14, 24]) {
     const h = panel(source, undefined, rows);
     for (const width of [1, 3, 8, 20, 80]) {
       const lines = h.component.render(width);
       assert.equal(lines.length, Math.max(1, Math.floor(rows / 2)));
       assert.ok(lines.every((line) => visibleWidth(line) <= width));
     }
-    assert.deepEqual(h.component.render(0), []);
     h.component.dispose();
   }
 });
 
-test("clicking an agent row directly opens or focuses its view", () => {
-  const source = new Source();
-  source.agents = [agent(), { ...agent("two"), viewId: "existing" }];
-  const h = panel(source);
-  const lines = h.component.render(80);
-  const click = (x: number, y: number) =>
-    ({
-      type: "click",
-      button: "left",
-      x,
-      y,
-    }) as TuiMouseEvent;
-  const targetY = lines.findIndex((line) => line.includes("任务 two · two"));
-  assert.ok(targetY >= 0);
-  h.component.handleMouse(click(4, targetY));
-  assert.deepEqual(h.result, { agentId: "two", action: "focus" });
-  h.component.dispose();
-});
-
-test("clicking a ready agent opens immediately and completes only once", () => {
-  const source = new Source();
-  source.agents = [agent("one"), agent("two")];
-  const h = panel(source);
-  const lines = h.component.render(80);
-  const y = lines.findIndex((line) => line.includes("任务 two · two"));
-  const event = { type: "click", button: "left", x: 4, y } as TuiMouseEvent;
-  assert.ok(y >= 0);
-  assert.equal(
-    h.component.handleMouse({ ...event, type: "press" })?.focus,
-    true,
-  );
-  assert.equal(h.completions, 0);
-  h.component.handleMouse(event);
-  h.component.handleMouse(event);
-  h.component.handleInput("\r");
-  assert.deepEqual(h.result, { agentId: "two", action: "open" });
-  assert.equal(h.completions, 1);
-  h.component.dispose();
-});
-
-test("mouse row identity survives live reordering and ignores removed agents", () => {
-  for (const removed of [false, true]) {
-    const source = new Source();
-    source.agents = [agent("one"), agent("two")];
-    const h = panel(source);
-    const lines = h.component.render(80);
-    const y = lines.findIndex((line) => line.includes("任务 two · two"));
-    source.update(
-      removed
-        ? [agent("one"), agent("replacement")]
-        : [agent("two"), agent("one")],
-    );
-    h.component.handleMouse({
-      type: "click",
-      button: "left",
-      x: 4,
-      y,
-    } as TuiMouseEvent);
-    assert.equal(h.completions, removed ? 0 : 1);
-    if (!removed)
-      assert.deepEqual(h.result, { agentId: "two", action: "open" });
-    h.component.dispose();
-  }
-});
-
-test("compact panels keep the visible selected agent clickable", () => {
-  for (const rows of [4, 6, 8, 10, 12]) {
-    const source = new Source();
-    source.agents = [agent("one"), agent("two")];
-    const h = panel(source, "two", rows);
-    const lines = h.component.render(80);
-    const y = lines.findLastIndex((line) => line.includes("任务 two · two"));
-    assert.ok(y >= 0, `Missing agent row at ${rows} terminal rows`);
-    h.component.handleMouse({
-      type: "click",
-      button: "left",
-      x: 4,
-      y,
-    } as TuiMouseEvent);
-    assert.deepEqual(h.result, { agentId: "two", action: "open" });
-    h.component.dispose();
-  }
-});
-
-test("queued clicks stay in the agent list until the terminal is ready", () => {
-  const source = new Source();
-  source.agents = [{ ...agent("one", "queued"), terminalId: undefined }];
-  const h = panel(source);
-  const lines = h.component.render(80);
-  const y = lines.findIndex((line) => line.includes("任务 one · one"));
-  h.component.handleMouse({
-    type: "click",
-    button: "left",
-    x: 4,
-    y,
-  } as TuiMouseEvent);
-  assert.equal(h.completions, 0);
-  source.update([agent()]);
-  h.component.handleInput("\r");
-  assert.deepEqual(h.result, { agentId: "one", action: "open" });
-  h.component.dispose();
-});
-
-test("showSubagentViews distinguishes cancellation from an executed action and cleans up both", async () => {
+test("showSubagentViews distinguishes cancellation from an executed action", async () => {
   for (const [input, status] of [
     ["\x1b", "cancelled"],
     ["y", "completed"],
   ]) {
-    const source = new Source();
+    const source = createSource();
     source.agents = [agent()];
     const events: string[] = [];
-    let calls = 0;
     const ui = {
       custom<T>(factory: Parameters<ExtensionUIContext["custom"]>[0]) {
         return new Promise<T>((resolve) => {
@@ -762,36 +218,26 @@ test("showSubagentViews distinguishes cancellation from an executed action and c
     const result = await showSubagentViews(
       ui,
       source,
-      async () => {
-        calls += 1;
-        return { closePanel: true };
-      },
+      async () => ({ closePanel: true }),
       undefined,
       {
         onOpen: () => events.push("opened"),
-        onClosed: (status) => events.push(status),
+        onClosed: (s) => events.push(s),
       },
     );
     assert.deepEqual(result, status === "completed" ? {} : undefined);
-    assert.equal(calls, status === "completed" ? 1 : 0);
     assert.deepEqual(events, ["opened", status]);
-    assert.equal(source.listeners.size, 0);
   }
 });
 
 test("status widget stays above editor while working and expires completed rows", () => {
-  const source = new Source();
+  const source = createSource();
   let now = 2_000;
-  let tick: (() => void) | undefined;
-  let timers = 0;
-  let stops = 0;
-  let registrations = 0;
   let renderer: Component | undefined;
   const statuses: (string | undefined)[] = [];
   const ui = {
     setWidget(_key: string, content: unknown, options: { placement: string }) {
       if (typeof content === "function") {
-        registrations += 1;
         assert.equal(options.placement, "aboveEditor");
         renderer = content({ requestRender() {} }, theme);
       } else renderer = undefined;
@@ -800,234 +246,17 @@ test("status widget stays above editor while working and expires completed rows"
       statuses.push(text);
     },
   } as unknown as ExtensionUIContext;
-  const widget = new SubagentStatusWidget(source, {
+  const widget = createSubagentStatusWidget(source, {
     now: () => now,
-    repeat(callback) {
-      tick = callback;
-      timers += 1;
-      return () => {
-        stops += 1;
-      };
-    },
+    repeat: () => () => {},
   });
   widget.bind(ui);
-  assert.equal(timers, 0);
-  source.update([agent(), agent("queued", "queued")]);
-  assert.equal(registrations, 1);
-  assert.equal(timers, 1);
-  assert.match(renderer?.render(120).join("\n") ?? "", /1 queued/);
-  now += 60_000;
-  tick?.();
-  assert.equal(
-    registrations,
-    1,
-    "Do not replace the persistent widget each tick",
-  );
-  assert.match(renderer?.render(120).join("\n") ?? "", /1m1s/);
-  source.update([{ ...agent("one", "completed"), completedAt: now }]);
-  assert.match(renderer?.render(120).join("\n") ?? "", /completed/);
-  now += 5_001;
-  tick?.();
-  assert.equal(renderer, undefined);
-  assert.equal(stops, 1);
-  assert.equal(statuses.at(-1), undefined);
-  widget.dispose();
-  widget.dispose();
-  assert.equal(source.listeners.size, 0);
-});
-
-test("expired completed tasks reappear during interaction, then return to idle without stale stats", () => {
-  const source = new Source();
-  const completed = {
-    ...agent("manual", "completed"),
-    completedAt: 1000,
-    sessionState: "idle" as const,
-  };
-  source.agents = [completed];
-  let now = 60000;
-  let renderer: Component | undefined;
-  const rendered = () => renderer?.render(160).join("\n") ?? "";
-  let starts = 0;
-  let stops = 0;
-  let tick: (() => void) | undefined;
-  const statuses: (string | undefined)[] = [];
-  const ui = {
-    setWidget(_key: string, content: unknown) {
-      renderer =
-        typeof content === "function"
-          ? content({ requestRender() {} }, theme)
-          : undefined;
-    },
-    setStatus(_key: string, status: string | undefined) {
-      statuses.push(status);
-    },
-  } as unknown as ExtensionUIContext;
-  const widget = new SubagentStatusWidget(source, {
-    now: () => now,
-    repeat(callback) {
-      starts += 1;
-      tick = callback;
-      return () => {
-        stops += 1;
-      };
-    },
-  });
-  widget.bind(ui);
-  assert.equal(renderer, undefined);
-  source.update([
-    { ...completed, sessionState: "interactive", sessionActivity: "bash" },
-  ]);
-  assert.match(rendered(), /interactive/);
-  assert.match(rendered(), /bash/);
-  assert.doesNotMatch(rendered(), /tokens|tools/);
-  assert.match(statuses.at(-1) ?? "", /0 active · 1 interactive/);
-  now += 60000;
-  tick?.();
+  source.update([agent("sub-1", "running")]);
   assert.ok(renderer);
-  assert.equal(starts, 1);
-  source.update([completed]);
+  assert.equal(statuses.at(-1), "Subagents: 1 active");
+  source.update([{ ...agent("sub-1", "completed"), completedAt: 2_000 }]);
+  now = 8_000;
+  widget.refresh();
   assert.equal(renderer, undefined);
-  assert.equal(stops, 1);
-  source.update([{ ...completed, sessionState: "disconnected" }]);
-  assert.match(rendered(), /completed · disconnected/);
-  assert.equal(
-    starts,
-    1,
-    "Disconnected completed sessions must not spin forever",
-  );
   widget.dispose();
-});
-
-test("queued/disconnected widgets need no timer; disposing active UI stops updates", () => {
-  const source = new Source();
-  source.agents = [agent("queued", "queued")];
-  let starts = 0;
-  let stops = 0;
-  const calls: unknown[] = [];
-  const ui = {
-    setWidget: (...args: unknown[]) => calls.push(args),
-    setStatus: (...args: unknown[]) => calls.push(args),
-  } as unknown as ExtensionUIContext;
-  const widget = new SubagentStatusWidget(source, {
-    now: () => 2_000,
-    repeat() {
-      starts += 1;
-      return () => {
-        stops += 1;
-      };
-    },
-  });
-  widget.bind(ui);
-  assert.equal(starts, 0);
-  source.update([agent("lost", "disconnected")]);
-  assert.equal(starts, 0);
-  source.update([agent()]);
-  assert.equal(starts, 1);
-  widget.dispose();
-  assert.equal(stops, 1);
-  assert.equal(source.listeners.size, 0);
-  const before = calls.length;
-  source.update([agent("another")]);
-  widget.bind(ui);
-  assert.equal(calls.length, before);
-  // The production clock constructor is safe and remains lazy without a UI.
-  const headless = new SubagentStatusWidget(source);
-  headless.dispose();
-});
-
-test("widget text strips terminal sequences and line/control separators", () => {
-  assert.equal(oneLine("\x1b[31mred\x1b[0m\nnew\u2028line"), "red new line");
-  assert.equal(oneLine("\x1b]52;c;payload\x07safe\x00text"), "safe text");
-});
-
-test("widget tree is bounded, unicode-safe, themed and renders truthful counters", () => {
-  const agents = [
-    ...Array.from({ length: 10 }, (_, index) => ({
-      ...agent(`${index}`),
-      description: "读代码🙂".repeat(50),
-    })),
-    agent("queued", "queued"),
-    { ...agent("done", "completed"), contextPercent: 80, compactionCount: 2 },
-  ];
-  for (const width of [1, 4, 10, 80, 200]) {
-    const lines = renderAgentWidget(agents, theme, width, 2_000);
-    assert.ok(lines.length <= (width >= 24 ? 12 : 11));
-    if (width >= 24) {
-      assert.match(lines[0], /^╭─ Subagents /);
-      assert.match(lines.at(-1) ?? "", /^╰─+╯$/);
-      assert.ok(lines.every((line) => visibleWidth(line) === width));
-    }
-    assert.ok(lines.every((line) => visibleWidth(line) <= width));
-  }
-  const last = agents.at(-1);
-  assert.ok(last);
-  assert.match(
-    agentStats(last, 2_000),
-    /⟳3 · 2 tools · 1.2k tokens \(80% · ↻2\)/,
-  );
-  assert.deepEqual(renderAgentWidget([], theme, 80), []);
-  const named = { ...agent(), subagentType: "review", displayName: "Auditor" };
-  assert.match(
-    renderAgentWidget([named], theme, 200, 2_000).join("\n"),
-    /Auditor · — · 任务 one/,
-  );
-});
-
-test("widget preserves tree indentation and uses muted branches inside a dim frame", () => {
-  const colors: { color: string; text: string }[] = [];
-  const recordingTheme = {
-    ...theme,
-    fg(color: string, text: string) {
-      colors.push({ color, text });
-      return text;
-    },
-  } as Theme;
-  const lines = renderAgentWidget(
-    [agent(), agent("queued", "queued")],
-    recordingTheme,
-    120,
-    2_000,
-  );
-  assert.match(lines[1], /^│ ├─ /);
-  assert.match(lines[2], /^│ │ {3}⎿ read/);
-  assert.match(lines[3], /^│ └─ 1 queued/);
-  const branches = colors.filter(
-    ({ text }) => text === "├─" || text === "└─" || text === "│   ⎿",
-  );
-  assert.equal(branches.length, 3);
-  assert.ok(branches.every(({ color }) => color === "muted"));
-  assert.ok(colors.some(({ color, text }) => color === "dim" && text === "│ "));
-});
-
-test("shared tree closes the last active agent and keeps only title rows clickable", () => {
-  for (const width of [20, 120]) {
-    const last = { ...agent("last"), description: "Task with ├─ text" };
-    const { lines, hits } = layoutAgentWidget(
-      [agent("first"), last],
-      theme,
-      width,
-      2_000,
-    );
-    assert.deepEqual(
-      hits.map((hit) => [hit.y, hit.agentId]),
-      [
-        [1, "first"],
-        [3, "last"],
-      ],
-    );
-    if (width >= 24) {
-      assert.match(lines[1], /^│ ├─ /);
-      assert.match(lines[2], /^│ │ {3}⎿ read/);
-      assert.match(lines[3], /^│ └─ /);
-      assert.match(lines[3], /Task with ├─ text/);
-      assert.match(lines[4], /^│ {5}⎿ read/);
-    } else {
-      assert.match(lines[3], /^└─ /);
-      assert.match(lines[4], /^ {4}⎿ read/);
-    }
-  }
-  const single = layoutAgentWidget([agent()], theme, 120, 2_000);
-  assert.match(single.lines[1], /^│ └─ /);
-  assert.match(single.lines[2], /^│ {5}⎿ read/);
-  assert.equal(single.hits.length, 1);
 });

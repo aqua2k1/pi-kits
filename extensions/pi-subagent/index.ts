@@ -18,24 +18,23 @@ import {
   DOCKED_PANEL_CLOSED,
   DOCKED_PANEL_OPENED,
 } from "../../shared/ui/docked-panel/index.ts";
-import { loadAgentDefinitions, resolveAgentDefinition } from "./agents.ts";
+import { formatAvailableAgents, resolveAgentDefinition } from "./config.ts";
+import type { Executor } from "./execute/index.ts";
+import { resolveExecutor } from "./execute/resolve.ts";
 import {
   type AgentSnapshot,
   createSubagentManager,
   type SubagentManager,
 } from "./manager.ts";
-import type { MuxAdapter } from "./mux/index.ts";
-import { resolveMux } from "./mux/resolve.ts";
-import { codexReviewTargetSchema } from "./runtime/codex/config.ts";
-import { createPiRuntime } from "./runtime/pi/index.ts";
 import {
   renderSubagentNotification,
   renderSubagentResult,
-  renderSubagentTypesCall,
-  renderSubagentTypesResult,
   subagentCallRenderer,
 } from "./ui/renderers.ts";
-import { SubagentStatusWidget } from "./ui/status-widget.ts";
+import {
+  createSubagentStatusWidget,
+  type SubagentStatusWidget,
+} from "./ui/status-widget.ts";
 import { showSubagentViews, type ViewActionResult } from "./ui/views.ts";
 
 const namespace = {
@@ -43,21 +42,11 @@ const namespace = {
   description:
     "Delegate tasks to independent agent sessions and manage their lifecycle and results.",
 };
-const agentId = Type.String({ minLength: 1, description: "Subagent ID" });
-const runtimeConfig = Type.Optional(
-  Type.Object(
-    { review_target: codexReviewTargetSchema() },
-    {
-      additionalProperties: true,
-      description:
-        "Options interpreted by the selected runtime. Session settings are fixed at launch; discover other options in agent configuration and runtime documentation.",
-    },
-  ),
-);
+
+const BASE_SUBAGENT_DESCRIPTION =
+  "Send a task to an independent subagent session. Omit `id` to start a new session; provide `id` to steer a running session or resume a finished one (automatically restarting from its saved session file if the worker was released).";
 
 function toolResult(snapshot: AgentSnapshot) {
-  // Keep provenance and task/session metadata visible even when a long reply
-  // exhausts the model-facing output budget.
   const { result, ...metadata } = snapshot;
   const text = JSON.stringify({ ...metadata, result }, null, 2);
   return {
@@ -66,7 +55,7 @@ function toolResult(snapshot: AgentSnapshot) {
         type: "text" as const,
         text:
           text.length > 24_000
-            ? `${text.slice(0, 24_000)}\n[Truncated; open the subagent view or read its session file.]`
+            ? `${text.slice(0, 24_000)}\n[Truncated; read the full session file at ${snapshot.sessionPath ?? "sessionPath"}.]`
             : text,
       },
     ],
@@ -74,10 +63,9 @@ function toolResult(snapshot: AgentSnapshot) {
   };
 }
 
-/** Register only after the selected adapter's side-effect-free env check. */
 export function registerSubagents(
   pi: ExtensionAPI,
-  adapter: MuxAdapter,
+  executor: Executor,
   maxConcurrent = 4,
   extensionAllowlist: readonly WorkerExtensionSource[] = SUBAGENT_DEFAULT_EXTENSIONS,
   createManager: typeof createSubagentManager = createSubagentManager,
@@ -90,12 +78,13 @@ export function registerSubagents(
   let status: SubagentStatusWidget | undefined;
   let context: ExtensionContext | undefined;
   let shutdown: Promise<void> | undefined;
+
   const getManager = (ctx?: ExtensionContext) => {
     if (shutdown) throw new Error("Subagent manager is shutting down.");
     context = ctx ?? context;
-    manager ??= createManager(adapter, {
+    manager ??= createManager(executor, {
       maxConcurrent,
-      runtimes: [createPiRuntime({ extensionAllowlist })],
+      extensionAllowlist,
       onSessionUpdate(snapshot, update) {
         pi.sendMessage(
           {
@@ -135,7 +124,7 @@ export function registerSubagents(
     });
     if (!status) {
       const current = manager;
-      status = new SubagentStatusWidget(manager, undefined, async (id) => {
+      status = createSubagentStatusWidget(manager, undefined, async (id) => {
         await current.openView(id);
       });
     }
@@ -157,75 +146,78 @@ export function registerSubagents(
         manager?.list().find((agent) => agent.id === id),
       ),
       renderResult: renderSubagentResult,
-      description:
-        "Delegate a task to an independent agent session. Background by default. Agent configuration takes precedence over call parameters. Use list_subagent_types to discover agents and resume_subagent for follow-up tasks.",
+      description: BASE_SUBAGENT_DESCRIPTION,
+      prepareLoadout() {
+        const suffix = formatAvailableAgents(context?.cwd ?? process.cwd());
+        return suffix
+          ? {
+              descriptions: {
+                subagent: `${BASE_SUBAGENT_DESCRIPTION}${suffix}`,
+              },
+            }
+          : undefined;
+      },
       parameters: Type.Object({
-        subagent_type: Type.Optional(
+        prompt: Type.String({
+          minLength: 1,
+          maxLength: 100_000,
+          pattern: "\\S",
+          description:
+            "Task instructions, follow-up request, or steering guidance; not a system prompt.",
+        }),
+        id: Type.Optional(
           Type.String({
             minLength: 1,
             description:
-              "Agent name from list_subagent_types; omit for an unnamed session.",
+              "Existing subagent ID (e.g. 'sub-1') to steer or resume. Omit to start a new session.",
           }),
         ),
-        runtime: Type.Optional(
+        agent: Type.Optional(
           Type.String({
             minLength: 1,
-            pattern: "\\S",
-            description: "Execution runtime; omit to use the default.",
-          }),
-        ),
-        prompt: Type.Optional(
-          Type.String({
-            minLength: 1,
-            maxLength: 100_000,
-            pattern: "\\S",
             description:
-              "Task instructions, relevant context, and expected output; not a system prompt. Required unless the selected runtime accepts instructions through runtime_config.",
+              "Configured agent profile name from .pi/agent/agents/*.md or <agent-dir>/agents/*.md; omit for a default session.",
+          }),
+        ),
+        description: Type.Optional(
+          Type.String({
+            minLength: 1,
+            maxLength: 200,
+            description:
+              "Short task title for status displays; defaults to a summary of the prompt.",
           }),
         ),
         cwd: Type.Optional(
           Type.String({
             minLength: 1,
             description:
-              "Working directory; defaults to the parent working directory. Relative paths resolve against the parent directory. Must be an existing directory; retained on resume.",
+              "Working directory for a new session; defaults to the parent working directory. Relative paths resolve against the parent directory.",
           }),
         ),
-        runtime_config: runtimeConfig,
-        keep_alive: Type.Optional(
-          Type.Boolean({
-            default: false,
-            description:
-              "Keep the session after completion for later resume. Default false: release when no native view is open. Agent configuration takes precedence.",
-          }),
-        ),
-        description: Type.String({
-          minLength: 1,
-          maxLength: 200,
-          description: "Short task title for status displays.",
-        }),
-        model: Type.Optional(
-          Type.String({
-            minLength: 1,
-            description: "Model identifier understood by the selected runtime.",
-          }),
-        ),
-        thinking: Type.Optional(
-          Type.String({
-            minLength: 1,
-            description:
-              "Thinking or reasoning level understood by the selected runtime.",
-          }),
-        ),
-        run_in_background: Type.Optional(
+        background: Type.Optional(
           Type.Boolean({
             default: true,
             description:
-              "Return immediately with the task ID, or wait for completion when false.",
+              "Return immediately with the subagent ID (default true), or wait for completion when false. Agent configuration takes precedence.",
           }),
         ),
       }),
       async execute(_id, params, signal, _onUpdate, ctx) {
         signal?.throwIfAborted();
+        const current = getManager(ctx);
+        if (params.id) {
+          const snapshot = await current.send(params.id, {
+            prompt: params.prompt,
+            description: params.description,
+          });
+          const runInBackground =
+            current.backgroundPreference(params.id) ?? params.background;
+          if (runInBackground !== false || snapshot.status === "running") {
+            return toolResult(snapshot);
+          }
+          return toolResult(await current.result(snapshot.id, true, signal));
+        }
+
         const cwd = resolve(ctx.cwd, params.cwd ?? ".");
         try {
           if (!statSync(cwd).isDirectory()) {
@@ -237,30 +229,21 @@ export function registerSubagents(
             { cause },
           );
         }
-        const agent = params.subagent_type
-          ? resolveAgentDefinition(ctx.cwd, params.subagent_type)
+        const agent = params.agent
+          ? resolveAgentDefinition(ctx.cwd, params.agent)
           : undefined;
-        const runtime = agent?.runtime ?? params.runtime ?? "pi";
-        const current = getManager(ctx);
         const snapshot = current.spawn({
-          runtime,
           context: ctx.sessionManager,
           agent,
-          keepAlive: params.keep_alive,
-          prompt: params.prompt ?? "",
-          runtimeParams: params.runtime_config,
+          prompt: params.prompt,
           description: params.description,
           cwd,
           model:
-            params.model ??
-            (runtime === "pi" && ctx.model
-              ? `${ctx.model.provider}/${ctx.model.id}`
-              : undefined),
-          thinking:
-            params.thinking ??
-            (runtime === "pi" ? pi.getThinkingLevel() : undefined),
+            agent?.model ??
+            (ctx.model ? `${ctx.model.provider}/${ctx.model.id}` : undefined),
+          thinking: agent?.thinking ?? pi.getThinkingLevel(),
         });
-        if ((agent?.runInBackground ?? params.run_in_background) !== false) {
+        if ((agent?.runInBackground ?? params.background) !== false) {
           return toolResult(snapshot);
         }
         return toolResult(await current.result(snapshot.id, true, signal));
@@ -270,164 +253,36 @@ export function registerSubagents(
 
   pi.registerTool(
     defineTool({
-      name: "resume_subagent",
+      name: "subagent_ctl",
       namespace,
-      label: "Resume subagent",
-      renderCall: subagentCallRenderer("Resume subagent", (id) =>
+      label: "Subagent control",
+      renderCall: subagentCallRenderer("Subagent control", (id) =>
         manager?.list().find((agent) => agent.id === id),
       ),
       renderResult: renderSubagentResult,
       description:
-        "Continue a finished task in the same session, retaining history and settings. Requires an idle, connected session. Background by default; the original agent configuration takes precedence.",
+        "Control or inspect an existing subagent session by ID: 'wait' until the active round finishes, check 'status' immediately, or 'stop' the queued/running round.",
       parameters: Type.Object({
-        agent_id: agentId,
-        prompt: Type.Optional(
-          Type.String({
-            minLength: 1,
-            maxLength: 100_000,
-            pattern: "\\S",
+        id: Type.String({
+          minLength: 1,
+          description: "Target subagent ID (e.g. 'sub-1').",
+        }),
+        action: Type.Union(
+          [Type.Literal("wait"), Type.Literal("status"), Type.Literal("stop")],
+          {
             description:
-              "Follow-up task instructions. Required unless the selected runtime accepts instructions through runtime_config.",
-          }),
-        ),
-        runtime_config: runtimeConfig,
-        description: Type.Optional(
-          Type.String({
-            minLength: 1,
-            maxLength: 200,
-            description:
-              "New short task title; omit to retain the previous title.",
-          }),
-        ),
-        run_in_background: Type.Optional(
-          Type.Boolean({
-            default: true,
-            description:
-              "Return immediately, or wait for completion when false.",
-          }),
-        ),
-      }),
-      async execute(_id, params, signal, _onUpdate, ctx) {
-        signal?.throwIfAborted();
-        const current = getManager(ctx);
-        const snapshot = current.resume(params.agent_id, {
-          prompt: params.prompt ?? "",
-          runtimeParams: params.runtime_config,
-          description: params.description,
-        });
-        if (
-          (current.backgroundPreference(params.agent_id) ??
-            params.run_in_background) !== false
-        ) {
-          return toolResult(snapshot);
-        }
-        return toolResult(await current.result(snapshot.id, true, signal));
-      },
-    }),
-  );
-
-  pi.registerTool(
-    defineTool({
-      name: "list_subagent_types",
-      namespace,
-      label: "Subagent types",
-      renderCall: renderSubagentTypesCall,
-      renderResult: renderSubagentTypesResult,
-      description:
-        "List configured agents and their settings. Disabled agents are listed but cannot be started.",
-      parameters: Type.Object({}),
-      outputSchema: Type.Object({ agents: Type.Array(Type.Any()) }),
-      async execute(_id, _params, _signal, _onUpdate, ctx) {
-        const agents = [...loadAgentDefinitions(ctx.cwd).values()].map(
-          ({ systemPrompt: _prompt, ...metadata }) => ({
-            ...metadata,
-            runtime: metadata.runtime ?? "pi",
-          }),
-        );
-        const result = { agents };
-        return {
-          content: [
-            { type: "text" as const, text: JSON.stringify(result, null, 2) },
-          ],
-          details: result,
-          // Raw runtime configuration comes from YAML; publish JSON-safe metadata.
-          structuredContent: JSON.parse(JSON.stringify(result)),
-        };
-      },
-    }),
-  );
-
-  pi.registerTool(
-    defineTool({
-      name: "get_subagent_result",
-      namespace,
-      label: "Subagent result",
-      renderCall: subagentCallRenderer("Subagent result", (id) =>
-        manager?.list().find((agent) => agent.id === id),
-      ),
-      renderResult: renderSubagentResult,
-      description:
-        "Read managed task status and current session state, plus the latest settled reply (managed or user interaction) with its source, revision and update time.",
-      parameters: Type.Object({
-        agent_id: agentId,
-        wait: Type.Optional(
-          Type.Boolean({
-            description:
-              "Wait for the managed task to finish; otherwise return immediately.",
-          }),
+              "Control action: 'wait' blocks until completion and returns the result; 'status' returns current state immediately; 'stop' cancels the active round.",
+          },
         ),
       }),
       async execute(_id, params, signal) {
-        return toolResult(
-          await getManager().result(params.agent_id, params.wait, signal),
-        );
-      },
-    }),
-  );
-
-  pi.registerTool(
-    defineTool({
-      name: "steer_subagent",
-      namespace,
-      label: "Steer subagent",
-      renderCall: subagentCallRenderer("Steer subagent", (id) =>
-        manager?.list().find((agent) => agent.id === id),
-      ),
-      renderResult: renderSubagentResult,
-      description:
-        "Send additional guidance to a running task. Use resume_subagent for a finished task.",
-      parameters: Type.Object({
-        agent_id: agentId,
-        message: Type.String({
-          minLength: 1,
-          maxLength: 100_000,
-          pattern: "\\S",
-          description:
-            "Additional instructions for the currently running task.",
-        }),
-      }),
-      async execute(_id, params) {
         const current = getManager();
-        await current.steer(params.agent_id, params.message);
-        return toolResult(current.get(params.agent_id));
-      },
-    }),
-  );
-
-  pi.registerTool(
-    defineTool({
-      name: "stop_subagent",
-      namespace,
-      label: "Stop subagent",
-      renderCall: subagentCallRenderer("Stop subagent", (id) =>
-        manager?.list().find((agent) => agent.id === id),
-      ),
-      renderResult: renderSubagentResult,
-      description:
-        "Cancel a queued or running managed task, not independent user interaction.",
-      parameters: Type.Object({ agent_id: agentId }),
-      async execute(_id, params) {
-        return toolResult(getManager().stop(params.agent_id));
+        if (params.action === "stop") {
+          return toolResult(current.stop(params.id));
+        }
+        return toolResult(
+          await current.result(params.id, params.action === "wait", signal),
+        );
       },
     }),
   );
@@ -537,8 +392,6 @@ export function registerSubagents(
     context = undefined;
     if (!current) return;
     shutdown = (async () => {
-      // Retry transient failures without abandoning ownership or keeping
-      // shutdown alive indefinitely. Herdr identity checks remain unchanged.
       for (let attempt = 0; ; attempt++) {
         try {
           await current.close();
@@ -557,7 +410,7 @@ export function registerSubagents(
 }
 
 export interface SubagentExtensionDependencies {
-  resolveMux?: typeof resolveMux;
+  resolveExecutor?: typeof resolveExecutor;
   createManager?: typeof createSubagentManager;
 }
 
@@ -565,7 +418,7 @@ export default function subagentExtension(
   pi: ExtensionAPI,
   dependencies: SubagentExtensionDependencies = {},
 ): void {
-  // Workers inherit the mux environment but must not become coordinators.
+  // Workers inherit the host environment but must not become coordinators.
   if (process.env.PI_KITS_SUBAGENT_WORKER === "1") return;
   const subagent = readPiKitsConfig()["pi-subagent"];
   if (!subagent.enabled) return;
@@ -579,13 +432,10 @@ export default function subagentExtension(
     }
     try {
       context.ui.notify(message, "warning");
-    } catch {
-      // Notification failures must not interrupt adapter operations.
-    }
+    } catch {}
   };
-  const resolveAdapter = dependencies.resolveMux ?? resolveMux;
-  const adapter = resolveAdapter(process.env, { warn });
-  if (!adapter) return;
+  const resolveExec = dependencies.resolveExecutor ?? resolveExecutor;
+  const executor = resolveExec(process.env, { warn });
   pi.on("session_start", (_event, ctx) => {
     context = ctx;
     for (const message of warnings.splice(0)) warn(message);
@@ -596,7 +446,7 @@ export default function subagentExtension(
   });
   registerSubagents(
     pi,
-    adapter,
+    executor,
     subagent.maxConcurrent,
     subagent.extensionAllowlist,
     dependencies.createManager,

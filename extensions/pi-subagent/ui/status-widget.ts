@@ -1,7 +1,11 @@
 import type { ExtensionUIContext } from "@earendil-works/pi-coding-agent";
 import type { TUI, TuiMouseEvent } from "@earendil-works/pi-tui";
-import { hasDisplayError, isDisplayActive, nativeViewHint } from "../policy.ts";
-import { isWorkingStatus } from "../state.ts";
+import {
+  hasDisplayError,
+  isDisplayActive,
+  isWorkingStatus,
+  nativeViewHint,
+} from "../manager.ts";
 import {
   type AgentSource,
   type AgentWidgetHit,
@@ -25,37 +29,29 @@ const defaultClock: WidgetClock = {
   },
 };
 
-/** Presentation only: no commands, lifecycle hooks, or mux operations. */
-export class SubagentStatusWidget {
-  private ui?: ExtensionUIContext;
-  private tui?: TUI;
-  private registered = false;
-  private disposed = false;
-  private cancelTimer?: () => void;
-  private readonly unsubscribe: () => void;
-  private lastStatus?: string;
-  private readonly opening = new Set<string>();
+export interface SubagentStatusWidget {
+  bind(ui: ExtensionUIContext): void;
+  refresh(): void;
+  dispose(): void;
+}
 
-  constructor(
-    private readonly source: AgentSource,
-    private readonly clock: WidgetClock = defaultClock,
-    private readonly onOpen?: (agentId: string) => Promise<void> | void,
-  ) {
-    this.unsubscribe = source.subscribe(() => this.refresh());
-  }
+/** Presentation only: no commands, lifecycle hooks, or executor operations. */
+export function createSubagentStatusWidget(
+  source: AgentSource,
+  clock: WidgetClock = defaultClock,
+  onOpen?: (agentId: string) => Promise<void> | void,
+): SubagentStatusWidget {
+  let ui: ExtensionUIContext | undefined;
+  let tui: TUI | undefined;
+  let registered = false;
+  let disposed = false;
+  let cancelTimer: (() => void) | undefined;
+  let lastStatus: string | undefined;
+  const opening = new Set<string>();
 
-  bind(ui: ExtensionUIContext): void {
-    if (this.disposed) return;
-    if (ui !== this.ui) {
-      this.clear();
-      this.ui = ui;
-    }
-    this.refresh();
-  }
-
-  private visible() {
-    const now = this.clock.now();
-    return this.source
+  const visible = () => {
+    const now = clock.now();
+    return source
       .list()
       .filter(
         (agent) =>
@@ -66,13 +62,40 @@ export class SubagentStatusWidget {
           (agent.completedAt !== undefined &&
             now - agent.completedAt < FINISHED_LINGER_MS),
       );
-  }
+  };
 
-  refresh(): void {
-    if (this.disposed || !this.ui) return;
-    const agents = this.visible();
+  const clear = (): void => {
+    cancelTimer?.();
+    cancelTimer = undefined;
+    if (registered) ui?.setWidget(SUBAGENT_WIDGET, undefined);
+    if (lastStatus !== undefined) {
+      ui?.setStatus(SUBAGENT_WIDGET, undefined);
+    }
+    registered = false;
+    lastStatus = undefined;
+    tui = undefined;
+  };
+
+  const dispatchOpen = async (agentId: string): Promise<void> => {
+    try {
+      await onOpen?.(agentId);
+    } catch (error) {
+      if (!disposed) {
+        ui?.notify(
+          error instanceof Error ? error.message : String(error),
+          "error",
+        );
+      }
+    } finally {
+      opening.delete(agentId);
+    }
+  };
+
+  const refresh = (): void => {
+    if (disposed || !ui) return;
+    const agents = visible();
     if (!agents.length) {
-      this.clear();
+      clear();
       return;
     }
     const running = agents.filter((agent) =>
@@ -89,31 +112,30 @@ export class SubagentStatusWidget {
       ...(queued ? [`${queued} queued`] : []),
       ...(errors ? [`${errors} errors`] : []),
     ].join(" · ");
-    if (status !== this.lastStatus) {
-      this.ui.setStatus(SUBAGENT_WIDGET, `Subagents: ${status}`);
-      this.lastStatus = status;
+    if (status !== lastStatus) {
+      ui.setStatus(SUBAGENT_WIDGET, `Subagents: ${status}`);
+      lastStatus = status;
     }
-    if (!this.registered) {
-      this.registered = true;
-      this.ui.setWidget(
+    if (!registered) {
+      registered = true;
+      ui.setWidget(
         SUBAGENT_WIDGET,
-        (tui, theme) => {
-          this.tui = tui;
+        (hostTui, theme) => {
+          tui = hostTui;
           let hits: AgentWidgetHit[] = [];
           return {
             render: (width) => {
               const layout = layoutAgentWidget(
-                this.visible(),
+                visible(),
                 theme,
                 width,
-                this.clock.now(),
+                clock.now(),
               );
               hits = layout.hits;
               return layout.lines;
             },
             handleMouse: (event: TuiMouseEvent) => {
-              if (this.disposed || !this.onOpen || event.button !== "left")
-                return;
+              if (disposed || !onOpen || event.button !== "left") return;
               const hit = hits.find(
                 (item) =>
                   item.y === event.y &&
@@ -121,15 +143,15 @@ export class SubagentStatusWidget {
                   event.x < item.x + item.width,
               );
               const agent =
-                hit && this.visible().find((item) => item.id === hit.agentId);
+                hit && visible().find((item) => item.id === hit.agentId);
               if (!agent || agent.status === "queued" || !nativeViewHint(agent))
                 return;
               if (event.type === "press")
                 return { handled: true, render: false };
               if (event.type !== "click") return;
-              if (!this.opening.has(agent.id)) {
-                this.opening.add(agent.id);
-                void this.dispatchOpen(agent.id);
+              if (!opening.has(agent.id)) {
+                opening.add(agent.id);
+                void dispatchOpen(agent.id);
               }
               return { handled: true, render: false };
             },
@@ -141,55 +163,39 @@ export class SubagentStatusWidget {
         { placement: "aboveEditor" },
       );
     }
-    this.tui?.requestRender();
-    // Persistent animation for active tasks; finished rows expire after a
-    // short grace period. Disconnected errors remain, without a spinning timer.
+    tui?.requestRender();
     const needsTimer = agents.some(
       (agent) =>
         isDisplayActive(agent) ||
         (agent.completedAt !== undefined &&
-          this.clock.now() - agent.completedAt < FINISHED_LINGER_MS),
+          clock.now() - agent.completedAt < FINISHED_LINGER_MS),
     );
-    if (needsTimer && !this.cancelTimer) {
-      this.cancelTimer = this.clock.repeat(() => this.refresh());
-    } else if (!needsTimer && this.cancelTimer) {
-      this.cancelTimer();
-      this.cancelTimer = undefined;
+    if (needsTimer && !cancelTimer) {
+      cancelTimer = clock.repeat(() => refresh());
+    } else if (!needsTimer && cancelTimer) {
+      cancelTimer();
+      cancelTimer = undefined;
     }
-  }
+  };
 
-  private async dispatchOpen(agentId: string): Promise<void> {
-    try {
-      await this.onOpen?.(agentId);
-    } catch (error) {
-      if (!this.disposed) {
-        this.ui?.notify(
-          error instanceof Error ? error.message : String(error),
-          "error",
-        );
+  const unsubscribe = source.subscribe(() => refresh());
+
+  return {
+    bind(nextUi) {
+      if (disposed) return;
+      if (nextUi !== ui) {
+        clear();
+        ui = nextUi;
       }
-    } finally {
-      this.opening.delete(agentId);
-    }
-  }
-
-  private clear(): void {
-    this.cancelTimer?.();
-    this.cancelTimer = undefined;
-    if (this.registered) this.ui?.setWidget(SUBAGENT_WIDGET, undefined);
-    if (this.lastStatus !== undefined) {
-      this.ui?.setStatus(SUBAGENT_WIDGET, undefined);
-    }
-    this.registered = false;
-    this.lastStatus = undefined;
-    this.tui = undefined;
-  }
-
-  dispose(): void {
-    if (this.disposed) return;
-    this.disposed = true;
-    this.unsubscribe();
-    this.clear();
-    this.ui = undefined;
-  }
+      refresh();
+    },
+    refresh,
+    dispose() {
+      if (disposed) return;
+      disposed = true;
+      unsubscribe();
+      clear();
+      ui = undefined;
+    },
+  };
 }

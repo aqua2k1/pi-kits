@@ -2,28 +2,26 @@ import assert from "node:assert/strict";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { type TestContext, test } from "node:test";
-import {
-  DefaultPackageManager,
-  type ExtensionAPI,
-  type ExtensionCommandContext,
-  type ExtensionContext,
-  type ExtensionToolContext,
-  SessionManager,
-  type ToolDefinition,
+import type {
+  ExtensionAPI,
+  ExtensionContext,
+  ExtensionToolContext,
+  ToolDefinition,
+  ToolLoadout,
 } from "@earendil-works/pi-coding-agent";
 import { Value } from "typebox/value";
 import { useAgentDir } from "../../tests/helpers/agent-dir.ts";
+import type { Executor } from "./execute/index.ts";
+import { resolveExecutor } from "./execute/resolve.ts";
 import subagentExtension, { registerSubagents } from "./index.ts";
 import {
   type AgentSnapshot,
   createSubagentManager,
   type ManagerOptions,
-  type ResumeOptions,
+  type SendOptions,
   type SpawnOptions,
   type SubagentManager,
 } from "./manager.ts";
-import type { MuxAdapter, MuxFactoryOptions } from "./mux/index.ts";
-import { resolveMux } from "./mux/resolve.ts";
 
 function withManagerOverrides(
   overrides:
@@ -33,8 +31,8 @@ function withManagerOverrides(
         options?: ManagerOptions,
       ) => Partial<SubagentManager>),
 ): typeof createSubagentManager {
-  return (adapter, options) => {
-    const base = createSubagentManager(adapter, options);
+  return (executor, options) => {
+    const base = createSubagentManager(executor, options);
     const extra =
       typeof overrides === "function" ? overrides(base, options) : overrides;
     return { ...base, ...extra };
@@ -102,1127 +100,194 @@ function registrations() {
   };
 }
 
-for (const [name, config, env] of [
-  ["no mux markers", {}, { HERDR_ENV: undefined }],
-  [
-    "disabled canonical subagent",
-    { "pi-subagent": { enabled: false } },
-    { HERDR_ENV: "1" },
-  ],
-  [
-    "missing HERDR_ENV",
-    { "pi-subagent": {} },
-    { HERDR_ENV: undefined, HERDR_PANE_ID: "w1:p1", TMUX: "tmux" },
-  ],
-  ["invalid HERDR_ENV", { "pi-subagent": {} }, { HERDR_ENV: "0" }],
-  [
-    "worker recursion guard",
-    { "pi-subagent": {} },
-    { HERDR_ENV: "1", PI_KITS_SUBAGENT_WORKER: "1" },
-  ],
-] as const) {
-  test(`subagent does not register capabilities: ${name}`, (t) => {
-    useAgentDir(t, config);
-    environment(t, {
-      HC_TERMINAL_ID: undefined,
-      PI_KITS_SUBAGENT_WORKER: undefined,
-      ...env,
-    });
-    t.mock.method(globalThis, "setTimeout", () => {
-      assert.fail("Disabled extensions must not start timers");
-    });
-    const capture = registrations();
-    subagentExtension(capture.pi);
-    assert.deepEqual(capture.tools, []);
-    assert.deepEqual(capture.commands, []);
-    assert.deepEqual(capture.hooks, []);
-  });
-}
-
-for (const config of [
-  {},
-  // Old switches must not disable canonical defaults.
-  { workflow: { enabled: false, subagent: { enabled: false } } },
-  { subagent: { enabled: false } },
-  { subagent: { enabled: false }, "pi-subagent": {} },
-  { "pi-subagent": { enabled: true } },
-]) {
-  test(`Herdr auto-registers with HERDR_ENV alone, without mux config or backend probing ${JSON.stringify(config)}`, (t) => {
-    useAgentDir(t, config);
-    environment(t, {
-      HERDR_ENV: "1",
-      HC_TERMINAL_ID: undefined,
-      HERDR_PANE_ID: undefined,
-      HERDR_BIN_PATH: "/missing/herdr",
-      PI_KITS_SUBAGENT_WORKER: undefined,
-    });
-    t.mock.method(globalThis, "setTimeout", () => {
-      assert.fail("Loading must not start timers or workers");
-    });
-    const capture = registrations();
-    subagentExtension(capture.pi);
-    assert.deepEqual(capture.tools, [
-      "subagent",
-      "resume_subagent",
-      "list_subagent_types",
-      "get_subagent_result",
-      "steer_subagent",
-      "stop_subagent",
-    ]);
-    assert.deepEqual(capture.commands, ["subagent:views"]);
-    assert.deepEqual(capture.hooks, [
-      "session_start",
-      "session_shutdown",
-      "session_start",
-      "session_shutdown",
-    ]);
-  });
-}
-
-for (const [name, env, expected] of [
-  ["legacy only", { HERDR_ENV: "1" }, "legacy"],
-  ["app only", { HC_TERMINAL_ID: "terminal" }, "app"],
-  [
-    "app wins when both match",
-    { HERDR_ENV: "1", HC_TERMINAL_ID: "terminal" },
-    "app",
-  ],
-  ["blank app marker", { HC_TERMINAL_ID: "  " }, "none"],
-  ["no markers", {}, "none"],
-] as const) {
-  test(`built-in muxes self-register in priority order: ${name}`, (t) => {
-    useAgentDir(t, {});
-    environment(t, {
-      HERDR_ENV: undefined,
-      HC_TERMINAL_ID: undefined,
-      PI_KITS_SUBAGENT_WORKER: undefined,
-      ...env,
-    });
-    t.mock.method(globalThis, "setTimeout", () => {
-      assert.fail("Routing must not start timers or probe CLI backends");
-    });
-    const adapter = resolveMux(process.env);
-    if (expected === "none") assert.equal(adapter, undefined);
-    else {
-      assert.ok(adapter);
-      assert.equal(adapter.id, expected === "legacy" ? "herdr" : "herdr-app");
-    }
-    const capture = registrations();
-    subagentExtension(capture.pi);
-    assert.equal(capture.tools.length, expected === "none" ? 0 : 6);
-    assert.equal(capture.commands.length, expected === "none" ? 0 : 1);
-  });
-}
-
-for (const [name, config, worker] of [
-  ["worker", {}, "1"],
-  ["disabled", { "pi-subagent": { enabled: false } }, undefined],
-] as const) {
-  test(`automatic app routing respects ${name} guard`, (t) => {
-    useAgentDir(t, config);
-    environment(t, {
-      HERDR_ENV: "1",
-      HC_TERMINAL_ID: "terminal",
-      PI_KITS_SUBAGENT_WORKER: worker,
-    });
-    const capture = registrations();
-    subagentExtension(capture.pi);
-    assert.deepEqual(capture.tools, []);
-    assert.deepEqual(capture.commands, []);
-    assert.deepEqual(capture.hooks, []);
-  });
-}
-
-test("entry queues factory warnings and notifies through lifecycle context", async (t) => {
+test("subagent registers two tools everywhere by default (falling back to subprocess) and respects disabled/worker guards", (t) => {
   useAgentDir(t, {});
   environment(t, {
-    HERDR_ENV: undefined,
     HC_TERMINAL_ID: undefined,
     PI_KITS_SUBAGENT_WORKER: undefined,
   });
-  let warn: MuxFactoryOptions["warn"];
-  const capture = registrations();
-  subagentExtension(capture.pi, {
-    resolveMux: (env, options) => {
-      assert.equal(env, process.env);
-      warn = options?.warn;
-      warn?.("factory warning");
-      return {} as MuxAdapter;
-    },
-  });
-  const notifications: unknown[][] = [];
-  const ctx = {
-    mode: "print",
-    ui: { notify: (...args: unknown[]) => notifications.push(args) },
-  } as unknown as ExtensionContext;
-  assert.deepEqual(notifications, []);
-  await capture.hookHandlers.get("session_start")?.({}, ctx);
-  assert.deepEqual(notifications, [["factory warning", "warning"]]);
-  warn?.("runtime warning");
-  assert.deepEqual(notifications.at(-1), ["runtime warning", "warning"]);
-  await capture.hookHandlers.get("session_start")?.({}, ctx);
-  assert.equal(notifications.length, 2, "queued warnings are delivered once");
+  const active = registrations();
+  subagentExtension(active.pi);
+  assert.deepEqual(active.tools, ["subagent", "subagent_ctl"]);
+  assert.deepEqual(active.commands, ["subagent:views"]);
+  assert.equal(resolveExecutor(process.env).id, "subprocess");
 
-  const failingContext = {
-    mode: "print",
-    ui: {
-      notify() {
-        throw new Error("UI unavailable");
-      },
-    },
-  } as unknown as ExtensionContext;
-  await capture.hookHandlers.get("session_start")?.({}, failingContext);
-  assert.doesNotThrow(() => warn?.("notification failure is isolated"));
-  await capture.hookHandlers.get("session_shutdown")?.();
-  warn?.("pending warning");
-  await capture.hookHandlers.get("session_shutdown")?.();
-  await capture.hookHandlers.get("session_start")?.({}, ctx);
-  assert.equal(notifications.length, 2, "shutdown clears pending warnings");
+  // Worker recursion guard
+  environment(t, { PI_KITS_SUBAGENT_WORKER: "1" });
+  const worker = registrations();
+  subagentExtension(worker.pi);
+  assert.deepEqual(worker.tools, []);
+
+  // Disabled config guard
+  useAgentDir(t, { "pi-subagent": { enabled: false } });
+  environment(t, { PI_KITS_SUBAGENT_WORKER: undefined });
+  const disabled = registrations();
+  subagentExtension(disabled.pi);
+  assert.deepEqual(disabled.tools, []);
 });
 
-for (const failures of [1, 3]) {
-  test(`shutdown retains its manager through ${failures} cleanup failures`, async () => {
-    const capture = registrations();
-    const managers: SubagentManager[] = [];
-    const closed: SubagentManager[] = [];
-    registerSubagents(
-      capture.pi,
-      {} as MuxAdapter,
-      undefined,
-      undefined,
-      (adapter, options) => {
-        const instance: SubagentManager = {
-          ...createSubagentManager(adapter, options),
-          async result() {
-            managers.push(instance);
-            return {
-              id: "owned",
-              description: "Task",
-              status: "completed" as const,
-            };
-          },
-          async close() {
-            closed.push(instance);
-            if (closed.length <= failures)
-              throw new Error("Cleanup unavailable");
-          },
-        };
-        return instance;
-      },
-    );
-    const tool = capture.definitions.get("get_subagent_result");
-    const shutdown = capture.hookHandlers.get("session_shutdown");
-    assert.ok(tool && shutdown);
-    const read = () =>
-      tool.execute("call", { agent_id: "owned" }, undefined, undefined, {
-        mode: "print",
-      } as ExtensionToolContext);
-    await read();
-    const closing = shutdown();
-    assert.equal(shutdown(), closing);
-    await assert.rejects(read(), /shutting down/);
-    if (failures === 3) {
-      await assert.rejects(Promise.resolve(closing), /Cleanup unavailable/);
-      assert.equal(closed.length, 3, "shutdown retries are bounded");
-      await read();
-      assert.equal(managers.at(-1), managers[0]);
-      await shutdown();
-    } else {
-      await closing;
-    }
-    assert.ok(closed.every((current) => current === managers[0]));
-    await read();
-    assert.notEqual(managers.at(-1), managers[0]);
-    await shutdown();
-  });
-}
-
-test("all six tools share the pi-subagent namespace without changing exposure", () => {
-  const capture = registrations();
-  registerSubagents(capture.pi, {} as MuxAdapter);
-  assert.equal(capture.definitions.size, 6);
-  const namespace = capture.definitions.get("subagent")?.namespace;
-  assert.deepEqual(namespace, {
-    name: "pi-subagent",
-    description:
-      "Delegate tasks to independent agent sessions and manage their lifecycle and results.",
-  });
-  for (const tool of capture.definitions.values()) {
-    assert.equal(tool.namespace, namespace, tool.name);
-    assert.equal(
-      tool.exposure,
-      undefined,
-      "default direct exposure is unchanged",
-    );
-    assert.equal(
-      tool.defaultActive,
-      undefined,
-      "default activation is unchanged",
-    );
-  }
-});
-
-test("tool prompts stay runtime-neutral while runtime_config documents native review", () => {
-  const capture = registrations();
-  registerSubagents(capture.pi, {} as MuxAdapter);
-  const properties = (tool: ToolDefinition) =>
-    (
-      tool.parameters as unknown as {
-        properties: Record<string, { description: string }>;
-      }
-    ).properties;
-  for (const tool of capture.definitions.values()) {
-    assert.doesNotMatch(tool.description, /\b(?:Pi|Codex|Herdr)\b/i);
-    for (const [name, schema] of Object.entries(properties(tool))) {
-      if (name !== "runtime_config")
-        assert.doesNotMatch(schema.description, /\b(?:Pi|Codex|Herdr)\b/i);
-      assert.ok(
-        schema.description?.trim(),
-        `${tool.name}.${name} needs guidance`,
-      );
-    }
-  }
-  const spawn = capture.definitions.get("subagent");
-  assert.ok(spawn);
-  assert.match(spawn.description, /configuration takes precedence/);
-  assert.match(properties(spawn).prompt.description, /not a system prompt/);
-  assert.match(properties(spawn).model.description, /selected runtime/);
-  const steer = capture.definitions.get("steer_subagent");
-  assert.ok(steer);
-  assert.match(steer.description, /running task/);
-  assert.ok(!steer.description.includes("after its current tools"));
-});
-
-test("canonical settings reach the subagent manager", async (t) => {
-  const extensionAllowlist = ["builtin:codemode"];
-  const cwd = useAgentDir(t, {
-    "pi-subagent": { enabled: true, maxConcurrent: 2, extensionAllowlist },
-  });
-  environment(t, {
-    HERDR_ENV: "1",
-    HC_TERMINAL_ID: undefined,
-    PI_KITS_SUBAGENT_WORKER: undefined,
-  });
-  let options: ManagerOptions | undefined;
-  const capture = registrations();
-  capture.pi.getThinkingLevel = () => "low";
-  subagentExtension(capture.pi, {
-    createManager: withManagerOverrides((_base, received) => {
-      options = received;
-      return {
-        spawn: () => ({
-          id: "canonical-id",
-          description: "test",
-          status: "queued" as const,
-        }),
-      };
-    }),
-  });
-  const spawn = capture.definitions.get("subagent");
-  assert.ok(spawn);
-  await spawn.execute(
-    "call",
-    { prompt: "go", description: "test" },
-    undefined,
-    undefined,
-    { cwd, mode: "print", hasUI: false } as ExtensionToolContext,
-  );
-  assert.equal(options?.maxConcurrent, 2);
-  const piRuntime = options?.runtimes?.find((runtime) => runtime.id === "pi");
-  assert.ok(piRuntime);
-  const resolvedSources: string[] = [];
-  t.mock.method(
-    DefaultPackageManager.prototype,
-    "resolveExtensionSources",
-    async (sources: string[]) => {
-      resolvedSources.push(...sources);
-      throw new Error("stop after allowlist check");
-    },
-  );
-  const session = piRuntime.create(
-    { id: "allowlist-check", cwd },
-    { mux: {} as MuxAdapter, emit() {} },
-  );
-  await assert.rejects(session.start(), /stop after allowlist check/);
-  assert.deepEqual(resolvedSources, extensionAllowlist);
-});
-
-test("native reply notifications share the renderer without waking the parent", async (t) => {
+test("both tools share the pi-subagent namespace and dynamically surface configured agents", async (t) => {
   const cwd = useAgentDir(t);
+  const agentsDir = join(cwd, ".pi", "agent", "agents");
+  mkdirSync(agentsDir, { recursive: true });
+  writeFileSync(
+    join(agentsDir, "explorer.md"),
+    "---\ndescription: Fast codebase search\n---\nExplore",
+  );
+
   const capture = registrations();
-  const messages: Parameters<ExtensionAPI["sendMessage"]>[] = [];
-  capture.pi.sendMessage = (...args) => {
-    messages.push(args);
-  };
-  let options: ManagerOptions | undefined;
-  const snapshot: AgentSnapshot = {
-    id: "native-id",
-    description: "Native reply",
-    status: "completed",
-    result: "B",
-    resultSource: "user_interaction",
-    resultRevision: 2,
-    resultUpdatedAt: 123,
-    resultOutcome: "completed",
-  };
-  registerSubagents(
-    capture.pi,
-    {} as MuxAdapter,
-    undefined,
-    undefined,
-    withManagerOverrides((_base, received) => {
-      options = received;
-      return { spawn: () => snapshot };
-    }),
-  );
-  const spawn = capture.definitions.get("subagent");
-  assert.ok(spawn);
-  await spawn.execute(
-    "call",
-    { runtime: "codex", prompt: "go", description: "test" },
-    undefined,
-    undefined,
-    { cwd, mode: "print", hasUI: false } as ExtensionToolContext,
-  );
-  assert.ok(options?.onSessionUpdate);
-  options.onSessionUpdate(snapshot, {
-    type: "session_update",
-    interactionId: "native-1",
-    sequence: 1,
-    response: "B",
-    outcome: "completed",
-  });
-  assert.equal(messages.length, 1);
-  assert.equal(messages[0][0].customType, "subagent-notification");
-  assert.equal(messages[0][0].display, true);
-  assert.deepEqual(messages[0][1], { triggerTurn: false });
+  registerSubagents(capture.pi, {} as Executor);
+  assert.equal(capture.definitions.size, 2);
+  const subagent = capture.definitions.get("subagent");
+  const ctl = capture.definitions.get("subagent_ctl");
+  assert.ok(subagent && ctl);
+  assert.equal(subagent.namespace?.name, "pi-subagent");
+  assert.equal(ctl.namespace?.name, "pi-subagent");
+
+  await capture.hookHandlers.get("session_start")?.({}, {
+    cwd,
+    mode: "print",
+  } as ExtensionContext);
+  const loadoutChanges = subagent.prepareLoadout?.({} as ToolLoadout);
   assert.match(
-    JSON.stringify(messages[0][0].content),
-    /user interaction completed/,
+    loadoutChanges?.descriptions?.subagent ?? "",
+    /Configured agents: explorer \(Fast codebase search\)/,
   );
-  assert.match(JSON.stringify(messages[0][0].content), /resultRevision/);
-  options.onComplete?.({ ...snapshot, resultSource: "managed" });
-  assert.deepEqual(messages[1][1], {
-    triggerTurn: true,
-    deliverAs: "followUp",
-  });
-  const longReply = "x".repeat(64 * 1024);
-  options.onSessionUpdate(
-    { ...snapshot, result: longReply, resultRevision: 3 },
-    {
-      type: "session_update",
-      interactionId: "native-2",
-      sequence: 2,
-      response: longReply,
-      outcome: "completed",
-    },
-  );
-  const longContent = JSON.stringify(messages[2][0].content);
-  assert.match(longContent, /resultSource/);
-  assert.match(longContent, /resultRevision/);
-  assert.match(longContent, /resultUpdatedAt/);
-  assert.match(longContent, /Truncated/);
 });
 
-test("opaque runtime configuration is forwarded on spawn and resume", async (t) => {
+test("subagent tool routes omit-id to spawn and with-id to send; subagent_ctl routes wait/status/stop", async (t) => {
   const cwd = useAgentDir(t);
   const capture = registrations();
   const spawned: SpawnOptions[] = [];
-  const resumed: ResumeOptions[] = [];
+  const sent: Array<{ id: string; options: SendOptions }> = [];
+  const stopped: string[] = [];
+  const waited: Array<{ id: string; wait?: boolean }> = [];
+
+  capture.pi.getThinkingLevel = () => "medium";
   registerSubagents(
     capture.pi,
-    {} as MuxAdapter,
+    {} as Executor,
     undefined,
     undefined,
     withManagerOverrides({
       spawn(options: SpawnOptions) {
         spawned.push(options);
-        return { id: "review-id", description: "Review", status: "queued" };
+        return {
+          id: "sub-1",
+          description: options.description ?? "Task",
+          cwd: options.cwd,
+          status: "running",
+          hint: "Running hint",
+        };
       },
-      resume(_id: string, options: ResumeOptions) {
-        resumed.push(options);
-        return { id: "review-id", description: "Review", status: "queued" };
+      async send(id: string, options: SendOptions) {
+        sent.push({ id, options });
+        return {
+          id,
+          description: options.description ?? "Task",
+          status: "queued",
+          round: 2,
+          hint: "Resumed hint",
+        };
+      },
+      async result(id: string, wait?: boolean) {
+        waited.push({ id, wait });
+        return {
+          id,
+          description: "Task",
+          status: "completed",
+          result: "Done",
+          hint: "Completed hint",
+        };
+      },
+      stop(id: string) {
+        stopped.push(id);
+        return {
+          id,
+          description: "Task",
+          status: "stopped",
+          hint: "Stopped hint",
+        };
       },
       backgroundPreference: () => undefined,
     }),
   );
-  const context = { cwd, mode: "print", hasUI: false } as ExtensionToolContext;
-  const target = { type: "baseBranch", branch: "main" };
-  const spawn = capture.definitions.get("subagent");
-  const resume = capture.definitions.get("resume_subagent");
-  assert.ok(spawn && resume);
-  for (const tool of [spawn, resume]) {
-    const properties = (
-      tool.parameters as unknown as {
-        properties: Record<string, object>;
-      }
-    ).properties;
-    assert.equal(properties.review_target, undefined);
-    const configSchema = properties.runtime_config as {
-      properties: Record<string, { description?: string }>;
-      description?: string;
-      additionalProperties?: boolean;
-    };
-    assert.equal(configSchema.additionalProperties, true);
-    assert.match(
-      configSchema.description ?? "",
-      /Options interpreted by the selected runtime/,
-    );
-    assert.match(
-      configSchema.properties.review_target.description ?? "",
-      /Required in runtime_config on every subagent and resume_subagent call/,
-    );
-    const required =
-      tool.name === "subagent"
-        ? { description: "Future task" }
-        : { agent_id: "future-id" };
-    assert.equal(
-      Value.Check(tool.parameters, {
-        ...required,
-        runtime_config: { future_option: { native: true } },
-      }),
-      true,
-    );
-    assert.equal(
-      Value.Check(tool.parameters, {
-        ...required,
-        review_target: target,
-      }),
-      true,
-    );
-    assert.equal(
-      Value.Check(properties.runtime_config, {
-        future_option: { native: true },
-      }),
-      true,
-    );
-    for (const value of [null, [], "native", false]) {
-      assert.equal(Value.Check(properties.runtime_config, value), false);
-    }
-  }
-  await spawn.execute(
-    "call",
-    {
-      runtime: "codex",
-      description: "Review",
-      runtime_config: { runtime_args: "review", review_target: target },
-    },
+
+  const subagent = capture.definitions.get("subagent");
+  const ctl = capture.definitions.get("subagent_ctl");
+  assert.ok(subagent && ctl);
+  const ctx = { cwd, mode: "print", hasUI: false } as ExtensionToolContext;
+
+  // 1. Spawn (no id)
+  assert.equal(Value.Check(subagent.parameters, { prompt: "Find bugs" }), true);
+  const spawnRes = await subagent.execute(
+    "c1",
+    { prompt: "Find bugs" },
     undefined,
     undefined,
-    context,
+    ctx,
   );
-  await resume.execute(
-    "call",
-    { agent_id: "review-id", runtime_config: { review_target: target } },
+  assert.equal(spawned.length, 1);
+  assert.equal(spawned[0].prompt, "Find bugs");
+  assert.equal(spawned[0].cwd, cwd);
+  assert.equal((spawnRes.details as AgentSnapshot).id, "sub-1");
+
+  // 2. Send (with id)
+  const sendRes = await subagent.execute(
+    "c2",
+    { id: "sub-1", prompt: "Fix them" },
     undefined,
     undefined,
-    context,
+    ctx,
   );
-  assert.equal(spawned[0].prompt, "");
-  assert.deepEqual(spawned[0].runtimeParams, {
-    runtime_args: "review",
-    review_target: target,
-  });
-  assert.equal(resumed[0].prompt, "");
-  assert.deepEqual(resumed[0].runtimeParams, { review_target: target });
-  await capture.hookHandlers.get("session_shutdown")?.();
+  assert.equal(sent.length, 1);
+  assert.equal(sent[0].id, "sub-1");
+  assert.equal(sent[0].options.prompt, "Fix them");
+  assert.equal((sendRes.details as AgentSnapshot).round, 2);
+
+  // 3. Control: status, wait, stop
+  await ctl.execute(
+    "c3",
+    { id: "sub-1", action: "status" },
+    undefined,
+    undefined,
+    ctx,
+  );
+  await ctl.execute(
+    "c4",
+    { id: "sub-1", action: "wait" },
+    undefined,
+    undefined,
+    ctx,
+  );
+  await ctl.execute(
+    "c5",
+    { id: "sub-1", action: "stop" },
+    undefined,
+    undefined,
+    ctx,
+  );
+  assert.deepEqual(waited, [
+    { id: "sub-1", wait: false },
+    { id: "sub-1", wait: true },
+  ]);
+  assert.deepEqual(stopped, ["sub-1"]);
 });
 
-test("cwd resolves against the parent while agent definitions stay parent-scoped", async (t) => {
-  const agentDir = useAgentDir(t);
-  const cwd = join(agentDir, "parent");
-  const child = join(cwd, "child workspace");
-  for (const [root, role] of [
-    [cwd, "Parent role"],
-    [child, "Child role"],
-  ]) {
-    const agents = join(root, ".pi", "agent", "agents");
-    mkdirSync(agents, { recursive: true });
-    writeFileSync(join(agents, "review.md"), role);
-  }
-  const capture = registrations();
-  const spawned: SpawnOptions[] = [];
-  capture.pi.getThinkingLevel = () => "low";
-  registerSubagents(
-    capture.pi,
-    {} as MuxAdapter,
-    undefined,
-    undefined,
-    withManagerOverrides({
-      spawn(options: SpawnOptions) {
-        spawned.push(options);
-        return {
-          id: "child",
-          description: options.description,
-          cwd: options.cwd,
-          status: "queued",
-        };
-      },
-    }),
-  );
-  const spawn = capture.definitions.get("subagent");
-  const resume = capture.definitions.get("resume_subagent");
-  assert.ok(spawn && resume);
-  const properties = (
-    resume.parameters as unknown as {
-      properties: Record<string, unknown>;
-    }
-  ).properties;
-  assert.equal(properties.cwd, undefined);
-  for (const [input, expected] of [
-    [undefined, cwd],
-    [".", cwd],
-    ["child workspace", child],
-    ["child workspace/../child workspace", child],
-    [child, child],
-    ["..", agentDir],
-  ] as const) {
-    const params = {
-      subagent_type: "review",
-      prompt: "Inspect",
-      description: "Inspect",
-      cwd: input,
-    };
-    assert.equal(Value.Check(spawn.parameters, params), true);
-    const result = await spawn.execute("call", params, undefined, undefined, {
-      cwd,
-      mode: "print",
-    } as ExtensionToolContext);
-    assert.equal(spawned.at(-1)?.cwd, expected);
-    assert.equal(spawned.at(-1)?.agent?.systemPrompt, "Parent role");
-    assert.equal((result.details as AgentSnapshot).cwd, expected);
-    const content = result.content[0];
-    assert.equal(content.type, "text");
-    assert.equal(JSON.parse(content.text).cwd, expected);
-  }
-  for (const input of ["", null, 42]) {
-    assert.equal(
-      Value.Check(spawn.parameters, {
-        description: "Inspect",
-        cwd: input,
-      }),
-      false,
-    );
-  }
-  await capture.hookHandlers.get("session_shutdown")?.();
-});
-
-test("invalid cwd rejects before manager spawn or worker creation, including the default", async (t) => {
+test("invalid cwd rejects before manager spawn", async (t) => {
   const cwd = useAgentDir(t);
-  writeFileSync(join(cwd, "file"), "not a directory");
   const capture = registrations();
-  const mux = new Proxy({} as MuxAdapter, {
-    get() {
-      assert.fail("Invalid cwd must not create workers");
-    },
-  });
-  registerSubagents(
-    capture.pi,
-    mux,
-    undefined,
-    undefined,
-    withManagerOverrides({
-      spawn() {
-        assert.fail("Invalid cwd must not reach manager spawn");
-      },
-    }),
-  );
-  const spawn = capture.definitions.get("subagent");
-  assert.ok(spawn);
-  for (const [parent, input] of [
-    [cwd, "missing"],
-    [cwd, "file"],
-    [cwd, "file/nested"],
-    [join(cwd, "missing"), undefined],
-    [join(cwd, "file"), undefined],
-  ] as const) {
-    await assert.rejects(
-      spawn.execute(
-        "call",
-        {
-          prompt: "Inspect",
-          description: "Inspect",
-          cwd: input,
-        },
-        undefined,
-        undefined,
-        {
-          cwd: parent,
-          mode: "print",
-        } as ExtensionToolContext,
-      ),
-      /Invalid subagent cwd: .*Must be an existing directory/,
-    );
-  }
-});
-
-test("keep_alive is validated and forwarded only at session creation", async (t) => {
-  const agentDir = useAgentDir(t);
-  const agents = join(agentDir, "agents");
-  mkdirSync(agents, { recursive: true });
-  writeFileSync(
-    join(agents, "retained.md"),
-    "---\nkeep_alive: false\n---\nRole",
-  );
-  const capture = registrations();
-  capture.pi.getThinkingLevel = () => "low";
-  let latest: SpawnOptions | undefined;
-  registerSubagents(
-    capture.pi,
-    {} as MuxAdapter,
-    undefined,
-    undefined,
-    withManagerOverrides({
-      spawn(options: SpawnOptions) {
-        latest = options;
-        return { id: "retained", description: "Task", status: "queued" };
-      },
-    }),
-  );
-  const spawn = capture.definitions.get("subagent");
-  const resume = capture.definitions.get("resume_subagent");
-  assert.ok(spawn && resume);
-  const properties = (
-    resume.parameters as unknown as {
-      properties: Record<string, unknown>;
-    }
-  ).properties;
-  assert.equal(properties.keep_alive, undefined);
-  const ctx = { cwd: agentDir, mode: "print" } as ExtensionToolContext;
-  for (const keep_alive of [undefined, false, true]) {
-    const params = { prompt: "Task", description: "Task", keep_alive };
-    assert.equal(Value.Check(spawn.parameters, params), true);
-    await spawn.execute("call", params, undefined, undefined, ctx);
-    assert.equal(latest?.keepAlive, keep_alive);
-  }
-  for (const keep_alive of [null, "true", 1, [], {}]) {
-    assert.equal(
-      Value.Check(spawn.parameters, {
-        prompt: "Task",
-        description: "Task",
-        keep_alive,
-      }),
-      false,
-    );
-  }
-  await spawn.execute(
-    "call",
-    {
-      subagent_type: "retained",
-      prompt: "Task",
-      description: "Task",
-      keep_alive: true,
-    },
-    undefined,
-    undefined,
-    ctx,
-  );
-  assert.equal(latest?.keepAlive, true);
-  assert.equal(latest?.agent?.keepAlive, false);
-  await capture.hookHandlers.get("session_shutdown")?.();
-});
-
-test("agent catalogue uses project overrides and unknown/disabled names never launch workers", async (t) => {
-  const agentDir = useAgentDir(t);
-  const cwd = join(agentDir, "project");
-  const globalDir = join(agentDir, "agents");
-  const projectDir = join(cwd, ".pi", "agent", "agents");
-  mkdirSync(globalDir, { recursive: true });
-  mkdirSync(projectDir, { recursive: true });
-  writeFileSync(join(globalDir, "review.md"), "Global secret instructions");
-  writeFileSync(
-    join(projectDir, "review.md"),
-    "---\nenabled: false\n---\nProject secret instructions",
-  );
-  const adapter = new Proxy({} as MuxAdapter, {
-    get() {
-      assert.fail("Catalogues and invalid types must not touch the mux");
-    },
-  });
-  const capture = registrations();
-  registerSubagents(capture.pi, adapter);
-  const ctx = { cwd, mode: "print" } as ExtensionToolContext;
-  const list = capture.definitions.get("list_subagent_types");
-  const spawn = capture.definitions.get("subagent");
-  assert.ok(list && spawn);
-  const result = await list.execute("call", {}, undefined, undefined, ctx);
-  const catalog = result.structuredContent as {
-    agents: { name: string; source: string; enabled: boolean }[];
-  };
-  assert.equal(catalog.agents.length, 1);
-  assert.equal(catalog.agents[0].source, "project");
-  assert.equal(catalog.agents[0].enabled, false);
-  assert.ok(!JSON.stringify(result).includes("secret instructions"));
-  for (const subagent_type of ["review", "unknown"]) {
-    await assert.rejects(
-      spawn.execute(
-        "call",
-        {
-          subagent_type,
-          prompt: "work",
-          description: "test",
-        },
-        undefined,
-        undefined,
-        ctx,
-      ),
-      /disabled|Unknown subagent type/,
-    );
-  }
-});
-
-test("context and inheritance options remain opaque to the tool entry point", async (t) => {
-  const agentDir = useAgentDir(t);
-  const cwd = join(agentDir, "project");
-  const agents = join(cwd, ".pi", "agent", "agents");
-  mkdirSync(agents, { recursive: true });
-  for (const inherit_context of [true, false]) {
-    writeFileSync(
-      join(agents, `${inherit_context ? "inherit" : "fresh"}.md`),
-      `---\nruntime_config:\n  inherit_context: ${inherit_context}\n---\nRole`,
-    );
-  }
-  const session = SessionManager.inMemory(cwd);
-  t.mock.method(session, "getBranch", () => {
-    assert.fail("Only the selected runtime may read parent history");
-  });
-  let latest: SpawnOptions | undefined;
-  const capture = registrations();
-  capture.pi.getThinkingLevel = () => "low";
-  registerSubagents(
-    capture.pi,
-    {} as MuxAdapter,
-    undefined,
-    undefined,
-    withManagerOverrides({
-      runtimeCapabilities() {
-        assert.fail(
-          "Tool entry must not decide how a runtime uses host context",
-        );
-      },
-      spawn(options: SpawnOptions) {
-        latest = options;
-        return {
-          id: "child",
-          description: options.description,
-          status: "queued",
-        };
-      },
-    }),
-  );
-  const spawn = capture.definitions.get("subagent");
-  assert.ok(spawn);
-  const ctx = {
-    mode: "print",
-    cwd,
-    sessionManager: session,
-  } as unknown as ExtensionToolContext;
-  for (const [subagent_type, inherit_context] of [
-    ["inherit", false],
-    ["fresh", true],
-    [undefined, true],
-    [undefined, undefined],
-  ] as const) {
-    const runtime_config =
-      inherit_context === undefined ? undefined : { inherit_context };
-    await spawn.execute(
-      "call",
-      { subagent_type, runtime_config, prompt: "Task", description: "Test" },
-      undefined,
-      undefined,
-      ctx,
-    );
-    assert.equal(latest?.context, session);
-    assert.equal(latest?.parentSession, undefined);
-    assert.deepEqual(latest?.runtimeParams, runtime_config);
-    if (subagent_type) {
-      assert.equal(
-        latest?.agent?.runtimeConfig?.inherit_context,
-        subagent_type === "inherit",
-      );
-    }
-  }
-  await spawn.execute(
-    "call",
-    {
-      runtime: "future-runtime",
-      inherit_context: true,
-      tools: false,
-      runtime_config: { native_context: "custom-format" },
-      prompt: "Task",
-      description: "Test",
-    },
-    undefined,
-    undefined,
-    ctx,
-  );
-  assert.equal(latest?.context, session);
-  assert.deepEqual(latest?.runtimeParams, { native_context: "custom-format" });
-  assert.equal(
-    Value.Check(spawn.parameters, {
-      inherit_context: true,
-      prompt: "Task",
-      description: "Legacy top-level option",
-    }),
-    true,
-  );
-});
-
-test("resume tool respects retained background preferences and aborted callers never enqueue work", async () => {
-  const capture = registrations();
-  const adapter = new Proxy({} as MuxAdapter, {
-    get() {
-      assert.fail("Tool presentation must not spawn a process");
-    },
-  });
-  let preference: boolean | undefined;
-  let resumed = 0;
-  let waited = 0;
-  registerSubagents(
-    capture.pi,
-    adapter,
-    undefined,
-    undefined,
-    withManagerOverrides({
-      backgroundPreference: () => preference,
-      resume(id: string, options: ResumeOptions) {
-        resumed += 1;
-        assert.equal(id, "same-id");
-        assert.equal(options.prompt, "Continue");
-        return {
-          id,
-          description: "Original task",
-          status: "queued",
-          round: 2,
-        };
-      },
-      async result(id: string, wait?: boolean) {
-        assert.equal(wait, true);
-        waited += 1;
-        return {
-          id,
-          description: "Original task",
-          status: "completed",
-          round: 2,
-        };
-      },
-    }),
-  );
-  const tool = capture.definitions.get("resume_subagent");
-  assert.ok(tool);
-  const ctx = { mode: "print" } as ExtensionToolContext;
-  for (const [configured, requested, expectedWait] of [
-    [undefined, undefined, false],
-    [undefined, false, true],
-    [false, true, true],
-    [true, false, false],
-  ] as const) {
-    preference = configured;
-    const before = waited;
-    const result = await tool.execute(
-      "call",
-      {
-        agent_id: "same-id",
-        prompt: "Continue",
-        run_in_background: requested,
-      },
-      undefined,
-      undefined,
-      ctx,
-    );
-    assert.equal(waited - before, expectedWait ? 1 : 0);
-    assert.equal(
-      (result.details as { status: string }).status,
-      expectedWait ? "completed" : "queued",
-    );
-  }
-  const signal = AbortSignal.abort(new Error("Already canceled"));
+  registerSubagents(capture.pi, {} as Executor);
+  const subagent = capture.definitions.get("subagent");
+  assert.ok(subagent);
   await assert.rejects(
-    tool.execute(
+    subagent.execute(
       "call",
-      { agent_id: "same-id", prompt: "Continue" },
-      signal,
+      { prompt: "Inspect", cwd: "missing-directory" },
       undefined,
-      ctx,
+      undefined,
+      { cwd, mode: "print" } as ExtensionToolContext,
     ),
-    /Already canceled/,
+    /Invalid subagent cwd/,
   );
-  assert.equal(resumed, 4);
-});
-
-test("views stop command delegates to the manager and reports failures", async () => {
-  const capture = registrations();
-  const stopped: string[] = [];
-  const notices: string[] = [];
-  registerSubagents(
-    capture.pi,
-    {} as MuxAdapter,
-    undefined,
-    undefined,
-    withManagerOverrides({
-      get: (id: string) => ({ id, description: "Task", status: "running" }),
-      stop(id: string) {
-        stopped.push(id);
-        if (stopped.length > 1) throw new Error("Stop failed");
-        return { id, description: "Task", status: "stopped" };
-      },
-    }),
-  );
-  const command = capture.commandHandlers.get("subagent:views");
-  assert.ok(command);
-  const ctx = {
-    mode: "tui",
-    ui: {
-      setWidget() {},
-      setStatus() {},
-      notify(message: string) {
-        notices.push(message);
-      },
-    },
-  } as unknown as ExtensionCommandContext;
-  await command.handler("full-id stop", ctx);
-  assert.deepEqual(stopped, ["full-id"]);
-  assert.deepEqual(notices, []);
-  await command.handler("full-id stop", ctx);
-  assert.deepEqual(notices, ["Stop failed"]);
-});
-
-test("views command confirms deletion before execution and reports failures", async () => {
-  const capture = registrations();
-  const order: string[] = [];
-  let confirmed = false;
-  let fail = false;
-  registerSubagents(
-    capture.pi,
-    {} as MuxAdapter,
-    undefined,
-    undefined,
-    withManagerOverrides({
-      get: (id: string) => ({
-        id,
-        description: "My task",
-        status: "queued",
-      }),
-      async remove(id: string) {
-        order.push(`remove:${id}`);
-        if (fail) throw new Error("Cleanup failed");
-      },
-    }),
-  );
-  const command = capture.commandHandlers.get("subagent:views");
-  assert.ok(command);
-  const ctx = {
-    mode: "tui",
-    ui: {
-      setWidget() {},
-      setStatus() {},
-      async confirm(title: string, message: string) {
-        order.push("confirm");
-        assert.match(title, /Delete subagent/);
-        assert.match(message, /full-id/);
-        assert.match(message, /Session files are retained/);
-        return confirmed;
-      },
-      notify(message: string) {
-        order.push(message);
-      },
-    },
-  } as unknown as ExtensionCommandContext;
-  await command.handler("full-id delete", ctx);
-  assert.deepEqual(order, ["confirm"]);
-  order.length = 0;
-  confirmed = true;
-  await command.handler("full-id delete", ctx);
-  assert.deepEqual(order, ["confirm", "remove:full-id"]);
-  order.length = 0;
-  fail = true;
-  await command.handler("full-id delete", ctx);
-  assert.deepEqual(order, ["confirm", "remove:full-id", "Cleanup failed"]);
-  order.length = 0;
-  await command.handler("full-id invalid", ctx);
-  assert.match(order[0], /View action/);
-});
-
-test("views copy command writes the full ID through Pi clipboard support", async (t) => {
-  if (process.platform !== "linux") return;
-  environment(t, {
-    DISPLAY: undefined,
-    WAYLAND_DISPLAY: undefined,
-    TERMUX_VERSION: undefined,
-    // WSL otherwise tries PowerShell before the headless OSC 52 fallback.
-    // Select the terminal route without touching the host clipboard.
-    WT_SESSION: "pi-kits-clipboard-test",
-  });
-  const capture = registrations();
-  const id = "12345678-full-subagent-id";
-  registerSubagents(
-    capture.pi,
-    {} as MuxAdapter,
-    undefined,
-    undefined,
-    withManagerOverrides({
-      get: () => ({
-        id,
-        description: "Task",
-        status: "queued",
-      }),
-    }),
-  );
-  const command = capture.commandHandlers.get("subagent:views");
-  assert.ok(command);
-  const output: string[] = [];
-  const originalWrite = process.stdout.write.bind(process.stdout);
-  const write = t.mock.method(
-    process.stdout,
-    "write",
-    (...args: Parameters<typeof process.stdout.write>) => {
-      const [chunk] = args;
-      if (typeof chunk === "string" && chunk.startsWith("\x1b]52;c;")) {
-        output.push(chunk);
-        return true;
-      }
-      return originalWrite(...args);
-    },
-  );
-  const notices: string[] = [];
-  const ctx = {
-    mode: "tui",
-    ui: {
-      setWidget() {},
-      setStatus() {},
-      notify(message: string) {
-        notices.push(message);
-      },
-    },
-  } as unknown as ExtensionCommandContext;
-  await command.handler(`${id} copy`, ctx);
-  write.mock.restore();
-  assert.ok(
-    output.includes(`\x1b]52;c;${Buffer.from(id).toString("base64")}\x07`),
-  );
-  assert.deepEqual(notices, ["Copied subagent ID."]);
-});
-
-test("registration is lazy and does not invoke mux operations", () => {
-  const adapter = new Proxy({} as MuxAdapter, {
-    get() {
-      assert.fail("No mux operation is allowed during registration");
-    },
-  });
-  const capture = registrations();
-  registerSubagents(capture.pi, adapter);
-  assert.equal(capture.tools.length, 6);
-  for (const name of [
-    "subagent",
-    "resume_subagent",
-    "get_subagent_result",
-    "steer_subagent",
-    "stop_subagent",
-  ]) {
-    assert.equal(typeof capture.definitions.get(name)?.renderCall, "function");
-    assert.equal(
-      typeof capture.definitions.get(name)?.renderResult,
-      "function",
-    );
-  }
 });

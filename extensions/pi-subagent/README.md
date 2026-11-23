@@ -1,6 +1,6 @@
 # pi-subagent
 
-`subagent` 把任务交给独立的 Pi 或 Codex 会话，返回结果，并通过 Herdr 打开可交互的原生终端视图。六个工具归于 `pi-subagent` namespace，工具名称不变。
+`subagent` 把任务交给独立的 Pi 子会话执行并返回结果，在 Herdr 内打开可交互的原生终端视图，其他环境下自动回退到后台子进程。两个工具 `subagent` 与 `subagent_ctl` 归于 `pi-subagent` namespace。
 
 ## 安装
 
@@ -10,30 +10,34 @@
 pi install ./extensions/pi-subagent
 ```
 
-运行需要新版 Herdr app 或旧版 Herdr；Pi 任务使用 PATH 中的 `pi`，Codex 任务使用 `codex`。Codex 的进程清理使用 POSIX 进程组。
+扩展默认启用，使用 PATH 中的 `pi`。启动时按环境自动选择宿主执行器：`HC_TERMINAL_ID` 非空时使用 `herdr-core`，否则使用 `subprocess` 后台进程组。
 
 ## 快速开始
 
-扩展默认启用，无需配置终端适配器。在 Herdr 终端内启动 Pi，让父 Agent 调用 `subagent` 工具：
+让父 Agent 调用 `subagent` 工具启动任务：
 
 ```json
 {
-  "description": "<任务标题>",
   "prompt": "<任务指令>"
 }
 ```
 
-工具默认创建 Pi 任务并立即返回完整任务 ID；未被等待调用接收的完成结果向父会话发送后续消息。把 `keep_alive` 设为 `true` 可保留会话供续跑。
+工具立即返回短任务 ID（如 `sub-1`）和下一步操作 `hint`；向同一 `id` 再次调用 `subagent` 时，运行中自动引导（Steer），已结束则按保存的会话文件自动续跑（Resume）。使用 `subagent_ctl` 等待结果、查看状态或停止任务：
 
-在 Pi 交互界面输入以下命令管理任务和视图：
+```json
+{
+  "id": "sub-1",
+  "action": "wait"
+}
+```
+
+在 Pi 交互界面输入以下命令管理任务和终端视图：
 
 ```text
 /subagent:views
 ```
 
-新版 Herdr app 通过任务机器上的 `hc` 请求在父终端工作区的新标签页中显示任务，随后在客户端手动切换；旧版 Herdr 使用相对分屏布局。关闭视图后，执行中的任务继续运行。
-
-启动时自动选择首个匹配环境：`HC_TERMINAL_ID` 非空时优先使用新版 Herdr app，否则在 `HERDR_ENV=1` 时使用旧版 Herdr；均未匹配时不注册。`pi-subagent.enabled` 默认为 `true`，设为 `false` 可关闭扩展；修改配置后重新加载扩展。
+`pi-subagent.enabled` 默认为 `true`，设为 `false` 可关闭扩展；修改配置后执行 `/reload`。
 
 ## 文档
 

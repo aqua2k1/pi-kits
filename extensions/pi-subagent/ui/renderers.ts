@@ -1,7 +1,6 @@
 import { Text, truncateToWidth } from "@earendil-works/pi-tui";
 import {
   type CallRenderer,
-  compactCall,
   compactMessage,
   compactResult,
   jsonText,
@@ -9,8 +8,7 @@ import {
   type ResultRenderer,
   record,
 } from "../../../shared/ui/renderers.ts";
-import type { AgentSnapshot } from "../manager.ts";
-import { hasDisplayError } from "../policy.ts";
+import { type AgentSnapshot, hasDisplayError } from "../manager.ts";
 import { agentHeader } from "./presentation.ts";
 
 export const subagentCallRenderer =
@@ -21,20 +19,21 @@ export const subagentCallRenderer =
   (args, theme, context) => {
     if (context.expanded) return new Text(`${label}\n${jsonText(args)}`, 0, 0);
     const data = record(args);
-    const existing =
-      typeof data.agent_id === "string" ? lookup?.(data.agent_id) : undefined;
+    const id = typeof data.id === "string" ? data.id : "";
+    const existing = id ? lookup?.(id) : undefined;
     const state = record(context.state);
     const snapshot: AgentSnapshot = existing ??
       (state.subagentSnapshot as AgentSnapshot | undefined) ?? {
-        id: typeof data.agent_id === "string" ? data.agent_id : "",
+        id,
         description:
-          typeof data.description === "string" ? data.description : label,
-        subagentType:
-          typeof data.subagent_type === "string"
-            ? data.subagent_type
-            : undefined,
-        model: typeof data.model === "string" ? data.model : undefined,
-        runtime: typeof data.runtime === "string" ? data.runtime : undefined,
+          typeof data.description === "string"
+            ? data.description
+            : typeof data.action === "string"
+              ? `${label} (${data.action})`
+              : typeof data.prompt === "string" && data.prompt.trim()
+                ? data.prompt.trim().split(/\r?\n/)[0].slice(0, 80)
+                : label,
+        subagentType: typeof data.agent === "string" ? data.agent : undefined,
         status: context.executionStarted ? "running" : "queued",
       };
     return {
@@ -120,18 +119,3 @@ export const renderSubagentNotification: ReturnType<typeof compactMessage> = (
     }
     return summary;
   })(message, options, theme);
-
-export const renderSubagentTypesCall = compactCall("Subagent types");
-export const renderSubagentTypesResult = compactResult((details) => {
-  const agents = record(details).agents;
-  if (!Array.isArray(agents)) return;
-  return {
-    status: `${agents.length} types`,
-    preview: agents
-      .map((agent) => {
-        const entry = record(agent);
-        return `${entry.displayName ?? entry.name ?? "Agent"}${entry.enabled === false ? " (disabled)" : ""}`;
-      })
-      .join(" · "),
-  };
-});
