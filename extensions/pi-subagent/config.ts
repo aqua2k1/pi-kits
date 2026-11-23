@@ -278,6 +278,9 @@ export function resolveAgentDefinition(
   return agent;
 }
 
+export const BASE_AGENT_PARAMETER_DESCRIPTION =
+  "Agent profile name; omit for a default session.";
+
 /** Summarize enabled agents for dynamic tool descriptions via prepareLoadout. */
 export function formatAvailableAgents(
   cwd: string,
@@ -292,6 +295,13 @@ export function formatAvailableAgents(
   } catch {
     return "";
   }
+}
+
+export function formatAgentParameterDescription(
+  cwd: string,
+  agentDir = getAgentDir(),
+): string {
+  return `${BASE_AGENT_PARAMETER_DESCRIPTION}${formatAvailableAgents(cwd, agentDir)}`;
 }
 
 type ResolvedExtensions = Awaited<

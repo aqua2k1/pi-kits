@@ -153,6 +153,15 @@ test("both tools share the pi-subagent namespace and dynamically surface configu
     loadoutChanges?.descriptions?.subagent ?? "",
     /Configured agents: explorer \(Fast codebase search\)/,
   );
+  const agentProp = (
+    subagent.parameters as {
+      properties?: { agent?: { description?: string } };
+    }
+  ).properties?.agent;
+  assert.equal(
+    agentProp?.description,
+    "Agent profile name; omit for a default session. Configured agents: explorer (Fast codebase search).",
+  );
 });
 
 test("subagent tool routes omit-id to spawn and with-id to send; subagent_ctl routes wait/status/stop", async (t) => {

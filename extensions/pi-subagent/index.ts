@@ -17,7 +17,11 @@ import {
   DOCKED_PANEL_CLOSED,
   DOCKED_PANEL_OPENED,
 } from "../../shared/ui/docked-panel/index.ts";
-import { formatAvailableAgents, resolveAgentDefinition } from "./config.ts";
+import {
+  formatAgentParameterDescription,
+  formatAvailableAgents,
+  resolveAgentDefinition,
+} from "./config.ts";
 import type { Executor } from "./execute/index.ts";
 import { resolveExecutor } from "./execute/resolve.ts";
 import {
@@ -148,8 +152,20 @@ export function registerSubagents(
     return manager;
   };
 
+  const agentParameter: ReturnType<
+    typeof Type.Optional<ReturnType<typeof Type.String>>
+  > & {
+    description?: string;
+  } = Type.Optional(
+    Type.String({
+      minLength: 1,
+      description: formatAgentParameterDescription(process.cwd()),
+    }),
+  );
+
   pi.on("session_start", (_event, ctx) => {
     context = ctx;
+    agentParameter.description = formatAgentParameterDescription(ctx.cwd);
     if (ctx.mode === "tui") status?.bind(ctx.ui);
   });
 
@@ -164,7 +180,10 @@ export function registerSubagents(
       renderResult: renderSubagentResult,
       description: BASE_SUBAGENT_DESCRIPTION,
       prepareLoadout() {
-        const suffix = formatAvailableAgents(context?.cwd ?? process.cwd());
+        const currentCwd = context?.cwd ?? process.cwd();
+        agentParameter.description =
+          formatAgentParameterDescription(currentCwd);
+        const suffix = formatAvailableAgents(currentCwd);
         return suffix
           ? {
               descriptions: {
@@ -188,13 +207,7 @@ export function registerSubagents(
               "Existing subagent ID (e.g. 'sub-1') to steer or resume. Omit to start a new session.",
           }),
         ),
-        agent: Type.Optional(
-          Type.String({
-            minLength: 1,
-            description:
-              "Configured agent profile name from .pi/agent/agents/*.md or <agent-dir>/agents/*.md; omit for a default session.",
-          }),
-        ),
+        agent: agentParameter,
         description: Type.Optional(
           Type.String({
             minLength: 1,
