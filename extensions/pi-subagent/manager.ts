@@ -523,6 +523,7 @@ function createWorkerSession(
 
       const argv = [
         managerOptions.executable ?? "pi",
+        ...(executor.supportsView ? [] : ["--mode", "rpc"]),
         "--no-extensions",
         "-e",
         managerOptions.workerPath ??

@@ -34,7 +34,7 @@ const defaultSpawner: SubprocessSpawner = (command, args, options) =>
     cwd: options.cwd,
     env: options.env,
     detached: options.detached,
-    stdio: "ignore",
+    stdio: ["pipe", "ignore", "ignore"],
   });
 
 function killProcessTree(child: ChildProcess, signal: NodeJS.Signals): void {
