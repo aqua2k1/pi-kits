@@ -41,7 +41,7 @@ export function agentName(agent: AgentSnapshot): string {
 }
 
 export function agentModel(agent: AgentSnapshot): string {
-  return oneLine(agent.configuredModel || agent.model || "—");
+  return oneLine(agent.model || "—");
 }
 
 /** Shared identity/status row for widgets, tool cards and views. */

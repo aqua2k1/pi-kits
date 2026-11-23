@@ -65,7 +65,6 @@ export type WorkerEvent = (
 ) & {
   round?: number;
   model?: string;
-  modelName?: string;
   sessionPath?: string;
 };
 
@@ -175,7 +174,7 @@ export function registerWorkerBridge(
   let nativeSeq = 0;
 
   const modelMeta = (m = ctx?.model) =>
-    m ? { model: `${m.provider}/${m.id}`, modelName: m.name } : {};
+    m ? { model: `${m.provider}/${m.id}` } : {};
 
   const shutdown = () => {
     const prev = socket;

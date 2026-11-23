@@ -33,9 +33,6 @@ const snapshot: AgentSnapshot = Object.freeze({
   subagentType: "long-config-name",
   displayName: "Reviewer",
   model: "provider/model-id",
-  configuredModel: "provider/model-id",
-  modelName: "Model Name",
-  agentPath: "/private/agents/config.md",
   sessionPath: "/private/session.jsonl",
   createdAt: 1791090566583,
   turnCount: 2,
@@ -81,7 +78,6 @@ test("native notifications show latest reply revision and independent outcome", 
       status: "error" as const,
       error: "Old managed error",
       result: "New native reply",
-      resultSource: "user_interaction" as const,
       resultRevision: 2,
       sessionUpdate: {
         interactionId: "native-1",
@@ -102,7 +98,7 @@ test("native notifications show latest reply revision and independent outcome", 
 });
 
 test("headers fall back to type, model ID and generic agent name", () => {
-  const typed = { ...snapshot, displayName: undefined, modelName: undefined };
+  const typed = { ...snapshot, displayName: undefined };
   assert.match(
     render(typed).render(200)[0],
     /long-config-name · provider\/model-id/,
@@ -111,7 +107,6 @@ test("headers fall back to type, model ID and generic agent name", () => {
     render({
       ...typed,
       subagentType: undefined,
-      configuredModel: undefined,
       model: undefined,
     }).render(200)[0],
     /Subagent · —/,

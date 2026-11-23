@@ -93,22 +93,13 @@ export interface AgentSnapshot {
   round?: number;
   inheritedContext?: boolean;
   supportsView?: boolean;
-  runtimeSessionId?: string;
   sessionState?: SessionState;
   sessionActivity?: string;
   subagentType?: string;
   displayName?: string;
   model?: string;
-  configuredModel?: string;
-  modelName?: string;
-  agentSource?: AgentDefinition["source"];
-  agentPath?: string;
   result?: string;
-  resultSource?: "managed" | "user_interaction";
   resultRevision?: number;
-  resultUpdatedAt?: number;
-  resultOutcome?: SessionUpdate["outcome"];
-  resultError?: string;
   error?: string;
   activity?: string;
   sessionPath?: string;
@@ -192,8 +183,6 @@ export interface SubagentManager {
   spawn(options: SpawnOptions): AgentSnapshot;
   backgroundPreference(id: string): boolean | undefined;
   send(id: string, options: SendOptions): Promise<AgentSnapshot>;
-  resume(id: string, options: SendOptions): AgentSnapshot;
-  steer(id: string, message: string): void | Promise<void>;
   result(
     id: string,
     wait?: boolean,
@@ -202,7 +191,6 @@ export interface SubagentManager {
   stop(id: string): AgentSnapshot;
   openView(id: string): Promise<ViewHandle>;
   closeView(id: string): Promise<void>;
-  release(id: string): Promise<void>;
   remove(id: string): Promise<void>;
   close(): Promise<void>;
 }
@@ -221,11 +209,7 @@ interface StatsData {
 
 interface ReplyData {
   text: string;
-  source: "managed" | "user_interaction";
   revision: number;
-  updatedAt: number;
-  outcome: SessionUpdate["outcome"];
-  error?: string;
   truncated: boolean;
   sequence: number;
 }
@@ -277,7 +261,6 @@ interface SubagentEntity {
   options: SpawnOptions;
   sessionPath?: string;
   model?: string;
-  modelName?: string;
   worker?: WorkerComponent;
   turn?: TurnComponent;
   settled?: SettledComponent;
@@ -332,7 +315,6 @@ function deriveSnapshot(
     round: e.turn?.round ?? e.settled?.round ?? 1,
     inheritedContext: Boolean(e.options.parentSession),
     supportsView,
-    runtimeSessionId: `subagent-${e.sessionKey}`,
     ...(sessionState !== undefined ? { sessionState } : {}),
     ...(e.worker?.cleanupError
       ? {
@@ -341,25 +323,17 @@ function deriveSnapshot(
       : e.worker?.interactiveActivity
         ? { sessionActivity: e.worker.interactiveActivity }
         : {}),
-    model: e.model ?? e.options.agent?.model ?? e.options.model,
-    configuredModel: e.options.agent?.model,
-    ...(e.modelName ? { modelName: e.modelName } : {}),
+    model: e.options.agent?.model ?? e.model ?? e.options.model,
     ...(e.options.agent
       ? {
           subagentType: e.options.agent.name,
           displayName: e.options.agent.displayName,
-          agentSource: e.options.agent.source,
-          agentPath: e.options.agent.sourcePath,
         }
       : {}),
     ...(e.reply
       ? {
           result: e.reply.text,
-          resultSource: e.reply.source,
           resultRevision: e.reply.revision,
-          resultUpdatedAt: e.reply.updatedAt,
-          resultOutcome: e.reply.outcome,
-          resultError: e.reply.error,
           truncated: e.reply.truncated,
         }
       : {}),
@@ -866,10 +840,7 @@ export function createSubagentManager(
   const applyReply = (
     e: SubagentEntity,
     text: string,
-    source: "managed" | "user_interaction",
-    outcome: SessionUpdate["outcome"],
     truncated: boolean,
-    error?: string,
     sequence?: number,
   ): void => {
     const seq = sequence ?? (e.reply?.sequence ?? 0) + 1;
@@ -877,11 +848,7 @@ export function createSubagentManager(
     if (!text) return;
     e.reply = {
       text,
-      source,
       revision: (e.reply?.revision ?? 0) + 1,
-      updatedAt: Date.now(),
-      outcome,
-      error,
       truncated,
       sequence: seq,
     };
@@ -897,14 +864,7 @@ export function createSubagentManager(
       e.sessionPath = event.sessionPath;
     }
     if (validText(event.model)) {
-      if (event.model !== e.model) e.modelName = undefined;
       e.model = event.model;
-    }
-    if (
-      validText(event.modelName) &&
-      (event.model === undefined || validText(event.model))
-    ) {
-      e.modelName = event.modelName;
     }
 
     if (event.type === "ready" || event.type === "model_select") {
@@ -924,15 +884,7 @@ export function createSubagentManager(
       }
       if (event.sequence <= e.lastInteractionSeq || disposed) return;
       e.lastInteractionSeq = event.sequence;
-      applyReply(
-        e,
-        event.response,
-        "user_interaction",
-        event.outcome,
-        event.truncated === true,
-        event.error,
-        event.sequence,
-      );
+      applyReply(e, event.response, event.truncated === true, event.sequence);
       changed();
       try {
         options.onSessionUpdate?.(snap(e), event);
@@ -994,14 +946,7 @@ export function createSubagentManager(
         changed();
       }
     } else if (event.type === "completed") {
-      applyReply(
-        e,
-        event.result,
-        "managed",
-        event.canceled ? "aborted" : event.error ? "error" : "completed",
-        event.truncated === true,
-        event.error,
-      );
+      applyReply(e, event.result, event.truncated === true);
       if (event.canceled) settleTurn(e, "stopped");
       else if (event.error) settleTurn(e, "error", event.error);
       else settleTurn(e, turn.canceling ? "stopped" : "completed");
@@ -1120,52 +1065,6 @@ export function createSubagentManager(
     return e.worker?.view;
   };
 
-  const resume = (id: string, resumeOpts: SendOptions): AgentSnapshot => {
-    if (disposed) throw new Error("Subagent manager is closed.");
-    const e = getEntity(id);
-    if (e.turn) throw new Error("Only a finished managed task can be resumed.");
-    if (e.worker?.closing) {
-      throw new Error(
-        "Worker cleanup is still in progress; resume is unavailable.",
-      );
-    }
-    if (e.worker?.interactiveActivity !== undefined) {
-      throw new Error(
-        "Resume requires an idle session; wait for native/user interaction to settle.",
-      );
-    }
-    const round = (e.settled?.round ?? 1) + 1;
-    const command = createTaskCommand(resumeOpts.prompt, round);
-    if (resumeOpts.description) {
-      e.description = resumeOpts.description;
-      e.options = { ...e.options, description: resumeOpts.description };
-    }
-    e.options = { ...e.options, prompt: resumeOpts.prompt };
-    e.turn = createTurnComponent(round, command);
-    changed();
-    reconcile();
-    return snap(e);
-  };
-
-  const steer = (id: string, message: string): void => {
-    if (!message.trim()) throw new Error("Steering message must not be blank.");
-    const e = getEntity(id);
-    if (
-      !e.turn?.dispatched ||
-      e.turn.canceling ||
-      !e.worker?.session.connected ||
-      e.worker.closing ||
-      e.worker.cleanupError
-    ) {
-      throw new Error("Only a connected running managed task can be steered.");
-    }
-    e.worker.session.send({
-      type: "steer",
-      message,
-      ...(e.turn.round > 1 ? { round: e.turn.round } : {}),
-    });
-  };
-
   return {
     subscribe(listener) {
       listeners.add(listener);
@@ -1211,8 +1110,6 @@ export function createSubagentManager(
       return snap(entity);
     },
     backgroundPreference: (id) => getEntity(id).options.agent?.runInBackground,
-    resume,
-    steer,
     async send(id, sendOpts) {
       if (disposed) throw new Error("Subagent manager is closed.");
       const e = getEntity(id);
@@ -1223,9 +1120,15 @@ export function createSubagentManager(
         if (
           e.turn.dispatched &&
           !e.turn.canceling &&
-          e.worker?.session.connected
+          e.worker?.session.connected &&
+          !e.worker.closing &&
+          !e.worker.cleanupError
         ) {
-          steer(id, sendOpts.prompt);
+          e.worker.session.send({
+            type: "steer",
+            message: sendOpts.prompt,
+            ...(e.turn.round > 1 ? { round: e.turn.round } : {}),
+          });
           return {
             ...snap(e),
             hint: `Steering message delivered to active round. Call subagent_ctl({ id: "${id}", action: "wait" }) to wait for the final result.`,
@@ -1243,7 +1146,27 @@ export function createSubagentManager(
           `Subagent ${id} is currently ${deriveStatus(e)}; wait for it to settle or steer while running.`,
         );
       }
-      return resume(id, sendOpts);
+      if (e.worker?.closing) {
+        throw new Error(
+          "Worker cleanup is still in progress; resume is unavailable.",
+        );
+      }
+      if (e.worker?.interactiveActivity !== undefined) {
+        throw new Error(
+          "Resume requires an idle session; wait for native/user interaction to settle.",
+        );
+      }
+      const round = (e.settled?.round ?? 1) + 1;
+      const command = createTaskCommand(sendOpts.prompt, round);
+      if (sendOpts.description) {
+        e.description = sendOpts.description;
+        e.options = { ...e.options, description: sendOpts.description };
+      }
+      e.options = { ...e.options, prompt: sendOpts.prompt };
+      e.turn = createTurnComponent(round, command);
+      changed();
+      reconcile();
+      return snap(e);
     },
     async result(id, wait = false, signal) {
       const e = getEntity(id);
@@ -1357,18 +1280,6 @@ export function createSubagentManager(
           changed();
         }
       });
-    },
-    async release(id) {
-      const e = getEntity(id);
-      if (e.turn) {
-        throw new Error("Only a finished managed task can be released.");
-      }
-      await destroyWorker(e);
-      if (e.worker?.cleanupError) {
-        throw new Error(
-          `Could not release subagent ${id} (${e.worker.cleanupError}); retry release.`,
-        );
-      }
     },
     async remove(id) {
       const e = getEntity(id);

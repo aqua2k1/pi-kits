@@ -47,8 +47,25 @@ const BASE_SUBAGENT_DESCRIPTION =
   "Send a task to an independent subagent session. Omit `id` to start a new session; provide `id` to steer a running session or resume a finished one (automatically restarting from its saved session file if the worker was released).";
 
 function toolResult(snapshot: AgentSnapshot) {
-  const { result, ...metadata } = snapshot;
-  const text = JSON.stringify({ ...metadata, result }, null, 2);
+  const payload = {
+    id: snapshot.id,
+    description: snapshot.description,
+    ...(snapshot.subagentType ? { subagentType: snapshot.subagentType } : {}),
+    ...(snapshot.cwd ? { cwd: snapshot.cwd } : {}),
+    status: snapshot.status,
+    ...(snapshot.round !== undefined ? { round: snapshot.round } : {}),
+    ...(snapshot.sessionState ? { sessionState: snapshot.sessionState } : {}),
+    ...(snapshot.activity ? { activity: snapshot.activity } : {}),
+    ...(snapshot.sessionActivity
+      ? { sessionActivity: snapshot.sessionActivity }
+      : {}),
+    ...(snapshot.error ? { error: snapshot.error } : {}),
+    ...(snapshot.truncated ? { truncated: true } : {}),
+    ...(snapshot.sessionPath ? { sessionPath: snapshot.sessionPath } : {}),
+    ...(snapshot.hint ? { hint: snapshot.hint } : {}),
+    ...(snapshot.result !== undefined ? { result: snapshot.result } : {}),
+  };
+  const text = JSON.stringify(payload, null, 2);
   return {
     content: [
       {
