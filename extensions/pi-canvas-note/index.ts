@@ -5,7 +5,6 @@ import type {
   ExtensionAPI,
   ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
-import { readPiKitsConfig } from "@pi-kits/config";
 import { Type } from "typebox";
 import { Value } from "typebox/value";
 import { createFeedbackInbox } from "./core/feedback.ts";
@@ -33,8 +32,6 @@ import {
 } from "./server/index.ts";
 
 export default function canvasNoteExtension(pi: ExtensionAPI) {
-  const config = readPiKitsConfig()["pi-canvas-note"];
-  if (!config.enabled) return;
   const feedbackInbox = createFeedbackInbox(pi);
   let store: DocumentStore | undefined;
   let server: CanvasNoteServer | undefined;
@@ -82,7 +79,7 @@ export default function canvasNoteExtension(pi: ExtensionAPI) {
     if (!server) {
       await mkdir(dirname(docStore.path), { recursive: true });
       server = await startCanvasNoteServer({
-        ...config,
+        portRange: [10_000, 20_000],
         store: docStore,
         onReply: (feedback) => feedbackInbox.accept(feedback, docStore.path),
         onRenderError: (error) => {

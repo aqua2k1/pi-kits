@@ -38,22 +38,3 @@ pi install https://github.com/aqua2k1/pi-kits.git
 | `target` | 必填 string，文件路径、网址或目录路径 |
 
 将占位值替换为实际目标。工具采用与命令相同的路径解析和存在性检查，返回文本结果及包含 `ok`、`message` 的 `details`，展示 `opened` 或 `error` 状态。
-
-## 配置
-
-位置：`<agent-dir>/pi-kits.json`；修改后在 Pi 输入 `/reload` 生效。
-
-| 键 | 类型 | 默认值 | 说明 |
-|---|---|---|---|
-| `pi-open.enabled` | boolean | `true` | 注册命令和工具 |
-
-```json
-{
-  "pi-open": { "enabled": true }
-}
-```
-
-## 文档
-
-- [共享配置与迁移说明](../../shared/config/README.md)
-- [配置校验规则](../../pi-kits.schema.json)

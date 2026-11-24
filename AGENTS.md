@@ -3,7 +3,7 @@
 ## Layout
 
 - `extensions/<name>/` — independent Pi extensions
-- `shared/` — shared helpers and config (`@pi-kits/config`)
+- `shared/` — shared helpers (`@pi-kits/shared`)
 - `themes/` — themes
 - `docs/writing-docs.md` — documentation rules
 
@@ -12,8 +12,6 @@
 - Keep extension entry points explicit in both the root and each extension's Pi manifest.
 - Declare logical resource names in package metadata, never in resolver special cases.
 - Shared helpers do not register commands, tools, or lifecycle handlers.
-- Settings live in the agent-dir `pi-kits.json`. Validate and default them through
-  `@pi-kits/config`, and keep the exported JSON schema and example in sync.
 
 ## Docs
 

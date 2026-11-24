@@ -7,7 +7,6 @@ import {
   readdirSync,
   readFileSync,
   rmSync,
-  writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join, resolve } from "node:path";
@@ -324,22 +323,6 @@ for (const [name, paths] of [
   });
 }
 
-test("canonical disabled settings remain accepted by the real Pi loader", (t) => {
-  const dir = mkdtempSync(join(tmpdir(), "pi-kits-disabled-"));
-  t.after(() => rmSync(dir, { recursive: true, force: true }));
-  writeFileSync(
-    join(dir, "pi-kits.json"),
-    JSON.stringify({
-      "pi-canvas-note": { enabled: false },
-      "pi-open": { enabled: false },
-      "pi-output-viewer": { enabled: false },
-      "pi-ask": { enabled: false },
-      "pi-subagent": { enabled: false },
-    }),
-  );
-  assert.doesNotMatch(smoke([root], dir), /--commit/);
-});
-
 test("Git package loads with production-only workspace dependencies", (t) => {
   const dir = mkdtempSync(join(tmpdir(), "pi-kits-production-"));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
@@ -371,7 +354,7 @@ test("Git package loads with production-only workspace dependencies", (t) => {
   );
   assert.equal(install.error, undefined);
   assert.equal(install.status, 0, install.stderr);
-  assert.ok(existsSync(join(checkout, "node_modules/@pi-kits/config")));
+  assert.ok(existsSync(join(checkout, "node_modules/@pi-kits/shared")));
   assert.equal(existsSync(join(checkout, "node_modules/typebox")), false);
   assert.doesNotMatch(smoke([checkout], dir), /--commit/);
 });

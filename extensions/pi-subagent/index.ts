@@ -7,11 +7,6 @@ import {
   type ExtensionAPI,
   type ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
-import {
-  readPiKitsConfig,
-  SUBAGENT_DEFAULT_EXTENSIONS,
-  type WorkerExtensionSource,
-} from "@pi-kits/config";
 import { Type } from "typebox";
 import {
   DOCKED_PANEL_CLOSED,
@@ -21,6 +16,8 @@ import {
   formatAgentParameterDescription,
   formatAvailableAgents,
   resolveAgentDefinition,
+  SUBAGENT_DEFAULT_EXTENSIONS,
+  type WorkerExtensionSource,
 } from "./config.ts";
 import type { Executor } from "./execute/index.ts";
 import { resolveExecutor } from "./execute/resolve.ts";
@@ -403,8 +400,6 @@ export default function subagentExtension(
 ): void {
   // Workers inherit the host environment but must not become coordinators.
   if (process.env.PI_KITS_SUBAGENT_WORKER === "1") return;
-  const subagent = readPiKitsConfig()["pi-subagent"];
-  if (!subagent.enabled) return;
 
   let context: ExtensionContext | undefined;
   const warnings: string[] = [];
@@ -430,8 +425,8 @@ export default function subagentExtension(
   registerSubagents(
     pi,
     executor,
-    subagent.maxConcurrent,
-    subagent.extensionAllowlist,
+    4,
+    SUBAGENT_DEFAULT_EXTENSIONS,
     dependencies.createManager,
   );
 }

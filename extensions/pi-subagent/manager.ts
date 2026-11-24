@@ -7,15 +7,16 @@ import {
   SessionManager,
 } from "@earendil-works/pi-coding-agent";
 import {
-  SUBAGENT_DEFAULT_EXTENSIONS,
-  type WorkerExtensionSource,
-} from "@pi-kits/config";
-import {
   captureParentSession,
   createClonedSession,
   type ParentSessionSnapshot,
 } from "./clone.ts";
-import { type AgentDefinition, resolveWorkerExtensions } from "./config.ts";
+import {
+  type AgentDefinition,
+  resolveWorkerExtensions,
+  SUBAGENT_DEFAULT_EXTENSIONS,
+  type WorkerExtensionSource,
+} from "./config.ts";
 import {
   type Executor,
   type InspectResult,

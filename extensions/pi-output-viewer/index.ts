@@ -26,7 +26,6 @@ import type {
   ExtensionAPI,
   ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
-import { readPiKitsConfig } from "@pi-kits/config";
 import { readonlyPreview } from "../../shared/readonly-preview.ts";
 
 /** Max chars of the reply snippet shown in the selector. */
@@ -244,10 +243,11 @@ async function openPreview(
   }
 }
 
-export default function (pi: ExtensionAPI) {
-  const config = readPiKitsConfig()["pi-output-viewer"];
-  if (!config.enabled) return;
+function resolveEditor(): string {
+  return process.env.EDITOR?.trim() || "nvim";
+}
 
+export default function (pi: ExtensionAPI) {
   pi.registerCommand("output-viewer", {
     description:
       "Preview a past reply in neovim (read-only). Usage: /output-viewer [--thinking]",
@@ -267,7 +267,7 @@ export default function (pi: ExtensionAPI) {
       await openPreview(ctx, {
         includeThinking: parsed.includeThinking,
         latestOnly: false,
-        editor: config.editor,
+        editor: resolveEditor(),
       });
     },
   });
@@ -278,7 +278,7 @@ export default function (pi: ExtensionAPI) {
       await openPreview(ctx, {
         includeThinking: false,
         latestOnly: true,
-        editor: config.editor,
+        editor: resolveEditor(),
       });
     },
   });

@@ -11,21 +11,21 @@ import type {
 import { useAgentDir } from "../../tests/helpers/agent-dir.ts";
 import previewExtension from "./index.ts";
 
-for (const [config, expectedEditor] of [
-  [{ "pi-output-viewer": { editor: "canonical-editor" } }, "canonical-editor"],
-  [{ terminal: { editor: "ignored-editor" } }, "nvim"],
-  [
-    {
-      workspace: { terminal: { editor: "ignored-editor" } },
-      terminal: { editor: "also-ignored" },
-      "pi-output-viewer": {},
-    },
-    "nvim",
-  ],
+for (const [envEditor, expectedEditor] of [
+  ["custom-editor", "custom-editor"],
+  ["", "nvim"],
+  [undefined, "nvim"],
 ] as const) {
   for (const latestOnly of [false, true]) {
-    test(`editor ${expectedEditor} is used by ${latestOnly ? "shortcut" : "command"}: ${JSON.stringify(config)}`, async (t) => {
-      const cwd = useAgentDir(t, config);
+    test(`editor ${expectedEditor} is used by ${latestOnly ? "shortcut" : "command"} when EDITOR=${JSON.stringify(envEditor)}`, async (t) => {
+      const originalEditor = process.env.EDITOR;
+      if (envEditor === undefined) delete process.env.EDITOR;
+      else process.env.EDITOR = envEditor;
+      t.after(() => {
+        if (originalEditor === undefined) delete process.env.EDITOR;
+        else process.env.EDITOR = originalEditor;
+      });
+      const cwd = useAgentDir(t);
       let command: Parameters<ExtensionAPI["registerCommand"]>[1] | undefined;
       let shortcut: Parameters<ExtensionAPI["registerShortcut"]>[1] | undefined;
       previewExtension({
@@ -99,33 +99,17 @@ for (const [config, expectedEditor] of [
   }
 }
 
-for (const [config, enabled] of [
-  [undefined, true],
-  [{ "pi-output-viewer": { enabled: false } }, false],
-  [{ "pi-output-viewer": { enabled: true } }, true],
-  // Old group and feature keys are unknown raw fields, not aliases.
-  [{ workspace: { enabled: false } }, true],
-  [{ workspace: { preview: { enabled: false } } }, true],
-  [{ preview: { enabled: false } }, true],
-  [{ preview: { enabled: false }, "pi-output-viewer": {} }, true],
-  [
-    { preview: { enabled: true }, "pi-output-viewer": { enabled: false } },
-    false,
-  ],
-] as const) {
-  test(`output-viewer factory respects configuration ${JSON.stringify(config)}`, (t) => {
-    useAgentDir(t, config);
-    const commands: string[] = [];
-    const shortcuts: string[] = [];
-    previewExtension({
-      registerCommand(name: string) {
-        commands.push(name);
-      },
-      registerShortcut(shortcut: string) {
-        shortcuts.push(shortcut);
-      },
-    } as unknown as ExtensionAPI);
-    assert.deepEqual(commands, enabled ? ["output-viewer"] : []);
-    assert.deepEqual(shortcuts, enabled ? ["alt+p"] : []);
-  });
-}
+test("output-viewer factory registers command and shortcut", () => {
+  const commands: string[] = [];
+  const shortcuts: string[] = [];
+  previewExtension({
+    registerCommand(name: string) {
+      commands.push(name);
+    },
+    registerShortcut(shortcut: string) {
+      shortcuts.push(shortcut);
+    },
+  } as unknown as ExtensionAPI);
+  assert.deepEqual(commands, ["output-viewer"]);
+  assert.deepEqual(shortcuts, ["alt+p"]);
+});

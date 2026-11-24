@@ -37,13 +37,9 @@ pi install https://github.com/aqua2k1/pi-kits.git
 
 ## 配置
 
-配置文件为 agent 目录下的 `pi-kits.json`，默认位于 `~/.pi/agent/`，可由 `PI_CODING_AGENT_DIR` 调整。修改后执行 `/reload`。
+扩展无全局配置文件，均通过 `pi config` 独立开关。
 
-扩展资源名、包名与目录名一致；`extensionAllowlist[].extensions` 填写 `pi-server-tools`、`pi-ask` 等完整名称。生效的配置顶层键仅有 `pi-canvas-note`、`pi-open`、`pi-output-viewer`、`pi-ask`、`pi-subagent`。工具 namespace 与扩展目录同名：`pi-canvas-note`、`pi-subagent`、`pi-ask`、`pi-open`；工具名称不变。
-
-`pi-output-viewer.editor` 设置只读预览编辑器，默认 `nvim`。旧顶层键、归档扩展键及旧分组仅作为未知字段保留在原始配置中，生效配置忽略它们；已有设置须显式迁移到新键，见[共享配置](shared/config/docs/configuration.md)。
-
-扩展可通过 `pi config` 独立关闭；提供 `enabled` 配置的扩展也可在配置文件中关闭。`pi-token-meter`、`pi-handoff`、`pi-server-tools` 无配置开关。完整字段见[配置示例](pi-kits.example.json)和 [JSON Schema](pi-kits.schema.json)；架构与使用细节见各包 README。
+扩展资源名、包名与目录名一致；工具 namespace 与扩展目录同名：`pi-canvas-note`、`pi-subagent`、`pi-ask`、`pi-open`；工具名称不变。`pi-output-viewer` 使用 `$EDITOR`（默认 `nvim`）；`pi-subagent` 的角色与扩展列表在 Agent Markdown frontmatter 中配置，细节见各包 README。
 
 ## 开发
 

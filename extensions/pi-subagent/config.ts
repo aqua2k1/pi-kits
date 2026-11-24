@@ -2,12 +2,17 @@ import { type Dirent, readdirSync, readFileSync, statSync } from "node:fs";
 import { basename, isAbsolute, join, relative, resolve, sep } from "node:path";
 import {
   DefaultPackageManager,
+  getAgentDir,
   parseFrontmatter,
   SettingsManager,
 } from "@earendil-works/pi-coding-agent";
-import { getAgentDir, type WorkerExtensionSource } from "@pi-kits/config";
-import { Type } from "typebox";
+import { type Static, Type } from "typebox";
 import { Value } from "typebox/value";
+
+export const SUBAGENT_DEFAULT_EXTENSIONS = [
+  "builtin:codemode",
+  "builtin:tool-search",
+] as const;
 
 const MAX_FILE_BYTES = 64 * 1024;
 
@@ -29,20 +34,19 @@ const ExtensionSourceString = Type.String({
   minLength: 1,
   pattern: "^(?=.*\\S)[^\\x00-\\x1f\\x7f]+$",
 });
-const ExtensionsField = Type.With(
-  Type.Array(
-    Type.Union([
-      ExtensionSourceString,
-      Type.Object(
-        {
-          source: ExtensionSourceString,
-          extensions: Type.Array(ExtensionSourceString, { uniqueItems: true }),
-        },
-        { additionalProperties: true },
-      ),
-    ]),
-    { uniqueItems: true },
+const WorkerExtensionSourceSchema = Type.Union([
+  ExtensionSourceString,
+  Type.Object(
+    {
+      source: ExtensionSourceString,
+      extensions: Type.Array(ExtensionSourceString, { uniqueItems: true }),
+    },
+    { additionalProperties: true },
   ),
+]);
+export type WorkerExtensionSource = Static<typeof WorkerExtensionSourceSchema>;
+const ExtensionsField = Type.With(
+  Type.Array(WorkerExtensionSourceSchema, { uniqueItems: true }),
   { description: "must be a valid extension source list" },
 );
 

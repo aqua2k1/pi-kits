@@ -42,7 +42,6 @@
   "workspaces": [
     "extensions/*",
     "shared",
-    "shared/config",
     "themes"
   ],
   "scripts": {

@@ -1,5 +1,4 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { readPiKitsConfig } from "@pi-kits/config";
 import {
   DOCKED_PANEL_CLOSED,
   DOCKED_PANEL_OPENED,
@@ -26,9 +25,6 @@ import {
 } from "./events.ts";
 
 export default function askUserQuestionExtension(pi: ExtensionAPI): void {
-  const config = readPiKitsConfig()["pi-ask"];
-  if (!config.enabled) return;
-
   pi.registerTool({
     name: "ask_user_question",
     namespace: {

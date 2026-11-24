@@ -36,24 +36,8 @@ Alt+P
 
 预览用编辑器的 `-R` 参数打开临时 Markdown 文件，不回写会话；退出后清理临时文件，缺少编辑器或启动失败时显示错误。
 
-## 配置
+## 环境变量
 
-位置：`<agent-dir>/pi-kits.json`；修改后在 Pi 输入 `/reload` 生效。
-
-| 键 | 类型 | 默认值 | 说明 |
-|---|---|---|---|
-| `pi-output-viewer.enabled` | boolean | `true` | 注册命令和快捷键 |
-| `pi-output-viewer.editor` | string | `"nvim"` | 编辑器可执行文件名或路径，含非空白字符；须接受 `-R` 参数 |
-
-```json
-{
-  "pi-output-viewer": { "enabled": true, "editor": "<编辑器可执行文件>" }
-}
-```
-
-将编辑器占位值替换为实际可执行文件；配置缺省时使用 `nvim`。
-
-## 文档
-
-- [共享配置与迁移说明](../../shared/config/README.md)
-- [配置校验规则](../../pi-kits.schema.json)
+| 变量 | 默认值 | 说明 |
+|---|---|---|
+| `EDITOR` | `nvim` | 编辑器可执行文件名或路径，须接受 `-R` 参数 |

@@ -17,7 +17,6 @@
     "test": "node --import tsx --test *.test.ts"
   },
   "dependencies": {
-    "@pi-kits/config": "*",
     "@pi-kits/shared": "*"
   },
   "peerDependencies": {

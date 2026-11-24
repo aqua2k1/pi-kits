@@ -100,8 +100,8 @@ function registrations() {
   };
 }
 
-test("subagent registers two tools everywhere by default (falling back to subprocess) and respects disabled/worker guards", (t) => {
-  useAgentDir(t, {});
+test("subagent registers two tools everywhere by default (falling back to subprocess) and respects worker guard", (t) => {
+  useAgentDir(t);
   environment(t, {
     HC_TERMINAL_ID: undefined,
     PI_KITS_SUBAGENT_WORKER: undefined,
@@ -117,13 +117,6 @@ test("subagent registers two tools everywhere by default (falling back to subpro
   const worker = registrations();
   subagentExtension(worker.pi);
   assert.deepEqual(worker.tools, []);
-
-  // Disabled config guard
-  useAgentDir(t, { "pi-subagent": { enabled: false } });
-  environment(t, { PI_KITS_SUBAGENT_WORKER: undefined });
-  const disabled = registrations();
-  subagentExtension(disabled.pi);
-  assert.deepEqual(disabled.tools, []);
 });
 
 test("both tools share the pi-subagent namespace and dynamically surface configured agents", async (t) => {

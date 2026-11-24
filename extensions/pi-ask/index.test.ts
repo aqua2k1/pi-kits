@@ -37,8 +37,8 @@ type LifecycleEvent =
   | DockedPanelOpenedEvent
   | DockedPanelClosedEvent;
 
-function capture(t: TestContext, config?: unknown) {
-  useAgentDir(t, config);
+function capture(t: TestContext) {
+  useAgentDir(t);
   let tool: ToolDefinition<typeof AskUserParameters, AskUserResult> | undefined;
   let handler: ((event: unknown, ctx: ExtensionContext) => void) | undefined;
   let active = ["read", "ask_user_question"];
@@ -120,21 +120,6 @@ test("schemas describe the contract while model guidance focuses on purpose", (t
     /terminal|\bUI\b|fullscreen|\bRPC\b|checkbox|buttons|Left\/Right|\bSpace\b/i,
   );
   assert.doesNotMatch(guidance, /cancelled|cancellation|partial|approval/i);
-});
-
-test("factory ignores old keys and respects only the canonical switch", (t) => {
-  for (const config of [
-    { workflow: { enabled: false } },
-    { workflow: { askUserQuestion: { enabled: false } } },
-    { askUserQuestion: { enabled: false } },
-  ]) {
-    const captured = capture(t, config);
-    assert.ok(captured.tool);
-    assert.ok(captured.handler);
-  }
-  const disabled = capture(t, { "pi-ask": { enabled: false } });
-  assert.equal(disabled.tool, undefined);
-  assert.equal(disabled.handler, undefined);
 });
 
 test("tool rejects no UI and executes in an RPC-style dialog host", async (t) => {
@@ -277,78 +262,67 @@ test("no UI or pre-aborted calls do not emit hooks or notify", async (t) => {
   assert.deepEqual(notifications, []);
 });
 
-for (const [enabled, legacy] of [
-  [true, true],
-  [false, true],
-  [true, false],
-  [false, false],
-] as const) {
-  test(`TUI questions emit hooks without desktop notifications with notify.enabled=${enabled} (${legacy ? "legacy" : "top-level"})`, async (t) => {
-    const settings = { notify: { enabled } };
-    const { tool, events } = capture(
-      t,
-      legacy ? { workflow: settings } : settings,
-    );
-    assert.ok(tool);
-    const notifications = interceptNotifications(t);
-    const ctx = {
-      hasUI: true,
-      mode: "tui",
-      ui: {
-        async custom(factory: Parameters<ExtensionUIContext["custom"]>[0]) {
-          assert.equal(events[0]?.name, ASK_USER_QUESTION_START);
-          assert.equal(events.length, 1);
-          assert.deepEqual(notifications, []);
-          let result: unknown;
-          const component = await factory(
-            {
-              terminal: { rows: 24 },
-              requestRender() {},
-            } as unknown as TUI,
-            { fg: (_color: string, text: string) => text } as Theme,
-            getKeybindings() as Parameters<typeof factory>[2],
-            (value) => {
-              result = value;
-            },
-          );
-          component.handleInput?.("\u001b");
-          component.dispose?.();
-          return result;
-        },
+test("TUI questions emit hooks without desktop notifications", async (t) => {
+  const { tool, events } = capture(t);
+  assert.ok(tool);
+  const notifications = interceptNotifications(t);
+  const ctx = {
+    hasUI: true,
+    mode: "tui",
+    ui: {
+      async custom(factory: Parameters<ExtensionUIContext["custom"]>[0]) {
+        assert.equal(events[0]?.name, ASK_USER_QUESTION_START);
+        assert.equal(events.length, 1);
+        assert.deepEqual(notifications, []);
+        let result: unknown;
+        const component = await factory(
+          {
+            terminal: { rows: 24 },
+            requestRender() {},
+          } as unknown as TUI,
+          { fg: (_color: string, text: string) => text } as Theme,
+          getKeybindings() as Parameters<typeof factory>[2],
+          (value) => {
+            result = value;
+          },
+        );
+        component.handleInput?.("\u001b");
+        component.dispose?.();
+        return result;
       },
-    } as unknown as ExtensionToolContext;
-    const response = await tool.execute(
-      "id",
-      questions,
-      undefined,
-      undefined,
-      ctx,
-    );
-    assert.equal(response.details.cancelled, true);
-    assert.deepEqual(
-      events.map((event) => event.name),
-      [
-        ASK_USER_QUESTION_START,
-        DOCKED_PANEL_OPENED,
-        DOCKED_PANEL_CLOSED,
-        ASK_USER_QUESTION_END,
-      ],
-    );
-    assert.deepEqual(events[1], {
-      name: DOCKED_PANEL_OPENED,
-      data: { panelId: "ask-user-question", instanceId: "id" },
-    });
-    assert.deepEqual(events[2], {
-      name: DOCKED_PANEL_CLOSED,
-      data: {
-        panelId: "ask-user-question",
-        instanceId: "id",
-        status: "cancelled",
-      },
-    });
-    assert.deepEqual(notifications, []);
+    },
+  } as unknown as ExtensionToolContext;
+  const response = await tool.execute(
+    "id",
+    questions,
+    undefined,
+    undefined,
+    ctx,
+  );
+  assert.equal(response.details.cancelled, true);
+  assert.deepEqual(
+    events.map((event) => event.name),
+    [
+      ASK_USER_QUESTION_START,
+      DOCKED_PANEL_OPENED,
+      DOCKED_PANEL_CLOSED,
+      ASK_USER_QUESTION_END,
+    ],
+  );
+  assert.deepEqual(events[1], {
+    name: DOCKED_PANEL_OPENED,
+    data: { panelId: "ask-user-question", instanceId: "id" },
   });
-}
+  assert.deepEqual(events[2], {
+    name: DOCKED_PANEL_CLOSED,
+    data: {
+      panelId: "ask-user-question",
+      instanceId: "id",
+      status: "cancelled",
+    },
+  });
+  assert.deepEqual(notifications, []);
+});
 
 test("RPC questions emit hooks without desktop notifications", async (t) => {
   const { tool, events } = capture(t);

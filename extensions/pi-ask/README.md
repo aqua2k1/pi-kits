@@ -23,5 +23,4 @@ pi install https://github.com/aqua2k1/pi-kits.git
 ## 文档
 
 - [使用](docs/usage.md)
-- [配置](docs/configuration.md)
 - [架构](docs/architecture.md)

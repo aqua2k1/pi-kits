@@ -1,7 +1,6 @@
 import assert from "node:assert/strict";
 import { once } from "node:events";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { createServer } from "node:net";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { test } from "node:test";
@@ -15,42 +14,8 @@ import {
   SettingsManager,
 } from "@earendil-works/pi-coding-agent";
 import { WebSocket } from "ws";
-import { useAgentDir } from "../../../tests/helpers/agent-dir.ts";
 import { InsertBlocksToolParams } from "../core/model.ts";
 import canvasNote from "../index.ts";
-
-test("canonical switch disables canvas tools, command and lifecycle handlers", (t) => {
-  useAgentDir(t, { "pi-canvas-note": { enabled: false } });
-  const unexpected = () =>
-    assert.fail("Disabled canvas must not register handlers");
-  canvasNote({
-    registerTool: unexpected,
-    registerCommand: unexpected,
-    on: unexpected,
-  } as unknown as ExtensionAPI);
-});
-
-for (const config of [
-  { "canvas-note": { enabled: false } },
-  { "canvas-note": { enabled: false }, "pi-canvas-note": {} },
-]) {
-  test(`old canvas switch is ignored: ${JSON.stringify(config)}`, (t) => {
-    useAgentDir(t, config);
-    const tools: string[] = [];
-    const commands: string[] = [];
-    canvasNote({
-      registerTool(tool: { name: string }) {
-        tools.push(tool.name);
-      },
-      registerCommand(name: string) {
-        commands.push(name);
-      },
-      on() {},
-    } as unknown as ExtensionAPI);
-    assert.equal(tools.length, 4);
-    assert.deepEqual(commands, ["canvas-note-server"]);
-  });
-}
 
 test("extension registers four tools and the server command; real handlers lazily serve and route browser feedback", async (t) => {
   const agentDir = await mkdtemp(join(tmpdir(), "canvas-note-extension-"));
@@ -61,20 +26,6 @@ test("extension registers four tools and the server command; real handlers lazil
     else process.env.PI_CODING_AGENT_DIR = original;
     await rm(agentDir, { recursive: true, force: true });
   });
-  const portProbe = createServer();
-  await new Promise<void>((resolve) =>
-    portProbe.listen(0, "127.0.0.1", resolve),
-  );
-  const address = portProbe.address();
-  assert.ok(address && typeof address !== "string");
-  const port = address.port;
-  // Other parallel tests may claim the probe port after it is released.
-  const maximumPort = Math.min(port + 32, 65535);
-  await new Promise<void>((resolve) => portProbe.close(() => resolve()));
-  await writeFile(
-    join(agentDir, "pi-kits.json"),
-    JSON.stringify({ "pi-canvas-note": { portRange: [port, maximumPort] } }),
-  );
   type Tool = {
     name: string;
     exposure: string;
@@ -165,7 +116,6 @@ test("extension registers four tools and the server command; real handlers lazil
     basename(dirname(String(page.documentPath))),
     /^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}Z-[0-9a-f-]{36}$/,
   );
-  await assert.rejects(fetch(`http://127.0.0.1:${port}`));
   const inserted = await call("insert_blocks", {
     pageId: page.pageId,
     blocks: [
@@ -174,7 +124,7 @@ test("extension registers four tools and the server command; real handlers lazil
     ],
   });
   const servedPort = Number(new URL(String(inserted.url)).port);
-  assert.ok(servedPort >= port && servedPort <= maximumPort);
+  assert.ok(servedPort >= 10_000 && servedPort <= 20_000);
   assert.equal((await fetch(String(inserted.url))).status, 200);
   assert.equal(statuses.get("canvas-note"), `Canvas Note: ${inserted.url}`);
   const ws = new WebSocket(
@@ -322,19 +272,6 @@ test("real Pi SDK loads Canvas Note and dispatches its lifecycle and tools", asy
     else process.env.PI_CODING_AGENT_DIR = original;
     await rm(dir, { recursive: true, force: true });
   });
-  const probe = createServer();
-  await new Promise<void>((resolve) => probe.listen(0, "127.0.0.1", resolve));
-  const address = probe.address();
-  assert.ok(address && typeof address !== "string");
-  await new Promise<void>((resolve) => probe.close(() => resolve()));
-  await writeFile(
-    join(dir, "pi-kits.json"),
-    JSON.stringify({
-      "pi-canvas-note": {
-        portRange: [address.port, Math.min(address.port + 32, 65535)],
-      },
-    }),
-  );
   const settingsManager = SettingsManager.inMemory();
   const resourceLoader = new DefaultResourceLoader({
     cwd: dir,
@@ -379,7 +316,6 @@ test("real Pi SDK loads Canvas Note and dispatches its lifecycle and tools", asy
     undefined,
     ctx,
   );
-  await assert.rejects(fetch(`http://127.0.0.1:${address.port}`));
   assert.deepEqual(insert.parameters, InsertBlocksToolParams);
   const documentPath = (
     pageResult.structuredContent as { documentPath: string }
@@ -401,7 +337,6 @@ test("real Pi SDK loads Canvas Note and dispatches its lifecycle and tools", asy
     /Invalid insert_blocks parameters/,
   );
   assert.equal(await readFile(documentPath, "utf8"), beforeInvalid);
-  await assert.rejects(fetch(`http://127.0.0.1:${address.port}`));
   const result = await insert.execute(
     "sdk-insert",
     { blocks: [{ type: "text", spec: { md: "**Real Pi SDK**" } }] },
@@ -448,7 +383,7 @@ test("real Pi SDK loads Canvas Note and dispatches its lifecycle and tools", asy
   assert.ok(session.extensionRunner.getCommand("canvas-note-server"));
   const beforeCommand = await readFile(originalPath, "utf8");
   await session.prompt("/canvas-note-server");
-  assert.equal((await fetch(`http://127.0.0.1:${address.port}`)).status, 200);
+  assert.equal((await fetch(url)).status, 200);
   assert.equal(await readFile(originalPath, "utf8"), beforeCommand);
 });
 
