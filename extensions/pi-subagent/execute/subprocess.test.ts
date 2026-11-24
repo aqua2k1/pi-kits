@@ -73,8 +73,6 @@ test("subprocess executor runs real process over stdio RPC and reads persisted s
   const snapshot = readSessionSnapshot(sessionFile);
   assert.equal(snapshot.text, "Found 2 issues");
   assert.equal(snapshot.model, "openai/gpt-5");
-  assert.equal(snapshot.stats?.toolUses, 1);
-  assert.equal(snapshot.stats?.totalTokens, 15);
 
   // End-to-end stateless subprocess lifecycle with a minimal node echo script
   const executor = createSubprocessExecutor({ env: process.env });

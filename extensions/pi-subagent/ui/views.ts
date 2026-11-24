@@ -23,7 +23,7 @@ import {
   type AgentSource,
   agentDisplayStatus,
   agentHeader,
-  agentStats,
+  duration,
   oneLine,
 } from "./presentation.ts";
 
@@ -195,8 +195,8 @@ export function createSubagentViewsPanel(
 
     const activity =
       agent.sessionState === "interactive"
-        ? "User interaction"
-        : agentStats(agent);
+        ? oneLine(agent.sessionActivity ?? "User interaction")
+        : duration(agent);
     return `${agent.id} · ${agentDisplayStatus(agent)} · ${activity}`;
   };
 

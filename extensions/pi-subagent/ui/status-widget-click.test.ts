@@ -15,7 +15,6 @@ function agent(id: string): AgentSnapshot {
     status: "running",
     supportsView: true,
     terminalId: `terminal-${id}`,
-    activity: "read",
   };
 }
 
@@ -80,6 +79,7 @@ test("widget only opens title rows when supportsView is enabled and terminalId e
   ]);
   h.renderer.render(80);
   h.mouse(4, 1);
+  h.mouse(4, 2);
   h.mouse(4, 3);
   assert.deepEqual(opened, ["one"]);
   h.widget.dispose();

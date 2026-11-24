@@ -8,6 +8,7 @@ import { parseAgentDefinition } from "./config.ts";
 import {
   type AgentExecutionState,
   defineExecutor,
+  ExecutorError,
   type InspectResult,
   type ReadResult,
   type StartOptions,
@@ -16,7 +17,7 @@ import { createSubagentManager } from "./manager.ts";
 
 export interface TurnDriver {
   alive: boolean;
-  state: AgentExecutionState;
+  state?: AgentExecutionState;
   message?: string;
   resultText: string;
   errorText?: string;
@@ -67,6 +68,18 @@ export function createTestExecutor(supportsView = true) {
     inspect: async (terminal) => statusOf(getDriver(terminal.id)),
     async send(terminal, text, sendOpts) {
       const d = getDriver(terminal.id);
+      if (!d.alive) {
+        throw new ExecutorError("finished", `${terminal.id} is not live`);
+      }
+      if (d.state === "blocked") {
+        throw new ExecutorError("blocked", `${terminal.id} is blocked`);
+      }
+      if (sendOpts?.if && d.state !== sendOpts.if) {
+        throw new ExecutorError(
+          "status_mismatch",
+          `${terminal.id} is ${d.state ?? "unknown"}, not ${sendOpts.if}`,
+        );
+      }
       d.state = "working";
       commands.get(terminal.id)?.push({
         type: sendOpts?.if === "working" ? "steer" : "task",
@@ -136,6 +149,14 @@ export function createTestExecutor(supportsView = true) {
       const d = getDriver(id);
       d.state = "blocked";
       d.message = message;
+    },
+    setState(id: string, state: AgentExecutionState | undefined) {
+      const d = getDriver(id);
+      d.state = state;
+    },
+    checkIn(id: string) {
+      const d = getDriver(id);
+      d.wake?.();
     },
   };
 }
@@ -412,4 +433,102 @@ test("unexpected worker exit retains the slot until cleanup succeeds; stop retri
   await until(() => h.commands.get(next.id)?.length === 1);
   assert.equal(manager.get(first.id).status, "stopped");
   assert.deepEqual(h.destroyed, [first.id]);
+});
+
+test("hot resume works from error state and cold start works before OSC status is reported", async (t) => {
+  useAgentDir(t);
+  const exec = createTestExecutor();
+  const baseStart = exec.executor.start.bind(exec.executor);
+  exec.executor.start = async (opts) => {
+    const handle = await baseStart(opts);
+    // Simulate a freshly spawned terminal that has not emitted OSC 7501 yet
+    exec.setState(opts.agentId, undefined);
+    return handle;
+  };
+  const manager = createSubagentManager(exec.executor, {
+    extensionAllowlist: [],
+  });
+  t.after(() => manager.close());
+
+  const agent = manager.spawn(task);
+  await until(() => exec.commands.get(agent.id)?.length === 1);
+
+  exec.complete(agent.id, "", { error: "Tool failed" });
+  await until(() => manager.get(agent.id).status === "error");
+  assert.equal(exec.destroyed.length, 0);
+
+  // Hot resume from error state reuses the live terminal without status_mismatch
+  await manager.send(agent.id, { prompt: "Retry after error" });
+  await until(() => exec.commands.get(agent.id)?.length === 2);
+  assert.equal(exec.started.length, 1);
+
+  exec.complete(agent.id, "Recovered");
+  await until(() => manager.get(agent.id).status === "completed");
+  assert.equal(manager.get(agent.id).result, "Recovered");
+});
+
+test("steer enforces working state and rejects with status_mismatch if terminal already finished", async (t) => {
+  useAgentDir(t);
+  const exec = createTestExecutor();
+  const manager = createSubagentManager(exec.executor, {
+    extensionAllowlist: [],
+  });
+  t.after(() => manager.close());
+
+  const agent = manager.spawn(task);
+  await until(() => exec.commands.get(agent.id)?.length === 1);
+
+  // Terminal flipped to done before wait() settled the turn in manager
+  exec.setState(agent.id, "done");
+  await assert.rejects(
+    manager.send(agent.id, { prompt: "Too late to steer" }),
+    (err: unknown) =>
+      err instanceof ExecutorError && err.code === "status_mismatch",
+  );
+  assert.equal(exec.commands.get(agent.id)?.length, 1);
+
+  exec.complete(agent.id, "Round 1");
+  await until(() => manager.get(agent.id).status === "completed");
+});
+
+test("resume rejects when native terminal is blocked for user interaction", async (t) => {
+  useAgentDir(t);
+  const exec = createTestExecutor();
+  const manager = createSubagentManager(exec.executor, {
+    extensionAllowlist: [],
+  });
+  t.after(() => manager.close());
+
+  const agent = manager.spawn(task);
+  await until(() => exec.commands.get(agent.id)?.length === 1);
+  exec.complete(agent.id, "Round 1");
+  await until(() => manager.get(agent.id).status === "completed");
+
+  exec.setBlocked(agent.id, "Permission prompt");
+  await assert.rejects(
+    manager.send(agent.id, { prompt: "Round 2" }),
+    /Resume requires an idle session/,
+  );
+  assert.equal(exec.commands.get(agent.id)?.length, 1);
+});
+
+test("executeTurn keeps waiting when executor.wait returns early working check-in", async (t) => {
+  useAgentDir(t);
+  const exec = createTestExecutor();
+  const manager = createSubagentManager(exec.executor, {
+    extensionAllowlist: [],
+  });
+  t.after(() => manager.close());
+
+  const agent = manager.spawn(task);
+  await until(() => exec.commands.get(agent.id)?.length === 1);
+
+  // Simulate Herdr 180s timeout / message check-in while worker is still working
+  exec.checkIn(agent.id);
+  await delay(15);
+  assert.equal(manager.get(agent.id).status, "running");
+
+  exec.complete(agent.id, "Finished after check-in");
+  await until(() => manager.get(agent.id).status === "completed");
+  assert.equal(manager.get(agent.id).result, "Finished after check-in");
 });

@@ -35,8 +35,6 @@ const snapshot: AgentSnapshot = Object.freeze({
   model: "provider/model-id",
   sessionPath: "/private/session.jsonl",
   createdAt: 1791090566583,
-  turnCount: 2,
-  toolUses: 2,
   result: 'Script completed\nOutput:\n{"packageName":"pi-kits"}',
 });
 function render(

@@ -1,10 +1,6 @@
 import type { Theme } from "@earendil-works/pi-coding-agent";
 import { oneLine } from "../../../shared/ui/renderers.ts";
-import {
-  renderTree,
-  TREE_DETAIL_MARKER,
-  type TreeNode,
-} from "../../../shared/ui/tree.ts";
+import { renderTree, type TreeNode } from "../../../shared/ui/tree.ts";
 import {
   renderWidgetFrame,
   widgetContentBounds,
@@ -61,18 +57,6 @@ export function duration(agent: AgentSnapshot, now = Date.now()): string {
     : `${Math.floor(seconds / 60)}m${Math.floor(seconds % 60)}s`;
 }
 
-export function agentStats(agent: AgentSnapshot, now = Date.now()): string {
-  const tokens = agent.totalTokens ?? 0;
-  const count = tokens < 1000 ? `${tokens}` : `${(tokens / 1000).toFixed(1)}k`;
-  const context =
-    agent.contextPercent === undefined
-      ? ""
-      : `${Math.round(agent.contextPercent)}%`;
-  const compaction = agent.compactionCount ? `↻${agent.compactionCount}` : "";
-  const signals = [context, compaction].filter(Boolean).join(" · ");
-  return `⟳${agent.turnCount ?? 0} · ${agent.toolUses ?? 0} tools · ${count} tokens${signals ? ` (${signals})` : ""} · ${duration(agent, now)}`;
-}
-
 export function statusIcon(agent: AgentSnapshot, theme: Theme, now: number) {
   if (agent.sessionState === "disconnected") return theme.fg("error", "✗");
   if (isDisplayActive(agent)) {
@@ -117,21 +101,15 @@ export function layoutAgentWidget(
   // Bounded height; active agents take priority over retained finished rows.
   const nodes: TreeNode<string>[] = active.slice(0, 4).map((agent) => {
     const interactive = agent.sessionState === "interactive";
+    const suffix = interactive
+      ? oneLine(agent.sessionActivity ?? "User interaction")
+      : duration(agent, now);
     return {
-      content: agentHeader(agent, theme, now),
+      content: `${agentHeader(agent, theme, now)} · ${suffix}`,
       data: agent.id,
-      children: [
-        {
-          marker: TREE_DETAIL_MARKER,
-          content: theme.fg(
-            "muted",
-            `${oneLine(interactive ? (agent.sessionActivity ?? "User interaction") : (agent.activity ?? agent.status))}${interactive ? "" : ` · ${agentStats(agent, now)}`}`,
-          ),
-        },
-      ],
     };
   });
-  let rowCount = nodes.length * 2;
+  let rowCount = nodes.length;
   if (active.length > 4) {
     nodes.push({
       content: theme.fg("dim", `${active.length - 4} more active`),
@@ -146,7 +124,7 @@ export function layoutAgentWidget(
   if (remaining) {
     nodes.push(
       ...finished.slice(-remaining).map((agent) => ({
-        content: `${agentHeader(agent, theme, now)} · ${agentStats(agent, now)}`,
+        content: `${agentHeader(agent, theme, now)} · ${duration(agent, now)}`,
         data: agent.id,
       })),
     );

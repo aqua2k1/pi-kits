@@ -76,14 +76,6 @@ export interface WaitOptions {
   timeoutMs?: number;
 }
 
-export interface ReadStats {
-  turnCount: number;
-  toolUses: number;
-  totalTokens: number;
-  compactionCount: number;
-  contextPercent?: number;
-}
-
 export interface ReadResult {
   text: string;
   error?: string;
@@ -91,7 +83,6 @@ export interface ReadResult {
   truncated?: boolean;
   model?: string;
   sessionPath?: string;
-  stats?: ReadStats;
 }
 
 /** Stateless executor contract: every method is a pure operator over value handles. */
@@ -158,30 +149,16 @@ export function readSessionSnapshot(sessionPath?: string): ReadResult {
       }
     }
 
-    let turnCount = 0;
-    let toolUses = 0;
-    let totalTokens = 0;
-    let compactionCount = 0;
     let text = "";
     let truncated = false;
     let error: string | undefined;
     let aborted = false;
 
     for (const entry of branch.slice(lastUserIdx + 1)) {
-      if (entry.type === "compaction") {
-        compactionCount += 1;
-        continue;
-      }
       if (entry.type !== "message" || entry.message.role !== "assistant") {
         continue;
       }
       const msg = entry.message;
-      turnCount += 1;
-      const u = msg.usage;
-      totalTokens += (u?.input ?? 0) + (u?.output ?? 0) + (u?.cacheWrite ?? 0);
-      if (Array.isArray(msg.content)) {
-        toolUses += msg.content.filter((b) => b.type === "toolCall").length;
-      }
       const rawText = Array.isArray(msg.content)
         ? msg.content
             .filter((b) => b.type === "text")
@@ -207,7 +184,6 @@ export function readSessionSnapshot(sessionPath?: string): ReadResult {
       ...(truncated ? { truncated: true } : {}),
       ...(model ? { model } : {}),
       sessionPath,
-      stats: { turnCount, toolUses, totalTokens, compactionCount },
     };
   } catch {
     return { text: "", sessionPath };

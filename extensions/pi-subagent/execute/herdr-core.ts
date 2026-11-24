@@ -294,7 +294,11 @@ export function createHerdrCoreExecutor(
         Math.max(15_000, (waitOpts?.timeoutMs ?? 180_000) + 5_000),
       );
       if (res.reason === "exit") return { alive: false };
-      const state = isExecutionState(res.status) ? res.status : undefined;
+      const state = isExecutionState(res.status)
+        ? res.status
+        : res.reason === "timeout" || res.reason === "message"
+          ? "working"
+          : undefined;
       if (state === "error" || state === "blocked") {
         return parseHerdrTerminalStatus(await getTerminalInfo(terminal.id));
       }

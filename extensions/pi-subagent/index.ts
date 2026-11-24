@@ -55,7 +55,6 @@ function toolResult(snapshot: AgentSnapshot) {
     status: snapshot.status,
     ...(snapshot.round !== undefined ? { round: snapshot.round } : {}),
     ...(snapshot.sessionState ? { sessionState: snapshot.sessionState } : {}),
-    ...(snapshot.activity ? { activity: snapshot.activity } : {}),
     ...(snapshot.sessionActivity
       ? { sessionActivity: snapshot.sessionActivity }
       : {}),

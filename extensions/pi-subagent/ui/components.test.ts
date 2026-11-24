@@ -61,10 +61,6 @@ function agent(
     supportsView: true,
     terminalId: `terminal-${id}`,
     startedAt: 1_000,
-    turnCount: 3,
-    toolUses: 2,
-    totalTokens: 1234,
-    activity: "read",
   };
 }
 
@@ -186,7 +182,7 @@ test("docked panel is half-height and width safe at narrow/short sizes", () => {
     {
       ...agent(),
       description: "中文🙂".repeat(50),
-      activity: "read\n\x1b[31m",
+      sessionActivity: "Waiting\n\x1b[31m",
     },
   ];
   for (const rows of [2, 4, 6, 10, 14, 24]) {
@@ -262,9 +258,22 @@ test("status widget stays above editor while working and expires completed rows"
     repeat: () => () => {},
   });
   widget.bind(ui);
-  source.update([agent("sub-1", "running")]);
+  source.update([
+    agent("sub-1", "running"),
+    {
+      ...agent("sub-2", "completed"),
+      sessionState: "interactive",
+      sessionActivity: "Waiting for permission",
+    },
+  ]);
   assert.ok(renderer);
-  assert.equal(statuses.at(-1), "Subagents: 1 active");
+  const rendered = renderer.render(120).join("\n");
+  assert.match(rendered, /sub-1 · running · 1\.0s/);
+  assert.match(
+    rendered,
+    /sub-2 · completed · interactive · Waiting for permission/,
+  );
+  assert.equal(statuses.at(-1), "Subagents: 1 active · 1 interactive");
   source.update([{ ...agent("sub-1", "completed"), completedAt: 2_000 }]);
   now = 8_000;
   widget.refresh();

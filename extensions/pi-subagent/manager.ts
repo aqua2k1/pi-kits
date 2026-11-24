@@ -115,7 +115,6 @@ export interface AgentSnapshot {
   result?: string;
   resultRevision?: number;
   error?: string;
-  activity?: string;
   sessionPath?: string;
   terminalId?: string;
   viewId?: string;
@@ -123,11 +122,6 @@ export interface AgentSnapshot {
   createdAt?: number;
   startedAt?: number;
   completedAt?: number;
-  turnCount?: number;
-  toolUses?: number;
-  totalTokens?: number;
-  contextPercent?: number;
-  compactionCount?: number;
   hint?: string;
 }
 
@@ -212,14 +206,6 @@ export interface SubagentManager {
 // ECS / Data-Driven Entity & Component Model (Zero Stored State Enums)
 // ============================================================================
 
-interface StatsData {
-  turnCount: number;
-  toolUses: number;
-  totalTokens: number;
-  compactionCount: number;
-  contextPercent?: number;
-}
-
 interface ReplyData {
   text: string;
   revision: number;
@@ -247,8 +233,6 @@ interface TurnComponent {
   dispatched: boolean;
   canceling: boolean;
   cancelTimer?: ReturnType<typeof setTimeout>;
-  activity?: string;
-  stats: StatsData;
   waiters: number;
   readonly completion: Promise<AgentSnapshot>;
   readonly resolve: (snapshot: AgentSnapshot) => void;
@@ -262,7 +246,6 @@ interface SettledComponent {
   readonly createdAt: number;
   readonly startedAt?: number;
   readonly completedAt: number;
-  readonly stats: StatsData;
   consumed: boolean;
   notified: boolean;
 }
@@ -313,13 +296,6 @@ function deriveSnapshot(
 ): AgentSnapshot {
   const status = deriveStatus(e);
   const sessionState = deriveSessionState(e);
-  const activeStats = e.turn?.stats ??
-    e.settled?.stats ?? {
-      turnCount: 0,
-      toolUses: 0,
-      totalTokens: 0,
-      compactionCount: 0,
-    };
   const snap: AgentSnapshot = {
     id: e.id,
     description: e.description,
@@ -357,18 +333,12 @@ function deriveSnapshot(
       : !e.turn && e.settled?.error
         ? { error: e.settled.error }
         : {}),
-    ...(e.turn?.activity ? { activity: e.turn.activity } : {}),
     ...(e.sessionPath ? { sessionPath: e.sessionPath } : {}),
     terminalId: sessionState === "closed" ? undefined : e.worker?.terminal?.id,
     viewId: e.worker?.view?.id,
     createdAt: e.turn?.createdAt ?? e.settled?.createdAt,
     startedAt: e.turn?.startedAt ?? e.settled?.startedAt,
     completedAt: e.turn ? undefined : e.settled?.completedAt,
-    turnCount: activeStats.turnCount,
-    toolUses: activeStats.toolUses,
-    totalTokens: activeStats.totalTokens,
-    contextPercent: activeStats.contextPercent,
-    compactionCount: activeStats.compactionCount,
   };
   snap.hint = buildNextHint(snap);
   return snap;
@@ -485,7 +455,6 @@ function createTurnComponent(
     createdAt: now,
     dispatched: false,
     canceling: false,
-    stats: { turnCount: 0, toolUses: 0, totalTokens: 0, compactionCount: 0 },
     waiters: 0,
     completion,
     resolve,
@@ -574,7 +543,6 @@ export function createSubagentManager(
       createdAt: turn.createdAt,
       startedAt: turn.startedAt,
       completedAt: Date.now(),
-      stats: turn.stats,
       consumed: turn.waiters > 0,
       notified: false,
     };
@@ -667,16 +635,9 @@ export function createSubagentManager(
     };
   };
 
-  const applyReadResult = (
-    e: SubagentEntity,
-    turn: TurnComponent | undefined,
-    readRes: ReadResult,
-  ): void => {
+  const applyReadResult = (e: SubagentEntity, readRes: ReadResult): void => {
     if (readRes.sessionPath) e.sessionPath = readRes.sessionPath;
     if (validText(readRes.model)) e.model = readRes.model;
-    if (readRes.stats && turn) {
-      turn.stats = { ...turn.stats, ...readRes.stats };
-    }
     applyReply(e, readRes.text, readRes.truncated === true);
   };
 
@@ -757,13 +718,21 @@ export function createSubagentManager(
       }
 
       turn.dispatched = true;
-      turn.activity = "Thinking…";
       changed();
 
-      await executor.send(terminal, turn.prompt, { if: "idle" });
+      await executor.send(terminal, turn.prompt);
       if (e.turn !== turn || disposed) return;
 
-      const settledStatus = await executor.wait(terminal);
+      let settledStatus = await executor.wait(terminal);
+      while (
+        settledStatus.alive &&
+        settledStatus.state === "working" &&
+        e.turn === turn &&
+        e.worker?.terminal === terminal &&
+        !disposed
+      ) {
+        settledStatus = await executor.wait(terminal);
+      }
       if (e.turn !== turn || e.worker?.terminal !== terminal) return;
       syncInspectState(e, settledStatus);
 
@@ -777,7 +746,7 @@ export function createSubagentManager(
 
       const readRes = await executor.read(terminal);
       if (e.turn !== turn || e.worker?.terminal !== terminal) return;
-      applyReadResult(e, turn, readRes);
+      applyReadResult(e, readRes);
 
       if (turn.canceling || readRes.aborted) {
         settleTurn(e, "stopped");
