@@ -28,7 +28,6 @@ const keys = [
   "pi-output-viewer",
   "pi-ask",
   "pi-subagent",
-  "pi-web-kits",
 ] as const;
 
 function invalid(raw: unknown) {
@@ -69,22 +68,6 @@ test("absent config uses defaults without creating a file", (t) => {
     maxConcurrent: 4,
     extensionAllowlist: [...SUBAGENT_DEFAULT_EXTENSIONS],
   });
-  const web = config["pi-web-kits"];
-  assert.deepEqual(web.search.sources, {
-    web: {
-      enabled: true,
-      routing: ["searxng"],
-      codex: { model: "gpt-6-luna" },
-    },
-    github: { enabled: true },
-  });
-  assert.equal(web.search.timeoutMs, 15000);
-  assert.equal(web.search.maxResults, 5);
-  assert.deepEqual(web.fetch, {
-    enabled: true,
-    timeoutMs: 15000,
-    github: { enabled: true },
-  });
   assert.equal(readPiKitsFile(dir), undefined);
 });
 
@@ -109,6 +92,7 @@ test("removed aliases, archived settings and groups stay raw but never affect se
     subagent: { maxConcurrent: 1 },
     "canvas-note": { portRange: [20000, 10000] },
     "web-kits": { enabled: false, search: { maxResults: 0 } },
+    "pi-web-kits": { enabled: false, search: { maxResults: 0 } },
     workspace: { enabled: false },
     workflow: { enabled: false },
     usage: { enabled: false },
@@ -170,7 +154,12 @@ test("worker allowlists replace defaults and isolate package selections", () => 
     [],
     ["builtin:mcp", "/trusted/custom.ts"],
     ["npm:@narumitw/pi-chrome-devtools", "git:github.com/example/tools"],
-    [{ source: "git:github.com/aqua2k1/pi-kits", extensions: ["pi-web-kits"] }],
+    [
+      {
+        source: "git:github.com/aqua2k1/pi-kits",
+        extensions: ["pi-server-tools"],
+      },
+    ],
     [{ source: "package", extensions: [] }],
   ]) {
     const raw = parsePiKitsFile(
@@ -197,7 +186,7 @@ test("worker allowlists replace defaults and isolate package selections", () => 
     ["x\n"],
     [{ source: "x" }],
     [{ source: "x", extensions: [""] }],
-    [{ source: "x", extensions: ["pi-web-kits", "pi-web-kits"] }],
+    [{ source: "x", extensions: ["pi-server-tools", "pi-server-tools"] }],
   ])
     invalid({ "pi-subagent": { extensionAllowlist } });
   for (const maxConcurrent of [1, 32])
@@ -210,105 +199,6 @@ test("worker allowlists replace defaults and isolate package selections", () => 
     invalid({ "pi-subagent": { maxConcurrent } });
 });
 
-test("web capability routing arrays and model settings retain their independent contracts", () => {
-  const raw = {
-    sources: {
-      web: {
-        routing: ["codex-alpha-search", "searxng"],
-        codex: { model: "custom-model" },
-      },
-      github: { enabled: false },
-    },
-  };
-  const config = parsePiKitsConfig(
-    JSON.stringify({ "pi-web-kits": { search: raw } }),
-  )["pi-web-kits"].search;
-  assert.deepEqual(config.routing, {
-    provider: "codex-alpha-search",
-    fallback: true,
-    fallbackProvider: "searxng",
-  });
-  assert.equal(config.codex.model, "custom-model");
-  assert.equal(config.sources.github.enabled, false);
-  config.sources.web.routing.length = 0;
-  assert.deepEqual(raw.sources.web.routing, ["codex-alpha-search", "searxng"]);
-
-  for (const provider of ["searxng", "codex"] as const) {
-    const legacyLayout = resolvePiKitsConfig({
-      "pi-web-kits": { search: { routing: { provider, fallback: true } } },
-    })["pi-web-kits"].search;
-    assert.equal(legacyLayout.sources.web.routing.length, 2);
-    assert.notEqual(
-      legacyLayout.sources.web.routing[0],
-      legacyLayout.sources.web.routing[1],
-    );
-  }
-  assert.equal(
-    resolvePiKitsConfig({
-      "pi-web-kits": { search: { codex: { model: "gpt-5.4" } } },
-    })["pi-web-kits"].search.codex.model,
-    "gpt-5.4",
-  );
-});
-
-for (const search of [
-  { sources: null },
-  { sources: { web: false } },
-  { sources: { github: { enabled: 1 } } },
-  ...[[], ["searxng", "searxng"], ["unknown"], ["codex"], "searxng"].map(
-    (routing) => ({ sources: { web: { routing } } }),
-  ),
-  { sources: { web: { codex: { model: "bad model" } } } },
-  { sources: { web: {} }, routing: {} },
-  { sources: { web: {} }, codex: {} },
-  { sources: { web: { enabled: false }, github: { enabled: false } } },
-  { enabled: false, sources: { web: {} }, routing: {} },
-  { routing: { provider: "invalid" } },
-  { routing: { provider: "codex", fallbackProvider: "codex-alpha-search" } },
-  { routing: { fallbackProvider: "searxng" } },
-  { timeoutMs: 999 },
-  { timeoutMs: 120001 },
-  { maxResults: 0 },
-  { maxResults: 11 },
-  { searxng: { apiKey: "secret" } },
-  { sources: { web: { searxng: { url: "https://example.com" } } } },
-]) {
-  test(`invalid canonical web search is rejected: ${JSON.stringify(search)}`, () =>
-    invalid({ "pi-web-kits": { search } }));
-}
-
-test("explicit false values remain independent and a disabled search may have no capabilities", () => {
-  const config = resolvePiKitsConfig({
-    "pi-web-kits": {
-      search: {
-        enabled: false,
-        sources: { web: { enabled: false }, github: { enabled: false } },
-      },
-      fetch: { github: { enabled: false } },
-    },
-  })["pi-web-kits"];
-  assert.equal(config.search.enabled, false);
-  assert.equal(config.fetch.enabled, true);
-  assert.equal(config.fetch.github.enabled, false);
-  invalid({ "pi-web-kits": { fetch: { timeoutMs: 0 } } });
-});
-
-test("unknown obsolete GitHub fields remain raw but are ignored", () => {
-  const github = {
-    enabled: false,
-    mode: {},
-    maxRepoSizeMB: "invalid",
-    clonePath: 42,
-  };
-  const raw = parsePiKitsFile(
-    JSON.stringify({ "pi-web-kits": { fetch: { github } } }),
-  );
-  assert.deepEqual(raw["pi-web-kits"]?.fetch?.github, github);
-  assert.deepEqual(resolvePiKitsConfig(raw)["pi-web-kits"].fetch.github, {
-    enabled: false,
-  });
-});
-
 test("fresh snapshots pick up edits and default arrays are isolated", (t) => {
   const dir = mkdtempSync(join(tmpdir(), "pi-kits-config-"));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
@@ -316,16 +206,12 @@ test("fresh snapshots pick up edits and default arrays are isolated", (t) => {
   const first = readPiKitsConfig(dir);
   assert.equal(first["pi-open"].enabled, false);
   first["pi-subagent"].extensionAllowlist.length = 0;
-  first["pi-web-kits"].search.sources.web.routing.length = 0;
   first["pi-canvas-note"].portRange[0] = 1;
   writeFileSync(getPiKitsConfigPath(dir), "{}");
   const second = readPiKitsConfig(dir);
   assert.equal(second["pi-open"].enabled, true);
   assert.deepEqual(second["pi-subagent"].extensionAllowlist, [
     ...SUBAGENT_DEFAULT_EXTENSIONS,
-  ]);
-  assert.deepEqual(second["pi-web-kits"].search.sources.web.routing, [
-    "searxng",
   ]);
   assert.deepEqual(second["pi-canvas-note"].portRange, [10000, 20000]);
 });

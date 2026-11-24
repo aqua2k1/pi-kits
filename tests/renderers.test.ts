@@ -13,7 +13,6 @@ import askExtension from "../extensions/pi-ask/index.ts";
 import openExtension from "../extensions/pi-open/index.ts";
 import type { Executor } from "../extensions/pi-subagent/execute/index.ts";
 import { registerSubagents } from "../extensions/pi-subagent/index.ts";
-import webExtension from "../extensions/pi-web-kits/index.ts";
 import { useAgentDir } from "./helpers/agent-dir.ts";
 
 const theme = {
@@ -53,14 +52,13 @@ function rendered(
     .join("\n");
 }
 
-test("all six public tools and the completion message register shared-style renderers", async (t) => {
+test("all four public tools and the completion message register shared-style renderers", async (t) => {
   useAgentDir(t);
   const h = registrations();
   openExtension(h.pi);
   askExtension(h.pi);
   registerSubagents(h.pi, {} as Executor);
-  await webExtension(h.pi, { env: {}, cleanupExpiredSpools: async () => {} });
-  assert.equal(h.tools.size, 6);
+  assert.equal(h.tools.size, 4);
   for (const tool of h.tools.values()) {
     assert.equal(typeof tool.renderCall, "function", tool.name);
     assert.equal(typeof tool.renderResult, "function", tool.name);
@@ -117,13 +115,12 @@ test("all six public tools and the completion message register shared-style rend
   );
 });
 
-test("tool summaries retain questions, search counts, saved fetch details and errors", async (t) => {
+test("tool summaries retain questions and errors", async (t) => {
   useAgentDir(t);
   const h = registrations();
   openExtension(h.pi);
   askExtension(h.pi);
   registerSubagents(h.pi, {} as Executor);
-  await webExtension(h.pi, { env: {}, cleanupExpiredSpools: async () => {} });
   const get = (name: string) => {
     const tool = h.tools.get(name);
     assert.ok(tool);
@@ -139,53 +136,6 @@ test("tool summaries retain questions, search counts, saved fetch details and er
   assert.match(
     rendered(get("ask_user_question"), { answers: [], cancelled: true }),
     /^cancelled/,
-  );
-  const search = {
-    resultCount: 1,
-    results: [{ title: "Result title", url: "https://example.test" }],
-    truncated: true,
-  };
-  assert.match(
-    rendered(get("web_search"), search),
-    /completed · 1 results\nResult title\n\[Result truncated\]/,
-  );
-  assert.match(
-    rendered(get("web_search"), { resultCount: 0, results: [] }),
-    /No results/,
-  );
-  const fetch = {
-    title: "Page",
-    savedContent: {
-      path: "/private/fetch.txt",
-      bytes: 100,
-      truncated: false,
-    },
-    finalUrl: "https://example.test",
-    source: "native-http",
-  };
-  assert.equal(rendered(get("web_fetch"), fetch), "completed\nPage");
-  assert.match(
-    rendered(get("web_fetch"), fetch, "Saved content metadata", true),
-    /Saved content metadata/,
-  );
-  assert.match(
-    rendered(get("web_fetch"), fetch, "Saved content metadata", true),
-    /\/private\/fetch.txt/,
-  );
-  assert.match(
-    rendered(get("web_fetch"), {
-      ...fetch,
-      savedContent: { ...fetch.savedContent, truncated: true },
-    }),
-    /\[Result truncated\]/,
-  );
-  assert.equal(
-    rendered(get("web_fetch"), undefined, "Network failed", false, false, true),
-    "error\nNetwork failed",
-  );
-  assert.equal(
-    rendered(get("web_fetch"), undefined, "Fetching...", false, true),
-    "running\nFetching...",
   );
   const open = get("open");
   const result = await open.execute(

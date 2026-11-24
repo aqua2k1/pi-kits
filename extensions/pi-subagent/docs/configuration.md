@@ -38,7 +38,7 @@
     "extensionAllowlist": [
       "builtin:codemode",
       "builtin:tool-search",
-      { "source": "<pi-kits 包路径>", "extensions": ["pi-web-kits", "pi-ask"] }
+      { "source": "<pi-kits 包路径>", "extensions": ["pi-server-tools", "pi-ask"] }
     ]
   }
 }

@@ -25,32 +25,5 @@
         "extensions": []
       }
     ]
-  },
-  "pi-web-kits": {
-    "enabled": true,
-    "search": {
-      "enabled": true,
-      "sources": {
-        "web": {
-          "enabled": true,
-          "routing": ["searxng"],
-          "codex": {
-            "model": "gpt-6-luna"
-          }
-        },
-        "github": {
-          "enabled": true
-        }
-      },
-      "timeoutMs": 15000,
-      "maxResults": 5
-    },
-    "fetch": {
-      "enabled": true,
-      "timeoutMs": 15000,
-      "github": {
-        "enabled": true
-      }
-    }
   }
 }

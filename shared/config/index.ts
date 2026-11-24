@@ -22,20 +22,6 @@ export {
   type WorkerExtensionSource,
 } from "./schema.ts";
 export const PI_KITS_CONFIG_FILE = "pi-kits.json";
-export const WEB_DEFAULTS = {
-  provider: "searxng" as const,
-  searchTimeoutMs: 15_000,
-  maxResults: 5,
-  codexModel: "gpt-6-luna",
-  fetchTimeoutMs: 15_000,
-  githubEnabled: true,
-};
-
-function normalizeProvider(
-  provider: "searxng" | "codex-alpha-search" | "codex" | undefined,
-) {
-  return provider === "codex" ? "codex-alpha-search" : provider;
-}
 
 /** Pi owns agent-directory syntax and defaults. */
 export function getAgentDir(): string {
@@ -64,32 +50,6 @@ export function parsePiKitsFile(text: string): PiKitsFileConfig {
     throw new Error(
       "Invalid pi-kits.json: pi-canvas-note.portRange must be ordered [minimum, maximum].",
     );
-  const search = value["pi-web-kits"]?.search;
-  if (
-    search?.sources?.web !== undefined &&
-    (search.routing !== undefined || search.codex !== undefined)
-  ) {
-    throw new Error(
-      "Invalid pi-kits.json: search.sources.web cannot be mixed with legacy routing/codex.",
-    );
-  }
-  if (
-    search?.enabled !== false &&
-    search?.sources?.web?.enabled === false &&
-    search?.sources?.github?.enabled === false
-  ) {
-    throw new Error(
-      "Invalid pi-kits.json: enabled search requires at least one enabled source.",
-    );
-  }
-  const routing = search?.routing;
-  const provider =
-    normalizeProvider(routing?.provider) ?? WEB_DEFAULTS.provider;
-  if (provider === normalizeProvider(routing?.fallbackProvider)) {
-    throw new Error(
-      "Invalid pi-kits.json: pi-web-kits.search.routing providers must differ.",
-    );
-  }
   return value;
 }
 
@@ -130,34 +90,6 @@ export function updatePiKitsConfig(
 
 export function resolvePiKitsConfig(raw: PiKitsFileConfig = {}) {
   raw = parsePiKitsFile(JSON.stringify(raw));
-  const search = raw["pi-web-kits"]?.search;
-  const legacy = search?.routing;
-  const provider = normalizeProvider(legacy?.provider) ?? WEB_DEFAULTS.provider;
-  const fallbackProvider = normalizeProvider(legacy?.fallbackProvider);
-  const routing = search?.sources?.web?.routing ?? [
-    provider,
-    ...(legacy?.fallback
-      ? [
-          fallbackProvider ??
-            (provider === "searxng"
-              ? ("codex-alpha-search" as const)
-              : ("searxng" as const)),
-        ]
-      : []),
-  ];
-  const sources = {
-    web: {
-      enabled: search?.sources?.web?.enabled ?? true,
-      routing: [...routing],
-      codex: {
-        model:
-          search?.sources?.web?.codex?.model ??
-          search?.codex?.model ??
-          WEB_DEFAULTS.codexModel,
-      },
-    },
-    github: { enabled: search?.sources?.github?.enabled ?? true },
-  };
   return {
     "pi-canvas-note": {
       enabled: raw["pi-canvas-note"]?.enabled ?? true,
@@ -184,36 +116,6 @@ export function resolvePiKitsConfig(raw: PiKitsFileConfig = {}) {
           ? entry
           : { source: entry.source, extensions: [...entry.extensions] },
       ),
-    },
-    "pi-web-kits": {
-      enabled: raw["pi-web-kits"]?.enabled ?? true,
-      search: {
-        enabled: raw["pi-web-kits"]?.search?.enabled ?? true,
-        sources,
-        /** @internal Derived compatibility fields. */
-        routing: {
-          provider: routing[0] ?? WEB_DEFAULTS.provider,
-          fallback: routing.length > 1,
-          fallbackProvider: routing[1] ?? fallbackProvider,
-        },
-        timeoutMs:
-          raw["pi-web-kits"]?.search?.timeoutMs ?? WEB_DEFAULTS.searchTimeoutMs,
-        maxResults:
-          raw["pi-web-kits"]?.search?.maxResults ?? WEB_DEFAULTS.maxResults,
-        codex: {
-          model: sources.web.codex.model,
-        },
-      },
-      fetch: {
-        enabled: raw["pi-web-kits"]?.fetch?.enabled ?? true,
-        timeoutMs:
-          raw["pi-web-kits"]?.fetch?.timeoutMs ?? WEB_DEFAULTS.fetchTimeoutMs,
-        github: {
-          enabled:
-            raw["pi-web-kits"]?.fetch?.github?.enabled ??
-            WEB_DEFAULTS.githubEnabled,
-        },
-      },
     },
   };
 }

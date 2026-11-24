@@ -222,11 +222,11 @@ test("directory-named resource declarations select extensions without legacy ali
   );
   assert.deepEqual(
     await resolveWorkerExtensions([
-      { source: root, extensions: ["pi-open", "pi-web-kits", "pi-ask"] },
+      { source: root, extensions: ["pi-open", "pi-server-tools", "pi-ask"] },
     ]),
     [
       join(root, "extensions/pi-open/index.ts"),
-      join(root, "extensions/pi-web-kits/index.ts"),
+      join(root, "extensions/pi-server-tools/index.ts"),
       join(root, "extensions/pi-ask/index.ts"),
     ],
   );
@@ -239,11 +239,11 @@ test("directory-named resource declarations select extensions without legacy ali
   assert.deepEqual(
     await resolveWorkerExtensions([
       {
-        source: join(root, "extensions/pi-web-kits"),
-        extensions: ["pi-web-kits"],
+        source: join(root, "extensions/pi-server-tools"),
+        extensions: ["pi-server-tools"],
       },
     ]),
-    [join(root, "extensions/pi-web-kits/index.ts")],
+    [join(root, "extensions/pi-server-tools/index.ts")],
   );
   for (const name of [
     "canvas-note",
@@ -335,7 +335,6 @@ test("canonical disabled settings remain accepted by the real Pi loader", (t) =>
       "pi-output-viewer": { enabled: false },
       "pi-ask": { enabled: false },
       "pi-subagent": { enabled: false },
-      "pi-web-kits": { enabled: false },
     }),
   );
   assert.doesNotMatch(smoke([root], dir), /--commit/);

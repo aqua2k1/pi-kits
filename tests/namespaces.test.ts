@@ -9,10 +9,10 @@ import canvasNote from "../extensions/pi-canvas-note/index.ts";
 import handoff from "../extensions/pi-handoff/index.ts";
 import open from "../extensions/pi-open/index.ts";
 import outputViewer from "../extensions/pi-output-viewer/index.ts";
+import serverTools from "../extensions/pi-server-tools/index.ts";
 import type { Executor } from "../extensions/pi-subagent/execute/index.ts";
 import { registerSubagents } from "../extensions/pi-subagent/index.ts";
 import tokenMeter from "../extensions/pi-token-meter/index.ts";
-import webKits from "../extensions/pi-web-kits/index.ts";
 import { useAgentDir } from "./helpers/agent-dir.ts";
 
 type Entry = (pi: ExtensionAPI) => void | Promise<void>;
@@ -57,13 +57,7 @@ const extensions: Array<{
     commands: ["subagent:views"],
   },
   { name: "pi-token-meter", register: tokenMeter, tools: [], commands: [] },
-  {
-    name: "pi-web-kits",
-    register: (pi) =>
-      webKits(pi, { env: {}, cleanupExpiredSpools: async () => {} }),
-    tools: ["web_search", "web_fetch"],
-    commands: ["pi-web-kits"],
-  },
+  { name: "pi-server-tools", register: serverTools, tools: [], commands: [] },
 ];
 
 for (const extension of extensions) {
