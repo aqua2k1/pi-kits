@@ -7,6 +7,7 @@ import type {
 import ask from "../extensions/pi-ask/index.ts";
 import canvasNote from "../extensions/pi-canvas-note/index.ts";
 import handoff from "../extensions/pi-handoff/index.ts";
+import image from "../extensions/pi-image/index.ts";
 import open from "../extensions/pi-open/index.ts";
 import outputViewer from "../extensions/pi-output-viewer/index.ts";
 import serverTools from "../extensions/pi-server-tools/index.ts";
@@ -58,6 +59,7 @@ const extensions: Array<{
   },
   { name: "pi-token-meter", register: tokenMeter, tools: [], commands: [] },
   { name: "pi-server-tools", register: serverTools, tools: [], commands: [] },
+  { name: "pi-image", register: image, tools: [], commands: ["image-edit"] },
 ];
 
 for (const extension of extensions) {

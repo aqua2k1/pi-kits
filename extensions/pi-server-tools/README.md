@@ -18,7 +18,7 @@ pi config
 
 | 提供方 | 协议 / 模型 | 注入的服务端工具 |
 | --- | --- | --- |
-| OpenAI / Codex | Responses API | `web_search` |
+| OpenAI / Codex | Responses API | `web_search`、`image_generation` |
 | Google / Vertex | Generative AI / Vertex | `googleSearch`、`urlContext` |
 | DeepSeek | `deepseek-v4-pro`（Responses API） | `web_search` |
 | DeepSeek | `deepseek-flash`（Chat Completions API） | `deepseek_web_search`、`deepseek_read_url` |

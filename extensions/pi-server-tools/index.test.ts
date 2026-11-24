@@ -8,7 +8,7 @@ function model(provider: string, api: Api, id: string): Model<Api> {
   return { provider, api, id } as Model<Api>;
 }
 
-test("injects native web_search for OpenAI and Codex Responses models", () => {
+test("injects native server tools for OpenAI and Codex Responses models", () => {
   for (const current of [
     model("openai", "openai-responses", "gpt-6"),
     model("openai-codex", "openai-codex-responses", "gpt-6-luna"),
@@ -18,20 +18,30 @@ test("injects native web_search for OpenAI and Codex Responses models", () => {
     const next = injectServerTools(payload, current);
     assert.deepEqual(next, {
       model: current.id,
-      tools: [...existing, { type: "web_search" }],
+      tools: [
+        ...existing,
+        { type: "web_search" },
+        { type: "image_generation" },
+      ],
     });
     assert.deepEqual(payload.tools, existing);
   }
 });
 
-test("deduplicates existing web_search and web_search_preview on OpenAI", () => {
+test("deduplicates existing server tools and web_search_preview on OpenAI", () => {
   const current = model("openai", "openai-responses", "gpt-6");
   assert.equal(
-    injectServerTools({ tools: [{ type: "web_search" }] }, current),
+    injectServerTools(
+      { tools: [{ type: "web_search" }, { type: "image_generation" }] },
+      current,
+    ),
     undefined,
   );
   assert.equal(
-    injectServerTools({ tools: [{ type: "web_search_preview" }] }, current),
+    injectServerTools(
+      { tools: [{ type: "web_search_preview" }, { type: "image_generation" }] },
+      current,
+    ),
     undefined,
   );
 });
@@ -147,6 +157,6 @@ test("extension registers only before_provider_request and forwards payload tran
       { payload: { tools: [] } },
       { model: model("openai-codex", "openai-codex-responses", "gpt-6-luna") },
     ),
-    { tools: [{ type: "web_search" }] },
+    { tools: [{ type: "web_search" }, { type: "image_generation" }] },
   );
 });

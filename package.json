@@ -13,7 +13,8 @@
     "pi-handoff": "./extensions/pi-handoff/index.ts",
     "pi-ask": "./extensions/pi-ask/index.ts",
     "pi-subagent": "./extensions/pi-subagent/index.ts",
-    "pi-server-tools": "./extensions/pi-server-tools/index.ts"
+    "pi-server-tools": "./extensions/pi-server-tools/index.ts",
+    "pi-image": "./extensions/pi-image/index.ts"
   },
   "pi": {
     "extensions": [
@@ -24,7 +25,8 @@
       "./extensions/pi-handoff/index.ts",
       "./extensions/pi-ask/index.ts",
       "./extensions/pi-subagent/index.ts",
-      "./extensions/pi-server-tools/index.ts"
+      "./extensions/pi-server-tools/index.ts",
+      "./extensions/pi-image/index.ts"
     ],
     "themes": [
       "./themes/gruvbox.json"
