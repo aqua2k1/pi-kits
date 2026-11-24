@@ -1,10 +1,11 @@
-import { randomBytes, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { createServer, type Server, type Socket } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { fileURLToPath } from "node:url";
-import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
+import {
+  type ExtensionContext,
+  SessionManager,
+} from "@earendil-works/pi-coding-agent";
 import {
   SUBAGENT_DEFAULT_EXTENSIONS,
   type WorkerExtensionSource,
@@ -15,20 +16,32 @@ import {
   type ParentSessionSnapshot,
 } from "./clone.ts";
 import { type AgentDefinition, resolveWorkerExtensions } from "./config.ts";
-import type { Executor, TerminalHandle, ViewHandle } from "./execute/index.ts";
-import { createSerializer } from "./util.ts";
 import {
-  isBackendSessionState,
+  type Executor,
+  type InspectResult,
   MAX_COMMAND_BYTES,
-  MAX_RESULT_BYTES,
-  type SessionUpdate,
-  type WorkerCommand,
-  type WorkerEvent,
-  type WorkerSessionState,
-} from "./worker.ts";
+  type ReadResult,
+  type TerminalHandle,
+  type ViewHandle,
+  WORKER_MARKER,
+} from "./execute/index.ts";
+import { createSerializer } from "./util.ts";
 
-export type { SessionUpdate, WorkerSessionState } from "./worker.ts";
-export { isBackendSessionState } from "./worker.ts";
+export type WorkerSessionState = "idle" | "running" | "interactive";
+
+export function isBackendSessionState(v: unknown): v is WorkerSessionState {
+  return v === "idle" || v === "running" || v === "interactive";
+}
+
+export interface SessionUpdate {
+  type: "session_update";
+  interactionId: string;
+  sequence: number;
+  response: string;
+  outcome: "completed" | "aborted" | "error";
+  truncated?: boolean;
+  error?: string;
+}
 
 export type AgentStatus =
   | "queued"
@@ -170,7 +183,6 @@ export interface ManagerOptions {
   startupTimeoutMs?: number;
   cancelTimeoutMs?: number;
   extensionAllowlist?: readonly WorkerExtensionSource[];
-  workerPath?: string;
   executable?: string;
   onComplete?: (snapshot: AgentSnapshot) => void;
   onSessionUpdate?: (snapshot: AgentSnapshot, update: SessionUpdate) => void;
@@ -214,9 +226,10 @@ interface ReplyData {
   sequence: number;
 }
 
-/** Component 1: Live OS/Worker Process Attachment (exists only while a process is allocated). */
+/** Component 1: Live Executor Handle Attachment (exists only while a terminal/process is allocated). */
 interface WorkerComponent {
-  readonly session: WorkerSession;
+  terminal?: TerminalHandle;
+  promptDirectory?: string;
   view?: ViewHandle;
   interactiveActivity?: string;
   cleanupError?: string;
@@ -226,7 +239,7 @@ interface WorkerComponent {
 /** Component 2: Active Managed Turn (exists only while a round is queued, starting, or running). */
 interface TurnComponent {
   readonly round: number;
-  command: WorkerCommand;
+  prompt: string;
   readonly createdAt: number;
   startedAt?: number;
   launching?: Promise<void>;
@@ -253,7 +266,6 @@ interface SettledComponent {
   notified: boolean;
 }
 
-/** The Entity: pure data components, no stored `status` or `sessionState` enums. */
 interface SubagentEntity {
   readonly id: string;
   readonly sessionKey: string;
@@ -269,7 +281,7 @@ interface SubagentEntity {
 }
 
 // ============================================================================
-// Pure Derived State Queries (Status & SessionState are 100% derived from data)
+// Pure Derived State Queries
 // ============================================================================
 
 function deriveStatus(e: SubagentEntity): AgentStatus {
@@ -288,7 +300,7 @@ function deriveSessionState(e: SubagentEntity): SessionState | undefined {
   if (e.worker) {
     if (e.worker.interactiveActivity !== undefined) return "interactive";
     if (e.turn?.dispatched) return "running";
-    if (e.worker.session.connected) return "idle";
+    if (e.worker.terminal) return "idle";
     return undefined;
   }
   return e.settled ? "closed" : undefined;
@@ -346,8 +358,7 @@ function deriveSnapshot(
         : {}),
     ...(e.turn?.activity ? { activity: e.turn.activity } : {}),
     ...(e.sessionPath ? { sessionPath: e.sessionPath } : {}),
-    terminalId:
-      sessionState === "closed" ? undefined : e.worker?.session.terminal?.id,
+    terminalId: sessionState === "closed" ? undefined : e.worker?.terminal?.id,
     viewId: e.worker?.view?.id,
     createdAt: e.turn?.createdAt ?? e.settled?.createdAt,
     startedAt: e.turn?.startedAt ?? e.settled?.startedAt,
@@ -363,296 +374,90 @@ function deriveSnapshot(
 }
 
 // ============================================================================
-// Worker Process & Loopback TCP Bridge
+// Worker Argv Builder & Coordinator Helpers
 // ============================================================================
 
-const MAX_FRAME_BYTES = 1_048_576;
-
-interface WorkerSession {
-  readonly connected: boolean;
-  readonly terminal: TerminalHandle | undefined;
-  start(): Promise<void>;
-  send(command: WorkerCommand): void;
-  inspect(): Promise<boolean>;
-  close(): Promise<void>;
-}
-
-function createTaskCommand(prompt: string, round?: number): WorkerCommand {
+function validatePrompt(prompt: string): string {
   if (!prompt.trim()) throw new Error("Task prompt must not be blank.");
-  const command: WorkerCommand = {
-    type: "task",
-    prompt,
-    ...(round !== undefined && round > 1 ? { round } : {}),
-  };
-  if (Buffer.byteLength(JSON.stringify(command)) > MAX_COMMAND_BYTES) {
+  if (Buffer.byteLength(prompt, "utf8") > MAX_COMMAND_BYTES) {
     throw new Error("Subagent command exceeds the 64 KiB protocol limit.");
   }
-  return command;
+  return prompt;
 }
 
-function createWorkerSession(
+async function prepareWorkerLaunch(
   entity: SubagentEntity,
-  executor: Executor,
+  supportsView: boolean,
   managerOptions: ManagerOptions,
-  emit: (event: WorkerEvent) => void,
-  onDisconnect: () => void,
-): WorkerSession {
-  const token = randomBytes(32).toString("hex");
-  const sockets = new Set<Socket>();
-  let terminal: TerminalHandle | undefined;
-  let socket: Socket | undefined;
-  let server: Server | undefined;
-  let authenticated = false;
-  let closed = false;
-  let starting: Promise<void> | undefined;
-  let closing: Promise<void> | undefined;
+): Promise<{ argv: string[]; promptDirectory?: string }> {
+  const extensions = await resolveWorkerExtensions(
+    entity.options.agent?.extensions ??
+      managerOptions.extensionAllowlist ??
+      SUBAGENT_DEFAULT_EXTENSIONS,
+  );
+  if (!entity.sessionPath) {
+    if (entity.options.parentSession) {
+      entity.sessionPath = createClonedSession(
+        entity.options.parentSession,
+        entity.options.cwd,
+        `subagent-${entity.sessionKey}`,
+      );
+    } else {
+      entity.sessionPath = SessionManager.create(
+        entity.options.cwd,
+        undefined,
+        { id: `subagent-${entity.sessionKey}` },
+      ).getSessionFile();
+    }
+  }
+  const argv = [
+    managerOptions.executable ?? "pi",
+    ...(supportsView ? [] : ["--mode", "rpc"]),
+    "--no-extensions",
+    ...extensions.flatMap((ext) => ["-e", ext]),
+    ...(entity.sessionPath
+      ? ["--session", entity.sessionPath]
+      : ["--session-id", `subagent-${entity.sessionKey}`]),
+  ];
+  if (entity.options.sessionName)
+    argv.push("--name", entity.options.sessionName);
+  const model = entity.options.agent?.model ?? entity.options.model;
+  const thinking = entity.options.agent?.thinking ?? entity.options.thinking;
+  if (model) argv.push("--model", model);
+  if (thinking) argv.push("--thinking", thinking);
+  const tools = entity.options.agent?.tools;
+  if (tools !== undefined) {
+    if (tools.length) argv.push("--tools", tools.join(","));
+    else argv.push("--no-tools");
+  }
+  if (entity.options.agent?.disallowedTools?.length) {
+    argv.push(
+      "--exclude-tools",
+      entity.options.agent.disallowedTools.join(","),
+    );
+  }
   let promptDirectory: string | undefined;
-  let ready: (() => void) | undefined;
-  let rejectReady: ((error: Error) => void) | undefined;
-
-  const isConnected = () => Boolean(socket && !socket.destroyed && !closed);
-
-  const accept = (client: Socket): void => {
-    if (closed) {
-      client.destroy();
-      return;
-    }
-    sockets.add(client);
-    client.setEncoding("utf8");
-    client.setTimeout(10_000, () => client.destroy());
-    let buffer = "";
-    let clientAuthed = false;
-    client.on("data", (chunk) => {
-      buffer += chunk;
-      if (Buffer.byteLength(buffer) > MAX_FRAME_BYTES) {
-        client.destroy();
-        return;
-      }
-      for (
-        let nl = buffer.indexOf("\n");
-        nl !== -1;
-        nl = buffer.indexOf("\n")
-      ) {
-        const line = buffer.slice(0, nl);
-        buffer = buffer.slice(nl + 1);
-        try {
-          const raw = JSON.parse(line) as Record<string, unknown>;
-          if (!raw || typeof raw !== "object") throw new Error("Bad frame");
-          if (!clientAuthed) {
-            if (
-              raw.type !== "ready" ||
-              raw.id !== entity.id ||
-              raw.token !== token ||
-              authenticated ||
-              closed
-            ) {
-              throw new Error("Worker authentication failed");
-            }
-            clientAuthed = true;
-            authenticated = true;
-            socket = client;
-            client.setTimeout(0);
-            emit(raw as unknown as WorkerEvent);
-            ready?.();
-          } else {
-            if (typeof raw.type !== "string") throw new Error("Bad frame");
-            emit(raw as unknown as WorkerEvent);
-          }
-        } catch {
-          client.destroy();
-          return;
-        }
-      }
+  if (entity.options.agent) {
+    promptDirectory = mkdtempSync(join(tmpdir(), "pi-kits-prompt-"));
+    const promptPath = join(promptDirectory, "system.md");
+    writeFileSync(promptPath, entity.options.agent.systemPrompt, {
+      mode: 0o600,
     });
-    client.on("error", () => client.destroy());
-    client.on("close", () => {
-      sockets.delete(client);
-      if (socket !== client) return;
-      socket = undefined;
-      rejectReady?.(new Error("Pi worker disconnected."));
-      if (!closed) onDisconnect();
-    });
-  };
-
-  const launch = async (): Promise<void> => {
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    try {
-      if (closed) throw new Error("Pi worker is closed.");
-      const extensions = await resolveWorkerExtensions(
-        entity.options.agent?.extensions ??
-          managerOptions.extensionAllowlist ??
-          SUBAGENT_DEFAULT_EXTENSIONS,
+    if (entity.options.agent.promptMode === "append") {
+      argv.push("--append-system-prompt", promptPath);
+    } else {
+      const emptyPath = join(promptDirectory, "append.md");
+      writeFileSync(emptyPath, "", { mode: 0o600 });
+      argv.push(
+        "--system-prompt",
+        promptPath,
+        "--append-system-prompt",
+        emptyPath,
       );
-      if (closed) throw new Error("Pi worker is closed.");
-      const endpoint = await new Promise<string>((resolve, reject) => {
-        const listener = createServer(accept);
-        server = listener;
-        listener.once("error", reject);
-        listener.listen(0, "127.0.0.1", () => {
-          const addr = listener.address();
-          if (!addr || typeof addr === "string")
-            reject(new Error("Could not bind worker server."));
-          else resolve(`127.0.0.1:${addr.port}`);
-        });
-      });
-      if (closed) throw new Error("Pi worker is closed.");
-      const awaitingReady = new Promise<void>((resolve, reject) => {
-        ready = resolve;
-        rejectReady = reject;
-        timer = setTimeout(
-          () => reject(new Error("Timed out waiting for the Pi worker.")),
-          managerOptions.startupTimeoutMs ?? 60_000,
-        );
-      });
-      void awaitingReady.catch(() => undefined);
-
-      let sessionFlag: [string, string];
-      if (entity.sessionPath) {
-        sessionFlag = ["--session", entity.sessionPath];
-      } else if (entity.options.parentSession) {
-        const sessionPath = createClonedSession(
-          entity.options.parentSession,
-          entity.options.cwd,
-          `subagent-${entity.sessionKey}`,
-        );
-        entity.sessionPath = sessionPath;
-        sessionFlag = ["--session", sessionPath];
-      } else {
-        sessionFlag = ["--session-id", `subagent-${entity.sessionKey}`];
-      }
-
-      const argv = [
-        managerOptions.executable ?? "pi",
-        ...(executor.supportsView ? [] : ["--mode", "rpc"]),
-        "--no-extensions",
-        "-e",
-        managerOptions.workerPath ??
-          fileURLToPath(new URL("./worker.ts", import.meta.url)),
-        ...extensions.flatMap((ext) => ["-e", ext]),
-        ...sessionFlag,
-      ];
-      if (entity.options.sessionName)
-        argv.push("--name", entity.options.sessionName);
-      const model = entity.options.agent?.model ?? entity.options.model;
-      const thinking =
-        entity.options.agent?.thinking ?? entity.options.thinking;
-      if (model) argv.push("--model", model);
-      if (thinking) argv.push("--thinking", thinking);
-      const tools = entity.options.agent?.tools;
-      if (tools !== undefined) {
-        if (tools.length) argv.push("--tools", tools.join(","));
-        else argv.push("--no-tools");
-      }
-      if (entity.options.agent?.disallowedTools?.length) {
-        argv.push(
-          "--exclude-tools",
-          entity.options.agent.disallowedTools.join(","),
-        );
-      }
-      if (entity.options.agent) {
-        promptDirectory = mkdtempSync(join(tmpdir(), "pi-kits-prompt-"));
-        const promptPath = join(promptDirectory, "system.md");
-        writeFileSync(promptPath, entity.options.agent.systemPrompt, {
-          mode: 0o600,
-        });
-        if (entity.options.agent.promptMode === "append") {
-          argv.push("--append-system-prompt", promptPath);
-        } else {
-          const emptyPath = join(promptDirectory, "append.md");
-          writeFileSync(emptyPath, "", { mode: 0o600 });
-          argv.push(
-            "--system-prompt",
-            promptPath,
-            "--append-system-prompt",
-            emptyPath,
-          );
-        }
-      }
-
-      terminal = await executor.start({
-        agentId: entity.id,
-        agentType: entity.options.agent?.name,
-        cwd: entity.options.cwd,
-        argv,
-        env: {
-          PI_KITS_SUBAGENT_WORKER: "1",
-          PI_KITS_SUBAGENT_ENDPOINT: endpoint,
-          PI_KITS_SUBAGENT_TOKEN: token,
-          PI_KITS_SUBAGENT_ID: entity.id,
-        },
-      });
-      if (closed) throw new Error("Pi worker is closed.");
-      await awaitingReady;
-      if (!isConnected()) throw new Error("Pi worker disconnected.");
-    } finally {
-      clearTimeout(timer);
-      ready = undefined;
-      rejectReady = undefined;
     }
-  };
-
-  const cleanup = async (): Promise<void> => {
-    await starting?.catch(() => undefined);
-    try {
-      if (terminal) {
-        await executor.destroy(terminal);
-        terminal = undefined;
-      }
-      if (promptDirectory) {
-        rmSync(promptDirectory, { recursive: true, force: true });
-        promptDirectory = undefined;
-      }
-    } finally {
-      socket = undefined;
-      for (const client of sockets) client.destroy();
-      if (server?.listening) {
-        await new Promise<void>((resolve) => server?.close(() => resolve()));
-      }
-    }
-  };
-
-  return {
-    get connected() {
-      return isConnected();
-    },
-    get terminal() {
-      return terminal;
-    },
-    start() {
-      starting ??= launch();
-      return starting;
-    },
-    send(command: WorkerCommand) {
-      if (!isConnected()) throw new Error("Pi worker is not connected.");
-      const frame = JSON.stringify(command);
-      if (Buffer.byteLength(frame) > MAX_COMMAND_BYTES) {
-        throw new Error("Subagent command exceeds the 64 KiB protocol limit.");
-      }
-      socket?.write(`${frame}\n`);
-    },
-    async inspect() {
-      return Boolean(
-        isConnected() && terminal && (await executor.inspect(terminal)).alive,
-      );
-    },
-    close() {
-      closed = true;
-      rejectReady?.(new Error("Pi worker closed during startup."));
-      if (closing) return closing;
-      const op = cleanup();
-      closing = op;
-      const clear = () => {
-        closing = undefined;
-      };
-      void op.then(clear, clear);
-      return op;
-    },
-  };
+  }
+  return { argv, promptDirectory };
 }
-
-// ============================================================================
-// Data-Driven Coordinator & Reconcile Systems
-// ============================================================================
 
 function validText(value: unknown): value is string {
   return (
@@ -665,16 +470,17 @@ function validText(value: unknown): value is string {
 
 function createTurnComponent(
   round: number,
-  command: WorkerCommand,
+  prompt: string,
   now = Date.now(),
 ): TurnComponent {
+  validatePrompt(prompt);
   let resolve: (snap: AgentSnapshot) => void = () => undefined;
   const completion = new Promise<AgentSnapshot>((done) => {
     resolve = done;
   });
   return {
     round,
-    command,
+    prompt,
     createdAt: now,
     dispatched: false,
     canceling: false,
@@ -735,7 +541,6 @@ export function createSubagentManager(
   const snap = (e: SubagentEntity): AgentSnapshot =>
     deriveSnapshot(e, supportsView);
 
-  /** Count entities holding a concurrency slot (active launch, running turn, or uncleaned disconnect). */
   const activeSlotCount = (): number => {
     let count = 0;
     for (const e of entities.values()) {
@@ -752,7 +557,6 @@ export function createSubagentManager(
     return count;
   };
 
-  /** Detach the TurnComponent and record a SettledComponent. */
   const settleTurn = (
     e: SubagentEntity,
     outcome: "completed" | "stopped" | "error",
@@ -785,7 +589,6 @@ export function createSubagentManager(
     reconcile();
   };
 
-  /** Destroy an entity's WorkerComponent (process + view). Retains component with cleanupError if destroy fails. */
   const destroyWorker = (
     e: SubagentEntity,
     onCleaned?: () => void,
@@ -795,7 +598,14 @@ export function createSubagentManager(
       onCleaned?.();
       return Promise.resolve();
     }
-    if (worker.closing) return worker.closing;
+    if (worker.closing) {
+      return onCleaned
+        ? worker.closing.then(() => {
+            if (!worker.cleanupError && e.worker !== worker) onCleaned();
+          })
+        : worker.closing;
+    }
+    worker.cleanupError = undefined;
     const op = serializeView(async () => {
       let viewErr: unknown;
       if (worker.view && executor.close_view) {
@@ -806,13 +616,20 @@ export function createSubagentManager(
           viewErr = err;
         }
       }
-      let sessionErr: unknown;
-      try {
-        await worker.session.close();
-      } catch (err) {
-        sessionErr = err;
+      let termErr: unknown;
+      if (worker.terminal) {
+        try {
+          await executor.destroy(worker.terminal);
+          worker.terminal = undefined;
+        } catch (err) {
+          termErr = err;
+        }
       }
-      const cause = sessionErr ?? viewErr;
+      if (!termErr && worker.promptDirectory) {
+        rmSync(worker.promptDirectory, { recursive: true, force: true });
+        worker.promptDirectory = undefined;
+      }
+      const cause = termErr ?? viewErr;
       if (cause) {
         worker.cleanupError =
           cause instanceof Error ? cause.message : String(cause);
@@ -849,135 +666,87 @@ export function createSubagentManager(
     };
   };
 
-  const handleWorkerEvent = (
+  const applyReadResult = (
     e: SubagentEntity,
-    session: WorkerSession,
-    event: WorkerEvent,
+    turn: TurnComponent | undefined,
+    readRes: ReadResult,
   ): void => {
-    if (e.worker?.session !== session) return;
-    if (typeof event.sessionPath === "string" && event.sessionPath) {
-      e.sessionPath = event.sessionPath;
+    if (readRes.sessionPath) e.sessionPath = readRes.sessionPath;
+    if (validText(readRes.model)) e.model = readRes.model;
+    if (readRes.stats && turn) {
+      turn.stats = { ...turn.stats, ...readRes.stats };
     }
-    if (validText(event.model)) {
-      e.model = event.model;
-    }
+    applyReply(e, readRes.text, readRes.truncated === true);
+  };
 
-    if (event.type === "ready") {
-      changed();
-      return;
-    }
-    if (event.type === "session_update") {
-      if (
-        typeof event.interactionId !== "string" ||
-        !event.interactionId.trim() ||
-        !Number.isSafeInteger(event.sequence) ||
-        event.sequence < 1 ||
-        typeof event.response !== "string" ||
-        Buffer.byteLength(event.response) > MAX_RESULT_BYTES
-      ) {
-        return;
-      }
-      if (event.sequence <= e.lastInteractionSeq || disposed) return;
-      e.lastInteractionSeq = event.sequence;
-      applyReply(e, event.response, event.truncated === true, event.sequence);
-      changed();
-      try {
-        options.onSessionUpdate?.(snap(e), event);
-      } catch {}
-      return;
-    }
-    if (event.type === "session_state") {
-      if (!isBackendSessionState(event.state)) return;
+  const syncInspectState = (e: SubagentEntity, status: InspectResult): void => {
+    if (!e.worker) return;
+    if (status.state === "blocked") {
       e.worker.interactiveActivity =
-        event.state === "interactive"
-          ? (event.activity?.slice(0, 4096) ?? "Thinking…")
-          : undefined;
-      if (
-        e.turn &&
-        event.state === "running" &&
-        typeof event.activity === "string" &&
-        (event.round === undefined || event.round === e.turn.round)
-      ) {
-        e.turn.activity = event.activity.slice(0, 4096);
-      }
-      changed();
-      reconcile();
-      return;
-    }
-
-    const turn = e.turn;
-    if (!turn || (event.round !== undefined && event.round !== turn.round)) {
-      return;
-    }
-    if (event.type === "stats") {
-      for (const k of [
-        "turnCount",
-        "toolUses",
-        "totalTokens",
-        "compactionCount",
-      ] as const) {
-        const v = event[k];
-        if (typeof v === "number" && Number.isSafeInteger(v) && v >= 0) {
-          turn.stats[k] = v;
-        }
-      }
-      turn.stats.contextPercent =
-        typeof event.contextPercent === "number" &&
-        Number.isFinite(event.contextPercent) &&
-        event.contextPercent >= 0 &&
-        event.contextPercent <= 100
-          ? event.contextPercent
-          : undefined;
-      changed();
-    } else if (event.type === "completed") {
-      applyReply(e, event.result, event.truncated === true);
-      if (event.canceled) settleTurn(e, "stopped");
-      else if (event.error) settleTurn(e, "error", event.error);
-      else settleTurn(e, turn.canceling ? "stopped" : "completed");
+        status.message ||
+        (status.blockedKind
+          ? `Waiting for ${status.blockedKind}`
+          : "User interaction");
+    } else if (!e.turn && status.state === "working") {
+      e.worker.interactiveActivity = status.message || "Thinking…";
+    } else {
+      e.worker.interactiveActivity = undefined;
     }
   };
 
-  /** Execute a single turn: ensure WorkerComponent is connected, then dispatch command. */
   const executeTurn = async (
     e: SubagentEntity,
     turn: TurnComponent,
   ): Promise<void> => {
     try {
-      const alive =
-        e.worker?.session.connected &&
-        !e.worker.cleanupError &&
-        (await e.worker.session.inspect());
+      let inspected =
+        e.worker?.terminal && !e.worker.cleanupError
+          ? await executor.inspect(e.worker.terminal)
+          : { alive: false };
+      syncInspectState(e, inspected);
+
       if (e.turn !== turn || disposed || turn.canceling) {
         await destroyWorker(e, () => settleTurn(e, "stopped"));
         return;
       }
-      if (!alive) {
+      if (!inspected.alive) {
         if (e.worker) await destroyWorker(e);
-        const session = createWorkerSession(
+        const worker: WorkerComponent = {};
+        e.worker = worker;
+        const { argv, promptDirectory } = await prepareWorkerLaunch(
           e,
-          executor,
+          executor.supportsView,
           options,
-          (ev) => handleWorkerEvent(e, session, ev),
-          () => {
-            if (e.worker?.session !== session) return;
-            if (e.turn && !e.turn.dispatched && e.turn.launching) return;
-            const outcome = e.turn?.canceling ? "stopped" : "error";
-            void destroyWorker(e, () =>
-              settleTurn(e, outcome, "Pi worker disconnected."),
-            );
-          },
         );
-        e.worker = { session };
-        await session.start();
+        worker.promptDirectory = promptDirectory;
+        if (e.turn !== turn || disposed || turn.canceling) {
+          await destroyWorker(e, () => settleTurn(e, "stopped"));
+          return;
+        }
+        worker.terminal = await executor.start({
+          agentId: e.id,
+          agentType: e.options.agent?.name,
+          cwd: e.options.cwd,
+          sessionPath: e.sessionPath,
+          argv,
+          env: { [WORKER_MARKER]: "1" },
+        });
+        inspected = await executor.inspect(worker.terminal);
+        syncInspectState(e, inspected);
       }
+      const terminal = e.worker?.terminal;
       if (e.turn !== turn || disposed || turn.canceling) {
         await destroyWorker(e, () => settleTurn(e, "stopped"));
         return;
       }
-      if (!e.worker?.session.connected) {
+      if (!terminal || !inspected.alive) {
         throw new Error("Subagent runtime disconnected during startup.");
       }
-      if (e.worker.interactiveActivity !== undefined) {
+      if (
+        e.worker?.interactiveActivity !== undefined ||
+        inspected.state === "blocked" ||
+        inspected.state === "working"
+      ) {
         settleTurn(
           e,
           "error",
@@ -985,10 +754,48 @@ export function createSubagentManager(
         );
         return;
       }
+
       turn.dispatched = true;
       turn.activity = "Thinking…";
       changed();
-      e.worker.session.send(turn.command);
+
+      await executor.send(terminal, turn.prompt, { if: "idle" });
+      if (e.turn !== turn || disposed) return;
+
+      const settledStatus = await executor.wait(terminal);
+      if (e.turn !== turn || e.worker?.terminal !== terminal) return;
+      syncInspectState(e, settledStatus);
+
+      if (!settledStatus.alive) {
+        const outcome = turn.canceling ? "stopped" : "error";
+        await destroyWorker(e, () =>
+          settleTurn(e, outcome, "Pi worker disconnected."),
+        );
+        return;
+      }
+
+      const readRes = await executor.read(terminal);
+      if (e.turn !== turn || e.worker?.terminal !== terminal) return;
+      applyReadResult(e, turn, readRes);
+
+      if (turn.canceling || readRes.aborted) {
+        settleTurn(e, "stopped");
+      } else if (settledStatus.state === "error" || readRes.error) {
+        settleTurn(
+          e,
+          "error",
+          readRes.error ?? settledStatus.message ?? "Pi assistant failed",
+        );
+      } else if (settledStatus.state === "blocked") {
+        settleTurn(
+          e,
+          "error",
+          settledStatus.message ??
+            "Subagent is blocked waiting for user input.",
+        );
+      } else {
+        settleTurn(e, "completed");
+      }
     } catch (error) {
       if (e.turn !== turn) return;
       const msg = error instanceof Error ? error.message : String(error);
@@ -997,15 +804,8 @@ export function createSubagentManager(
     }
   };
 
-  /**
-   * Game-loop style Reconcile System:
-   * 1. Reaper System: releases idle headless workers without open views.
-   * 2. Scheduler System: assigns concurrency slots to queued TurnComponents and launches them.
-   */
   function reconcile(): void {
     if (disposed) return;
-
-    // System 1: Reaper (release finished headless workers)
     if (!supportsView) {
       for (const e of entities.values()) {
         if (
@@ -1019,8 +819,6 @@ export function createSubagentManager(
         }
       }
     }
-
-    // System 2: Scheduler (dispatch queued turns within maxConcurrent budget)
     const max = options.maxConcurrent ?? 4;
     for (const e of entities.values()) {
       if (activeSlotCount() >= max) break;
@@ -1042,22 +840,42 @@ export function createSubagentManager(
     }
   }
 
-  const liveView = async (
-    e: SubagentEntity,
-  ): Promise<ViewHandle | undefined> => {
-    const view = e.worker?.view;
-    if (
-      view &&
-      executor.inspect_view &&
-      !(await executor.inspect_view(view)).alive
-    ) {
-      await executor.close_view?.(view);
-      if (e.worker?.view === view) {
-        e.worker.view = undefined;
-        changed();
-      }
+  const refreshLiveWorker = async (e: SubagentEntity): Promise<void> => {
+    const terminal = e.worker?.terminal;
+    if (!e.worker || e.worker.closing || e.worker.cleanupError || !terminal) {
+      return;
     }
-    return e.worker?.view;
+    try {
+      const status = await executor.inspect(terminal);
+      const prevInteractive = e.worker.interactiveActivity;
+      syncInspectState(e, status);
+      if (e.worker.interactiveActivity !== prevInteractive) changed();
+      if (!e.turn && status.alive && status.state !== "working") {
+        const readRes = await executor.read(terminal);
+        if (readRes.sessionPath) e.sessionPath = readRes.sessionPath;
+        if (validText(readRes.model)) e.model = readRes.model;
+        if (readRes.text && readRes.text !== e.reply?.text) {
+          const seq = ++e.lastInteractionSeq;
+          applyReply(e, readRes.text, readRes.truncated === true, seq);
+          changed();
+          try {
+            options.onSessionUpdate?.(snap(e), {
+              type: "session_update",
+              interactionId: randomUUID(),
+              sequence: seq,
+              response: readRes.text,
+              outcome: readRes.error
+                ? "error"
+                : readRes.aborted
+                  ? "aborted"
+                  : "completed",
+              ...(readRes.truncated ? { truncated: true } : {}),
+              ...(readRes.error ? { error: readRes.error } : {}),
+            });
+          } catch {}
+        }
+      }
+    } catch {}
   };
 
   return {
@@ -1069,9 +887,9 @@ export function createSubagentManager(
     get: (id) => snap(getEntity(id)),
     spawn(spawnOpts) {
       if (disposed) throw new Error("Subagent manager is closed.");
-      const command = createTaskCommand(spawnOpts.prompt);
+      const prompt = validatePrompt(spawnOpts.prompt);
       const parentSession = prepareParentSnapshot(spawnOpts);
-      const firstLine = spawnOpts.prompt
+      const firstLine = prompt
         .trim()
         .split(/\r?\n/)[0]
         ?.replace(/\s+/g, " ")
@@ -1084,10 +902,9 @@ export function createSubagentManager(
             spawnOpts.agent?.name ??
             "Subagent task"));
       const id = `sub-${nextSequence++}`;
-      const sessionKey = randomUUID();
       const entity: SubagentEntity = {
         id,
-        sessionKey,
+        sessionKey: randomUUID(),
         description,
         options: {
           ...spawnOpts,
@@ -1096,7 +913,7 @@ export function createSubagentManager(
           context: undefined,
           sessionName: `Sub · ${spawnOpts.agent?.name ?? "-"} · ${description.replace(/\s+/g, " ").trim()}`,
         },
-        turn: createTurnComponent(1, command),
+        turn: createTurnComponent(1, prompt),
         lastInteractionSeq: 0,
       };
       entities.set(id, entity);
@@ -1108,30 +925,27 @@ export function createSubagentManager(
     async send(id, sendOpts) {
       if (disposed) throw new Error("Subagent manager is closed.");
       const e = getEntity(id);
-      if (!sendOpts.prompt.trim())
-        throw new Error("Task prompt must not be blank.");
+      const prompt = validatePrompt(sendOpts.prompt);
       if (e.worker?.closing) await e.worker.closing.catch(() => undefined);
+      await refreshLiveWorker(e);
+
       if (e.turn) {
         if (
           e.turn.dispatched &&
           !e.turn.canceling &&
-          e.worker?.session.connected &&
+          e.worker?.terminal &&
           !e.worker.closing &&
           !e.worker.cleanupError
         ) {
-          e.worker.session.send({
-            type: "steer",
-            message: sendOpts.prompt,
-            ...(e.turn.round > 1 ? { round: e.turn.round } : {}),
-          });
+          await executor.send(e.worker.terminal, prompt, { if: "working" });
           return {
             ...snap(e),
             hint: `Steering message delivered to active round. Call subagent_ctl({ id: "${id}", action: "wait" }) to wait for the final result.`,
           };
         }
         if (!e.turn.dispatched && !e.turn.launching) {
-          const combined = `${e.options.prompt}\n\n${sendOpts.prompt}`;
-          e.turn.command = createTaskCommand(combined, e.turn.round);
+          const combined = validatePrompt(`${e.options.prompt}\n\n${prompt}`);
+          e.turn.prompt = combined;
           e.options = { ...e.options, prompt: combined };
           if (sendOpts.description) e.description = sendOpts.description;
           changed();
@@ -1152,13 +966,13 @@ export function createSubagentManager(
         );
       }
       const round = (e.settled?.round ?? 1) + 1;
-      const command = createTaskCommand(sendOpts.prompt, round);
+      const turn = createTurnComponent(round, prompt);
       if (sendOpts.description) {
         e.description = sendOpts.description;
         e.options = { ...e.options, description: sendOpts.description };
       }
-      e.options = { ...e.options, prompt: sendOpts.prompt };
-      e.turn = createTurnComponent(round, command);
+      e.options = { ...e.options, prompt };
+      e.turn = turn;
       changed();
       reconcile();
       return snap(e);
@@ -1199,6 +1013,7 @@ export function createSubagentManager(
           }
         }
       }
+      await refreshLiveWorker(e);
       if (!turn && e.settled) e.settled.consumed = true;
       return snap(e);
     },
@@ -1220,17 +1035,13 @@ export function createSubagentManager(
       }
       if (!turn.canceling) {
         turn.canceling = true;
-        if (!turn.dispatched || !e.worker?.session.connected) {
+        const terminal = e.worker?.terminal;
+        if (!turn.dispatched || !terminal) {
           void destroyWorker(e, () => settleTurn(e, "stopped"));
         } else {
-          try {
-            e.worker.session.send({
-              type: "cancel",
-              ...(turn.round > 1 ? { round: turn.round } : {}),
-            });
-          } catch {
+          void executor.interrupt(terminal).catch(() => {
             void destroyWorker(e, () => settleTurn(e, "stopped"));
-          }
+          });
           turn.cancelTimer = setTimeout(() => {
             if (e.turn === turn) {
               void destroyWorker(e, () => settleTurn(e, "stopped"));
@@ -1253,17 +1064,25 @@ export function createSubagentManager(
         if (!e.worker || e.worker.closing || e.worker.cleanupError) {
           throw new Error("Subagent runtime is closed/released.");
         }
-        const terminal = e.worker.session.terminal;
+        const terminal = e.worker.terminal;
         if (!terminal) throw new Error("Subagent terminal is not ready yet.");
-        const existing = await liveView(e);
-        if (existing) {
-          await executor.focus_view?.(existing);
-          return existing;
+        const view = e.worker.view;
+        if (
+          view &&
+          executor.inspect_view &&
+          !(await executor.inspect_view(view)).alive
+        ) {
+          await executor.close_view?.(view);
+          e.worker.view = undefined;
+          changed();
         }
-        const view = await executor.open_view({ terminal });
-        e.worker.view = view;
+        if (e.worker.view) {
+          await executor.focus_view?.(e.worker.view);
+          return e.worker.view;
+        }
+        e.worker.view = await executor.open_view({ terminal });
         changed();
-        return view;
+        return e.worker.view;
       });
     },
     closeView(id) {
@@ -1283,9 +1102,8 @@ export function createSubagentManager(
         clearTimeout(e.turn.cancelTimer);
         e.turn.canceling = true;
       }
-      void e.worker?.session.close().catch(() => undefined);
-      await launch?.catch(() => undefined);
       await destroyWorker(e);
+      await launch?.catch(() => undefined);
       if (e.worker?.cleanupError) {
         throw new Error(
           `Could not delete subagent ${id} (${e.worker.cleanupError}); retry deletion.`,
@@ -1299,15 +1117,17 @@ export function createSubagentManager(
     close() {
       closing ??= (async () => {
         disposed = true;
-        const launches: Promise<void>[] = [];
         for (const e of entities.values()) {
-          if (e.turn?.launching) launches.push(e.turn.launching);
           if (e.turn) settleTurn(e, "stopped");
         }
-        await Promise.allSettled(launches);
         await Promise.allSettled(
           [...entities.values()].map((e) => destroyWorker(e)),
         );
+        const launches: Promise<void>[] = [];
+        for (const e of entities.values()) {
+          if (e.turn?.launching) launches.push(e.turn.launching);
+        }
+        await Promise.allSettled(launches);
         const errors = [...entities.values()].flatMap((e) =>
           e.worker?.cleanupError
             ? [

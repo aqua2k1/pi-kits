@@ -1,76 +1,104 @@
 import assert from "node:assert/strict";
-import type { ChildProcess } from "node:child_process";
-import { EventEmitter } from "node:events";
+import { rmSync } from "node:fs";
 import { test } from "node:test";
-import { ExecutorError } from "./index.ts";
+import { SessionManager } from "@earendil-works/pi-coding-agent";
+import { useAgentDir } from "../../../tests/helpers/agent-dir.ts";
+import { readSessionSnapshot } from "./index.ts";
 import {
   createSubprocessExecutor,
-  type SubprocessSpawner,
+  formatRpcSendCommand,
+  parseRpcSettlementLine,
 } from "./subprocess.ts";
 
-function createFakeChild() {
-  const emitter = new EventEmitter();
-  return Object.assign(emitter, {
-    pid: 4321 as number | undefined,
-    exitCode: null as number | null,
-    signalCode: null as NodeJS.Signals | null,
-    killedSignals: [] as string[],
-    unreffed: false,
-    unref() {
-      this.unreffed = true;
-    },
-    kill(signal = "SIGTERM") {
-      this.killedSignals.push(signal);
-      this.exitCode = 0;
-      emitter.emit("exit", 0, signal);
-      return true;
-    },
+test("formatRpcSendCommand and parseRpcSettlementLine are pure protocol functions", () => {
+  assert.deepEqual(JSON.parse(formatRpcSendCommand("Inspect files")), {
+    type: "prompt",
+    message: "Inspect files",
+    streamingBehavior: "followUp",
   });
-}
+  assert.deepEqual(
+    JSON.parse(formatRpcSendCommand("Focus on index.ts", { if: "working" })),
+    {
+      type: "steer",
+      message: "Focus on index.ts",
+    },
+  );
 
-test("subprocess executor spawns detached child and cleans up", async () => {
-  const spawned: Array<{
-    command: string;
-    args: string[];
-    cwd: string;
-    env: NodeJS.ProcessEnv;
-  }> = [];
-  const children: ReturnType<typeof createFakeChild>[] = [];
-  const spawner: SubprocessSpawner = (command, args, options) => {
-    const child = createFakeChild();
-    children.push(child);
-    spawned.push({ command, args, cwd: options.cwd, env: options.env });
-    return child as unknown as ChildProcess;
-  };
-  const executor = createSubprocessExecutor({
-    spawn: spawner,
-    env: { BASE_VAR: "kept" },
-    graceMs: 10,
+  assert.equal(
+    parseRpcSettlementLine('{"type":"tool_execution_start"}'),
+    undefined,
+  );
+  assert.deepEqual(
+    parseRpcSettlementLine('{"type":"agent_settled","outcome":"completed"}'),
+    { alive: true, state: "done" },
+  );
+  assert.deepEqual(
+    parseRpcSettlementLine('{"type":"agent_settled","aborted":true}'),
+    { alive: true, state: "idle" },
+  );
+  assert.deepEqual(
+    parseRpcSettlementLine(
+      '{"type":"response","command":"prompt","success":false,"error":"bad prompt"}',
+    ),
+    { alive: true, state: "error", message: "bad prompt" },
+  );
+});
+
+test("subprocess executor runs real process over stdio RPC and reads persisted sessionPath", async (t) => {
+  useAgentDir(t);
+  const session = SessionManager.create("/tmp", undefined, {
+    id: "subprocess-read-test",
   });
-  assert.equal(executor.id, "subprocess");
-  assert.equal(executor.supportsView, false);
-  assert.equal(executor.check_env(), true);
+  session.appendMessage({
+    role: "user",
+    content: "Inspect files",
+    timestamp: 1,
+  });
+  session.appendMessage({
+    role: "assistant",
+    content: [
+      { type: "toolCall", id: "t1", name: "read", arguments: {} },
+      { type: "text", text: "Found 2 issues" },
+    ],
+    provider: "openai",
+    model: "gpt-5",
+    usage: { input: 5, output: 10, cacheWrite: 0 },
+    timestamp: 2,
+  } as unknown as Parameters<SessionManager["appendMessage"]>[0]);
+  const sessionFile = session.getSessionFile();
+  assert.ok(sessionFile);
+  t.after(() => rmSync(sessionFile, { force: true }));
 
+  // Pure function readSessionSnapshot test
+  const snapshot = readSessionSnapshot(sessionFile);
+  assert.equal(snapshot.text, "Found 2 issues");
+  assert.equal(snapshot.model, "openai/gpt-5");
+  assert.equal(snapshot.stats?.toolUses, 1);
+  assert.equal(snapshot.stats?.totalTokens, 15);
+
+  // End-to-end stateless subprocess lifecycle with a minimal node echo script
+  const executor = createSubprocessExecutor({ env: process.env });
+  const script = `
+    process.stdin.setEncoding("utf8");
+    process.stdin.on("data", (d) => {
+      if (d.includes('"prompt"')) {
+        process.stdout.write('{"type":"agent_settled","outcome":"completed"}\\n');
+      }
+    });
+  `;
   const handle = await executor.start({
     agentId: "sub-1",
-    agentType: "explorer",
-    cwd: "/tmp/project",
-    argv: ["pi", "--no-extensions", "-e", "/worker.ts"],
-    env: { PI_KITS_SUBAGENT_WORKER: "1" },
+    cwd: "/tmp",
+    sessionPath: sessionFile,
+    argv: [process.execPath, "-e", script],
+    env: {},
   });
-  assert.equal(spawned.length, 1);
-  assert.equal(spawned[0].command, "pi");
-  assert.deepEqual(spawned[0].args, ["--no-extensions", "-e", "/worker.ts"]);
-  assert.equal(spawned[0].cwd, "/tmp/project");
-  assert.equal(spawned[0].env.BASE_VAR, "kept");
-  assert.equal(spawned[0].env.PI_KITS_SUBAGENT_WORKER, "1");
-  assert.equal(children[0].unreffed, true);
 
   assert.deepEqual(await executor.inspect(handle), { alive: true });
+  await executor.send(handle, "Inspect files");
+  assert.deepEqual(await executor.wait(handle), { alive: true, state: "done" });
+  assert.equal((await executor.read(handle)).text, "Found 2 issues");
+
   await executor.destroy(handle);
-  await assert.rejects(executor.inspect(handle), (err: unknown) => {
-    assert.ok(err instanceof ExecutorError);
-    assert.equal(err.code, "unowned_terminal");
-    return true;
-  });
+  assert.deepEqual(await executor.inspect(handle), { alive: false });
 });

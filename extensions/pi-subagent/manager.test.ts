@@ -1,107 +1,146 @@
 import assert from "node:assert/strict";
 import { existsSync, readFileSync } from "node:fs";
-import { connect, type Socket } from "node:net";
 import { test } from "node:test";
 import { setTimeout as delay } from "node:timers/promises";
 import { SessionManager } from "@earendil-works/pi-coding-agent";
 import { useAgentDir } from "../../tests/helpers/agent-dir.ts";
 import { parseAgentDefinition } from "./config.ts";
-import type {
-  Executor,
-  OpenViewOptions,
-  StartOptions,
-  TerminalHandle,
-  ViewHandle,
+import {
+  type AgentExecutionState,
+  defineExecutor,
+  type InspectResult,
+  type ReadResult,
+  type StartOptions,
 } from "./execute/index.ts";
 import { createSubagentManager } from "./manager.ts";
 
-function createFakeExecutor(supportsView = true) {
-  const started: StartOptions[] = [];
-  const commands = new Map<string, Record<string, unknown>[]>();
-  const sockets = new Map<string, Socket>();
-  const destroyed: string[] = [];
-  const closedViews: string[] = [];
-  const focused: string[] = [];
-  const opened: OpenViewOptions[] = [];
-  const missingViews = new Set<string>();
+export interface TurnDriver {
+  alive: boolean;
+  state: AgentExecutionState;
+  message?: string;
+  resultText: string;
+  errorText?: string;
+  aborted: boolean;
+  wake?: () => void;
+}
 
-  const emit = (id: string, event: Record<string, unknown>) => {
-    const command = commands.get(id)?.findLast((item) => item.type === "task");
-    const frame =
-      event.type === "ready" || event.type === "session_state"
-        ? event
-        : { round: command?.round, ...event };
-    sockets.get(id)?.write(`${JSON.stringify(frame)}\n`);
+export function createTestExecutor(supportsView = true) {
+  const started: StartOptions[] = [];
+  const commands = new Map<
+    string,
+    Array<{ type: "task" | "steer" | "cancel"; prompt?: string }>
+  >();
+  const drivers = new Map<string, TurnDriver>();
+  const destroyed: string[] = [];
+
+  const getDriver = (id: string): TurnDriver => {
+    const existing = drivers.get(id);
+    if (existing) return existing;
+    const created: TurnDriver = {
+      alive: true,
+      state: "idle",
+      resultText: "",
+      aborted: false,
+    };
+    drivers.set(id, created);
+    return created;
   };
 
-  const executor: Executor = {
+  const statusOf = (d: TurnDriver): InspectResult => ({
+    alive: d.alive,
+    ...(d.alive ? { state: d.state } : {}),
+    ...(d.message ? { message: d.message } : {}),
+  });
+
+  const executor = defineExecutor({
     id: "herdr-core",
     supportsView,
     check_env: () => true,
-    async start(options: StartOptions): Promise<TerminalHandle> {
+    async start(options: StartOptions) {
       started.push(options);
-      const [host, port] = options.env.PI_KITS_SUBAGENT_ENDPOINT.split(":");
-      const socket = connect({ host, port: Number(port) });
-      sockets.set(options.agentId, socket);
-      const existing = commands.get(options.agentId) ?? [];
-      commands.set(options.agentId, existing);
-      socket.setEncoding("utf8");
-      socket.on("error", () => undefined);
-      socket.on("connect", () => {
-        emit(options.agentId, {
-          type: "ready",
-          id: options.agentId,
-          token: options.env.PI_KITS_SUBAGENT_TOKEN,
-          sessionPath: `/tmp/session-${options.agentId}.jsonl`,
+      const d = getDriver(options.agentId);
+      d.alive = true;
+      d.state = "idle";
+      if (!commands.has(options.agentId)) commands.set(options.agentId, []);
+      return { id: options.agentId, sessionPath: options.sessionPath };
+    },
+    inspect: async (terminal) => statusOf(getDriver(terminal.id)),
+    async send(terminal, text, sendOpts) {
+      const d = getDriver(terminal.id);
+      d.state = "working";
+      commands.get(terminal.id)?.push({
+        type: sendOpts?.if === "working" ? "steer" : "task",
+        prompt: text,
+      });
+    },
+    async wait(terminal) {
+      const d = getDriver(terminal.id);
+      if (d.alive && d.state === "working") {
+        await new Promise<void>((resolve) => {
+          d.wake = resolve;
         });
-      });
-      let buffer = "";
-      socket.on("data", (chunk) => {
-        buffer += chunk;
-        let newline = buffer.indexOf("\n");
-        while (newline >= 0) {
-          commands
-            .get(options.agentId)
-            ?.push(JSON.parse(buffer.slice(0, newline)));
-          buffer = buffer.slice(newline + 1);
-          newline = buffer.indexOf("\n");
-        }
-      });
-      return { id: `${options.agentId}-term-${started.length}` };
+      }
+      return statusOf(d);
     },
-    inspect: async () => ({ alive: true }),
-    async destroy(handle: TerminalHandle) {
-      destroyed.push(handle.id);
-      const agentId = handle.id.split("-term-")[0];
-      sockets.get(agentId)?.destroy();
+    async interrupt(terminal) {
+      commands.get(terminal.id)?.push({ type: "cancel" });
     },
-    async open_view(options: OpenViewOptions): Promise<ViewHandle> {
-      opened.push(options);
-      return { id: `view-${options.terminal.id}-${opened.length}` };
-    },
-    async inspect_view(view: ViewHandle) {
+    async read(terminal): Promise<ReadResult> {
+      const d = getDriver(terminal.id);
       return {
-        alive: !missingViews.has(view.id) && !closedViews.includes(view.id),
+        text: d.resultText,
+        ...(d.errorText ? { error: d.errorText } : {}),
+        ...(d.aborted ? { aborted: true } : {}),
+        sessionPath: terminal.sessionPath,
       };
     },
-    async focus_view(view: ViewHandle) {
-      focused.push(view.id);
+    async destroy(terminal) {
+      destroyed.push(terminal.id);
+      const d = getDriver(terminal.id);
+      d.alive = false;
+      d.wake?.();
     },
-    async close_view(view: ViewHandle) {
-      closedViews.push(view.id);
-    },
-  };
+    ...(supportsView
+      ? {
+          open_view: async ({ terminal }) => ({ id: `view-${terminal.id}` }),
+          inspect_view: async () => ({ alive: true }),
+          focus_view: async () => undefined,
+          close_view: async () => undefined,
+        }
+      : {}),
+  });
 
   return {
     executor,
     started,
     commands,
     destroyed,
-    emit,
+    complete(
+      id: string,
+      resultText = "Done",
+      opts?: { error?: string; aborted?: boolean },
+    ) {
+      const d = getDriver(id);
+      d.resultText = resultText;
+      d.errorText = opts?.error;
+      d.aborted = opts?.aborted ?? false;
+      d.state = opts?.error ? "error" : opts?.aborted ? "idle" : "done";
+      d.wake?.();
+    },
+    disconnect(id: string) {
+      const d = getDriver(id);
+      d.alive = false;
+      d.wake?.();
+    },
+    setBlocked(id: string, message: string) {
+      const d = getDriver(id);
+      d.state = "blocked";
+      d.message = message;
+    },
   };
 }
 
-async function until(check: () => boolean) {
+export async function until(check: () => boolean) {
   for (let i = 0; i < 200; i++) {
     if (check()) return;
     await delay(5);
@@ -115,8 +154,9 @@ const task = {
   cwd: "/tmp/project",
 };
 
-test("spawn assigns short IDs, dynamic hints, and executes task commands", async (t) => {
-  const exec = createFakeExecutor();
+test("spawn assigns short IDs, dynamic hints, and executes task commands via execute layer", async (t) => {
+  useAgentDir(t);
+  const exec = createTestExecutor();
   const notifications: string[] = [];
   const manager = createSubagentManager(exec.executor, {
     extensionAllowlist: [],
@@ -132,25 +172,26 @@ test("spawn assigns short IDs, dynamic hints, and executes task commands", async
   const start = exec.started[0];
   assert.equal(start.env.PI_KITS_SUBAGENT_WORKER, "1");
   assert.ok(start.argv.includes("--no-extensions"));
-  assert.ok(start.argv.includes("sonnet"));
   assert.equal(
-    manager.get(first.id).sessionPath,
-    `/tmp/session-${first.id}.jsonl`,
+    start.argv.some((arg) => arg.endsWith("worker.ts")),
+    false,
   );
+  assert.ok(start.argv.includes("sonnet"));
+  assert.ok(start.sessionPath?.endsWith(".jsonl"));
+  assert.equal(manager.get(first.id).sessionPath, start.sessionPath);
 
   // Unified send while running routes to steer
   const steered = await manager.send(first.id, {
     prompt: "Only inspect files",
   });
   assert.match(steered.hint ?? "", /Steering message delivered/);
-  await until(() => exec.commands.get(first.id)?.length === 2);
   assert.deepEqual(exec.commands.get(first.id)?.[1], {
     type: "steer",
-    message: "Only inspect files",
+    prompt: "Only inspect files",
   });
 
   const waited = manager.result(first.id, true);
-  exec.emit(first.id, { type: "completed", result: "Found auth.ts" });
+  exec.complete(first.id, "Found auth.ts");
   const completed = await waited;
   assert.equal(completed.result, "Found auth.ts");
   assert.equal(completed.status, "completed");
@@ -162,7 +203,8 @@ test("spawn assigns short IDs, dynamic hints, and executes task commands", async
 });
 
 test("cold resume automatically restarts from saved sessionPath after process release", async (t) => {
-  const exec = createFakeExecutor(false);
+  useAgentDir(t);
+  const exec = createTestExecutor(false);
   const manager = createSubagentManager(exec.executor, {
     extensionAllowlist: [],
   });
@@ -170,14 +212,15 @@ test("cold resume automatically restarts from saved sessionPath after process re
 
   const agent = manager.spawn(task);
   await until(() => exec.commands.get(agent.id)?.length === 1);
-  assert.ok(exec.started[0].argv.includes("--session-id"));
+  const firstSessionPath = exec.started[0].sessionPath;
+  assert.ok(firstSessionPath);
+  assert.ok(exec.started[0].argv.includes("--session"));
 
-  exec.emit(agent.id, { type: "completed", result: "Round 1 done" });
+  exec.complete(agent.id, "Round 1 done");
   await until(() => manager.get(agent.id).status === "completed");
   await until(() => exec.destroyed.length === 1);
   assert.equal(manager.get(agent.id).sessionState, "closed");
 
-  // Send on a released session cold-restarts with --session <sessionPath>!
   const resumed = await manager.send(agent.id, {
     prompt: "Continue round 2",
     description: "Round 2",
@@ -187,25 +230,19 @@ test("cold resume automatically restarts from saved sessionPath after process re
   await until(() => exec.started.length === 2);
   const secondArgv = exec.started[1].argv;
   const sessionFlagIdx = secondArgv.indexOf("--session");
-  assert.ok(
-    sessionFlagIdx >= 0,
-    "Cold resume must pass --session <sessionPath>",
-  );
-  assert.equal(
-    secondArgv[sessionFlagIdx + 1],
-    `/tmp/session-${agent.id}.jsonl`,
-  );
+  assert.ok(sessionFlagIdx >= 0);
+  assert.equal(secondArgv[sessionFlagIdx + 1], firstSessionPath);
 
   await until(() => exec.commands.get(agent.id)?.length === 2);
   assert.deepEqual(exec.commands.get(agent.id)?.[1], {
     type: "task",
     prompt: "Continue round 2",
-    round: 2,
   });
 });
 
 test("hot resume reuses live terminal session without restarting process", async (t) => {
-  const exec = createFakeExecutor();
+  useAgentDir(t);
+  const exec = createTestExecutor();
   const manager = createSubagentManager(exec.executor, {
     extensionAllowlist: [],
   });
@@ -213,7 +250,7 @@ test("hot resume reuses live terminal session without restarting process", async
 
   const agent = manager.spawn(task);
   await until(() => exec.commands.get(agent.id)?.length === 1);
-  exec.emit(agent.id, { type: "completed", result: "Round 1" });
+  exec.complete(agent.id, "Round 1");
   await until(() => manager.get(agent.id).status === "completed");
   assert.equal(exec.destroyed.length, 0);
 
@@ -223,7 +260,6 @@ test("hot resume reuses live terminal session without restarting process", async
   assert.deepEqual(exec.commands.get(agent.id)?.[1], {
     type: "task",
     prompt: "Hot round 2",
-    round: 2,
   });
 });
 
@@ -236,7 +272,7 @@ test("agent definition configures tools, prompt files, extensions, and context i
     timestamp: 1,
   });
 
-  const exec = createFakeExecutor();
+  const exec = createTestExecutor();
   const manager = createSubagentManager(exec.executor, {
     extensionAllowlist: [],
   });
@@ -277,7 +313,8 @@ System instructions`,
 });
 
 test("ECS data-driven entities derive status and sessionState purely from component presence", async (t) => {
-  const exec = createFakeExecutor();
+  useAgentDir(t);
+  const exec = createTestExecutor();
   const manager = createSubagentManager(exec.executor, {
     maxConcurrent: 1,
     extensionAllowlist: [],
@@ -293,21 +330,86 @@ test("ECS data-driven entities derive status and sessionState purely from compon
   assert.equal(manager.get(first.id).status, "running");
   assert.equal(manager.get(first.id).sessionState, "running");
 
-  // Native interactive activity on worker component derives sessionState="interactive"
-  exec.emit(first.id, { type: "completed", result: "Done 1" });
+  exec.complete(first.id, "Done 1");
   await until(() => manager.get(first.id).status === "completed");
   assert.equal(manager.get(first.id).sessionState, "idle");
 
-  exec.emit(first.id, {
-    type: "session_state",
-    state: "interactive",
-    activity: "bash",
+  exec.setBlocked(first.id, "Permission needed");
+  const snap = await manager.result(first.id, false);
+  assert.equal(snap.sessionState, "interactive");
+  assert.equal(snap.status, "completed");
+  assert.equal(snap.sessionActivity, "Permission needed");
+  assert.match(snap.hint ?? "", /interacting in the native terminal/);
+});
+
+test("canceling one result waiter does not release another waiter's notification claim", async (t) => {
+  useAgentDir(t);
+  const h = createTestExecutor();
+  let notifications = 0;
+  const manager = createSubagentManager(h.executor, {
+    extensionAllowlist: [],
+    onComplete: () => {
+      notifications += 1;
+    },
   });
-  await until(() => manager.get(first.id).sessionState === "interactive");
-  assert.equal(manager.get(first.id).status, "completed");
-  assert.equal(manager.get(first.id).sessionActivity, "bash");
-  assert.match(
-    manager.get(first.id).hint ?? "",
-    /interacting in the native terminal/,
-  );
+  t.after(() => manager.close());
+  const { id } = manager.spawn(task);
+  await until(() => h.commands.get(id)?.length === 1);
+  const controller = new AbortController();
+  const canceled = manager.result(id, true, controller.signal);
+  const remaining = manager.result(id, true);
+  controller.abort(new Error("Canceled wait"));
+  await assert.rejects(canceled, /Canceled wait/);
+  h.complete(id);
+  assert.equal((await remaining).status, "completed");
+  assert.equal(notifications, 0);
+});
+
+test("running cancellation retains its queue slot until the worker settles", async (t) => {
+  useAgentDir(t);
+  const h = createTestExecutor();
+  const manager = createSubagentManager(h.executor, {
+    maxConcurrent: 1,
+    extensionAllowlist: [],
+  });
+  t.after(() => manager.close());
+  const first = manager.spawn(task);
+  const next = manager.spawn(task);
+  await until(() => h.commands.get(first.id)?.length === 1);
+  assert.equal(manager.stop(first.id).status, "stopping");
+  await delay(10);
+  assert.equal(h.started.length, 1);
+  h.complete(first.id, "Stopped", { aborted: true });
+  await until(() => h.commands.get(next.id)?.length === 1);
+  assert.equal(manager.get(first.id).status, "stopped");
+});
+
+test("unexpected worker exit retains the slot until cleanup succeeds; stop retries failures", async (t) => {
+  useAgentDir(t);
+  const h = createTestExecutor();
+  const destroy = h.executor.destroy.bind(h.executor);
+  let canDestroy = false;
+  h.executor.destroy = async (terminal) => {
+    if (!canDestroy) throw new Error("Server unavailable");
+    await destroy(terminal);
+  };
+  const manager = createSubagentManager(h.executor, {
+    maxConcurrent: 1,
+    extensionAllowlist: [],
+  });
+  t.after(async () => {
+    canDestroy = true;
+    await manager.close();
+  });
+  const first = manager.spawn(task);
+  const next = manager.spawn(task);
+  await until(() => h.commands.get(first.id)?.length === 1);
+  h.disconnect(first.id);
+  await until(() => manager.get(first.id).status === "disconnected");
+  assert.equal(h.started.length, 1);
+  canDestroy = true;
+  manager.stop(first.id);
+  await until(() => h.commands.get(next.id)?.length === 1);
+  assert.equal(manager.get(first.id).status, "stopped");
+  assert.deepEqual(h.destroyed, [first.id]);
 });

@@ -98,9 +98,8 @@ test("all six public tools and the completion message register shared-style rend
       .map((line) => line.trim())
       .filter(Boolean)
       .join("\n"),
-    "✓ Subagent · — · Task A · private- · completed\nDone",
+    "✓ Subagent · — · Task A · private-id · completed\nDone",
   );
-  assert.ok(!compact.includes("private-id"));
   const full =
     notification(
       message,

@@ -1,193 +1,55 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
+  buildHerdrRunParams,
+  buildHerdrSendParams,
+  checkHerdrCoreEnv,
   createHerdrCoreExecutor,
-  type HerdrCoreOptions,
-  type HerdrCoreRunner,
-  type HerdrCoreRunOptions,
-  type HerdrCoreRunResult,
+  isHerdrViewAlive,
+  parseHerdrRpcReply,
+  parseHerdrTerminalStatus,
 } from "./herdr-core.ts";
-import { type Executor, ExecutorError, type StartOptions } from "./index.ts";
+import { ExecutorError, type StartOptions } from "./index.ts";
 
-const binary = "/installed/hc with ' quotes";
-const baseEnv = {
+const baseEnv: NodeJS.ProcessEnv = {
   HC_TERMINAL_ID: "tparent",
   HC_SOCKET: "/tmp/core socket",
   INHERITED: "original",
 };
+
 const startOptions: StartOptions = {
   agentId: "sub-1",
   agentType: "reviewer",
   cwd: "/tmp/work dir",
-  argv: ["pi", "-e", "/tmp/worker.ts"],
-  env: { WORKER_TOKEN: "worker-token" },
+  argv: ["pi", "-e", "a 'b' \"c\" $HOME $(id)", ""],
+  env: {
+    WORKER_TOKEN: "tok",
+    HC_TERMINAL_ID: "tspoof",
+    INHERITED: "override",
+  },
 };
 
-type Params = Record<string, unknown>;
-interface Call {
-  binary: string;
-  argv: string[];
-  options: HerdrCoreRunOptions;
-  method: string;
-  params: Params;
-}
-interface Facts {
-  address: string;
-  name: string;
-  labels: Record<string, string>;
-  parent: string;
-  state: "live" | "finished";
-  keep?: boolean;
-}
+test("checkHerdrCoreEnv and executor check_env are pure and pin the supplied environment", () => {
+  assert.equal(checkHerdrCoreEnv({ HC_TERMINAL_ID: "tparent" }), true);
+  assert.equal(checkHerdrCoreEnv({}), false);
+  assert.equal(checkHerdrCoreEnv({ HC_TERMINAL_ID: "   " }), false);
 
-function reply(result: unknown): HerdrCoreRunResult {
-  return {
-    exitCode: 0,
-    stdout: `${JSON.stringify({ jsonrpc: "2.0", id: 1, result })}\n`,
-    stderr: "",
-  };
-}
-
-function failure(
-  kind = "not_found",
-  message = `mock ${kind}`,
-  exitCode = 1,
-): HerdrCoreRunResult {
-  return {
-    exitCode,
-    stdout: JSON.stringify({
-      jsonrpc: "2.0",
-      id: 1,
-      error: { code: -32000, message, data: { kind } },
-    }),
-    stderr: "",
-  };
-}
-
-function createFakeCore() {
-  const calls: Call[] = [];
-  const terminals = new Map<string, Facts>();
-  const parentLabels: Record<string, string> = { "herdr.space": "spremote" };
-  let next = 1;
-
-  const execute = ({ method, params }: Call): HerdrCoreRunResult => {
-    if (method === "terminal.get" && params.terminal === "tparent") {
-      return reply({ address: "tparent", labels: parentLabels });
-    }
-    if (method === "terminal.run") {
-      const address = `t${next++}`;
-      terminals.set(address, {
-        address,
-        name: params.name as string,
-        labels: { ...(params.labels as Record<string, string>) },
-        parent: params.parent as string,
-        state: "live",
-      });
-      return reply({ address });
-    }
-    const terminal = terminals.get(params.terminal as string);
-    if (!terminal) return failure();
-    if (method === "terminal.get") return reply(terminal);
-    if (method === "terminal.label") {
-      Object.assign(terminal.labels, params.labels);
-      return reply({});
-    }
-    if (method === "terminal.keep") {
-      terminal.keep = params.keep as boolean;
-      return reply({});
-    }
-    if (method === "terminal.kill") {
-      terminal.state = "finished";
-      return reply({});
-    }
-    if (method === "terminal.rm") {
-      terminals.delete(terminal.address);
-      return reply({ removed: terminal.address });
-    }
-    assert.fail(`Unexpected RPC: ${method}`);
-  };
-
-  const runner: HerdrCoreRunner = async (file, argv, options) => {
-    assert.ok(options.input.endsWith("\n"));
-    assert.deepEqual(argv, ["connect"]);
-    const request = JSON.parse(options.input);
-    const call: Call = {
-      binary: file,
-      argv: [...argv],
-      options: { ...options, env: { ...options.env } },
-      method: request.method,
-      params: request.params,
-    };
-    calls.push(call);
-    return execute(call);
-  };
-
-  return {
-    calls,
-    terminals,
-    executor(options: HerdrCoreOptions = {}): Executor {
-      return createHerdrCoreExecutor({
-        runner,
-        env: baseEnv,
-        binPath: binary,
-        ...options,
-      });
-    },
-    methods(): string[] {
-      return calls.map((call) => call.method);
-    },
-    facts(address = "t1"): Facts {
-      const facts = terminals.get(address);
-      assert.ok(facts);
-      return facts;
-    },
-  };
-}
-
-function code(expected: string) {
-  return (error: unknown): boolean => {
-    assert.ok(error instanceof ExecutorError);
-    assert.equal(error.code, expected);
-    return true;
-  };
-}
-
-test("construction and check_env are CLI-free and pin the supplied environment", () => {
   const env: NodeJS.ProcessEnv = { HC_TERMINAL_ID: "tparent" };
-  const executor = createHerdrCoreExecutor({
-    env,
-    runner: () => assert.fail("must not invoke hc"),
-  });
+  const executor = createHerdrCoreExecutor({ env });
   assert.equal(executor.check_env(), true);
   env.HC_TERMINAL_ID = "";
   assert.equal(executor.check_env(), true);
-  assert.equal(createHerdrCoreExecutor({ env: {} }).check_env(), false);
-  assert.equal(
-    createHerdrCoreExecutor({ env: { HC_TERMINAL_ID: "   " } }).check_env(),
-    false,
-  );
 });
 
-test("start preserves argv/cwd/env as data, strips HC_TERMINAL_ID, and sets subagent labels", async () => {
-  const fake = createFakeCore();
-  const executor = fake.executor({
-    env: { ...baseEnv, EXTRA: "kept", EMPTY: undefined },
-  });
-  const argv = ["pi", "-e", "a 'b' \"c\" $HOME $(id)", ""];
-  const terminal = await executor.start({
-    ...startOptions,
-    argv,
-    env: {
-      WORKER_TOKEN: "tok",
-      HC_TERMINAL_ID: "tspoof",
-      INHERITED: "override",
-    },
-  });
-  assert.deepEqual(Object.keys(terminal), ["id"]);
-  assert.deepEqual(fake.methods(), ["terminal.run"]);
-  const run = fake.calls[0].params;
-  assert.deepEqual(run.argv, argv);
+test("buildHerdrRunParams and buildHerdrSendParams preserve data, strip HC_TERMINAL_ID, and set labels", () => {
+  const run = buildHerdrRunParams(
+    startOptions,
+    { ...baseEnv, EXTRA: "kept", EMPTY: undefined },
+    "pi-fixed",
+  );
+  assert.deepEqual(run.argv, startOptions.argv);
   assert.equal(run.cwd, startOptions.cwd);
+  assert.equal(run.name, "pi-fixed");
   assert.equal(run.caller, "tparent");
   assert.equal(run.parent, "tparent");
   const childEnv = run.env as Record<string, string>;
@@ -195,45 +57,71 @@ test("start preserves argv/cwd/env as data, strips HC_TERMINAL_ID, and sets suba
   assert.equal(childEnv.INHERITED, "override");
   assert.equal(childEnv.EXTRA, "kept");
   assert.equal("HC_TERMINAL_ID" in childEnv, false);
-  const labels = run.labels as Record<string, string>;
-  assert.equal(labels["pi-kits.subagent.id"], startOptions.agentId);
-  assert.equal(labels["pi-kits.subagent.type"], "reviewer");
-});
+  assert.deepEqual(run.labels, {
+    "pi-kits.subagent.id": "sub-1",
+    "pi-kits.subagent.type": "reviewer",
+  });
 
-test("destroy kills and removes by address and handles already-missing terminals", async () => {
-  const fake = createFakeCore();
-  const executor = fake.executor();
-  const terminal = await executor.start(startOptions);
-  fake.calls.length = 0;
-  await executor.destroy(terminal);
-  assert.deepEqual(fake.methods(), ["terminal.kill", "terminal.rm"]);
-  assert.equal(fake.terminals.size, 0);
-  await assert.rejects(executor.destroy(terminal), code("unowned_terminal"));
-});
-
-test("HC-only tab views use parent space labels, inspect via terminal.get, and clear labels on close", async () => {
-  const fake = createFakeCore();
-  const warnings: string[] = [];
-  const executor = fake.executor({ warn: (message) => warnings.push(message) });
-  const terminal = await executor.start(startOptions);
-  assert.ok(
-    executor.open_view &&
-      executor.inspect_view &&
-      executor.focus_view &&
-      executor.close_view,
+  assert.deepEqual(
+    buildHerdrSendParams("t7", "Inspect x.ts", "tparent", { if: "working" }),
+    {
+      terminal: "t7",
+      caller: "tparent",
+      text: "Inspect x.ts",
+      if: "working",
+    },
   );
-  const view = await executor.open_view({ terminal });
-  assert.equal(fake.facts("t1").labels["herdr.space"], "spremote");
-  assert.ok(fake.facts("t1").labels["herdr.tab"]);
-  assert.equal(fake.facts("t1").keep, true);
-  assert.deepEqual(await executor.inspect_view(view), { alive: true });
-  await executor.focus_view(view);
-  assert.equal(warnings.length, 2);
+});
 
-  await executor.close_view(view);
-  assert.equal(fake.facts("t1").labels["herdr.space"], "");
-  assert.equal(fake.facts("t1").labels["herdr.tab"], "");
-  assert.equal(fake.facts("t1").keep, false);
-  assert.deepEqual(await executor.inspect_view(view), { alive: false });
-  await executor.close_view(view);
+test("parseHerdrRpcReply, parseHerdrTerminalStatus, and isHerdrViewAlive are pure transformations", () => {
+  assert.deepEqual(
+    parseHerdrRpcReply(0, '{"jsonrpc":"2.0","id":1,"result":{"address":"t1"}}'),
+    { address: "t1" },
+  );
+  assert.throws(
+    () =>
+      parseHerdrRpcReply(
+        1,
+        '{"jsonrpc":"2.0","id":1,"error":{"code":-32000,"message":"missing","data":{"kind":"not_found"}}}',
+      ),
+    (err: unknown) => err instanceof ExecutorError && err.code === "not_found",
+  );
+
+  assert.deepEqual(parseHerdrTerminalStatus(undefined), { alive: false });
+  assert.deepEqual(parseHerdrTerminalStatus({ state: "finished" }), {
+    alive: false,
+  });
+  assert.deepEqual(
+    parseHerdrTerminalStatus({
+      state: "live",
+      turn: 2,
+      status: { state: "blocked", kind: "permission", msg: "Allow bash?" },
+    }),
+    {
+      alive: true,
+      state: "blocked",
+      turn: 2,
+      message: "Allow bash?",
+      blockedKind: "permission",
+    },
+  );
+
+  const view = { id: "tb1", terminalId: "t1", space: "spremote", tab: "tb1" };
+  assert.equal(
+    isHerdrViewAlive(
+      {
+        state: "live",
+        labels: { "herdr.space": "spremote", "herdr.tab": "tb1" },
+      },
+      view,
+    ),
+    true,
+  );
+  assert.equal(
+    isHerdrViewAlive(
+      { state: "live", labels: { "herdr.space": "", "herdr.tab": "" } },
+      view,
+    ),
+    false,
+  );
 });

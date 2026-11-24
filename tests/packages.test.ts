@@ -116,10 +116,6 @@ test("repository and independent extension manifests declare the same explicit e
     for (const entry of manifest.pi.extensions) {
       assert.ok(!/[*?[\]{}]/u.test(entry), "Entries must be explicit paths");
       assert.ok(!entry.includes(".test.") && !entry.includes("/lib/"));
-      assert.ok(
-        !entry.endsWith("/worker.ts"),
-        "workers load only via explicit -e",
-      );
       const path = resolve(dir, entry);
       assert.ok(existsSync(path), path);
       entries.push(path);
