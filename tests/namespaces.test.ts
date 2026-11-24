@@ -4,7 +4,6 @@ import type {
   ExtensionAPI,
   ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
-import appendPrompts from "../extensions/pi-append-prompts/index.ts";
 import ask from "../extensions/pi-ask/index.ts";
 import canvasNote from "../extensions/pi-canvas-note/index.ts";
 import handoff from "../extensions/pi-handoff/index.ts";
@@ -59,12 +58,6 @@ const extensions: Array<{
   },
   { name: "pi-token-meter", register: tokenMeter, tools: [], commands: [] },
   { name: "pi-server-tools", register: serverTools, tools: [], commands: [] },
-  {
-    name: "pi-append-prompts",
-    register: appendPrompts,
-    tools: [],
-    commands: [],
-  },
 ];
 
 for (const extension of extensions) {

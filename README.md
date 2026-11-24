@@ -22,7 +22,6 @@ pi install https://github.com/aqua2k1/pi-kits.git
 | [pi-ask](extensions/pi-ask/README.md) | 单选、多选和自定义回答 |
 | [pi-subagent](extensions/pi-subagent/README.md) | Pi 独立子会话任务、按会话无缝续跑与 Herdr/子进程多宿主执行 |
 | [pi-server-tools](extensions/pi-server-tools/README.md) | 为支持的模型自动注入厂商原生服务端工具 |
-| [pi-append-prompts](extensions/pi-append-prompts/README.md) | 将目录中的 Markdown 片段追加到系统提示词 |
 
 `terminal` 扩展已从主线移除，原实现保留在 `archive/terminal` 分支；`/vim`、`/lg`、`/fm` 不再注册，建议通过 mux 启动相应程序。
 
