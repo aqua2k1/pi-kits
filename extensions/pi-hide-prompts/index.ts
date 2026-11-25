@@ -2,8 +2,9 @@ import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
-export function removeDocs(prompt: string): string {
-  return prompt.replace(/<docs>[\s\S]*?<\/docs>\s*/g, "");
+export function applyDocsGuidance(sections: Record<string, string>): void {
+  sections.docs =
+    "Use the current project's documentation and implementation as the source of truth; when an interface or convention is unclear, consult the relevant documentation before making changes.";
 }
 
 export default function hidePrompts(pi: ExtensionAPI) {
@@ -31,7 +32,6 @@ export default function hidePrompts(pi: ExtensionAPI) {
       }
     }
     if (!hideDocs) return;
-    const systemPrompt = removeDocs(event.systemPrompt);
-    if (systemPrompt !== event.systemPrompt) return { systemPrompt };
+    applyDocsGuidance(event.systemPromptOptions.sections);
   });
 }

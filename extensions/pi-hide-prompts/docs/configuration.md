@@ -4,7 +4,7 @@
 
 | 键 | 类型 | 默认值 | 说明 |
 |---|---|---|---|
-| `hideDocs` | boolean | `true` | `true` 隐藏 `<docs>...</docs>`，`false` 显示 |
+| `hideDocs` | boolean | `true` | `true` 用英文项目文档原则替换 Pi 文档指引，`false` 保留 Pi 默认指引；保留 `<docs>` 标签 |
 
 ## 示例
 
