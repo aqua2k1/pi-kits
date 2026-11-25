@@ -293,3 +293,126 @@ test("invalid cwd rejects before manager spawn", async (t) => {
     /Invalid subagent cwd/,
   );
 });
+
+test("foreground subagent and subagent_ctl wait stream deduplicated progress via onUpdate and return structuredContent", async (t) => {
+  const cwd = useAgentDir(t);
+  const capture = registrations();
+  capture.pi.getThinkingLevel = () => "medium";
+
+  const listeners = new Set<() => void>();
+  let currentSnapshot: AgentSnapshot = {
+    id: "sub-1",
+    description: "Inspect repo",
+    subagentType: "explorer",
+    status: "queued",
+    round: 1,
+    result: "stale-result-should-be-omitted-in-progress",
+  };
+  let resolveWait!: (snap: AgentSnapshot) => void;
+
+  registerSubagents(
+    capture.pi,
+    {} as Executor,
+    undefined,
+    undefined,
+    withManagerOverrides({
+      list: () => [currentSnapshot],
+      subscribe(listener) {
+        listeners.add(listener);
+        return () => listeners.delete(listener);
+      },
+      spawn() {
+        return currentSnapshot;
+      },
+      result(_id, wait) {
+        if (!wait) return Promise.resolve(currentSnapshot);
+        return new Promise((resolve) => {
+          resolveWait = resolve;
+        });
+      },
+      backgroundPreference: () => undefined,
+    }),
+  );
+
+  const subagent = capture.definitions.get("subagent");
+  const ctl = capture.definitions.get("subagent_ctl");
+  assert.ok(subagent && ctl);
+  assert.ok(subagent.outputSchema);
+  assert.ok(ctl.outputSchema);
+
+  const updates: Array<{
+    content: Array<{ type: string; text?: string }>;
+    details?: unknown;
+  }> = [];
+  const ctx = {
+    cwd,
+    mode: "rpc",
+    hasUI: true,
+  } as ExtensionToolContext;
+
+  const pending = ctl.execute(
+    "c-wait",
+    { id: "sub-1", action: "wait" },
+    undefined,
+    (partial) => {
+      updates.push(
+        partial as {
+          content: Array<{ type: string; text?: string }>;
+          details?: unknown;
+        },
+      );
+    },
+    ctx,
+  );
+
+  // Initial frame emitted immediately without carrying stale result
+  assert.equal(updates.length, 1);
+  assert.match(
+    updates[0].content[0]?.text ?? "",
+    /\[sub-1\] explorer · Inspect repo · queued/,
+  );
+  assert.equal((updates[0].details as AgentSnapshot).result, undefined);
+
+  // Duplicate notification with identical state should not emit again
+  for (const listener of listeners) listener();
+  assert.equal(updates.length, 1);
+
+  // State transition after throttle window emits updated activity
+  currentSnapshot = {
+    ...currentSnapshot,
+    status: "running",
+    sessionActivity: "Reading index.ts",
+  };
+  for (const listener of listeners) listener();
+  await new Promise((r) => setTimeout(r, 350));
+  assert.equal(updates.length, 2);
+  assert.match(
+    updates[1].content[0]?.text ?? "",
+    /running · round 1 · Reading index\.ts/,
+  );
+
+  // Final resolution returns readable text content + structuredContent + details
+  const finalSnap: AgentSnapshot = {
+    ...currentSnapshot,
+    status: "completed",
+    sessionActivity: undefined,
+    result: "All checks passed.",
+    sessionPath: "/tmp/sub-1.jsonl",
+    hint: "Done.",
+  };
+  resolveWait(finalSnap);
+  const res = await pending;
+
+  assert.equal(listeners.size, 1); // only status widget remains subscribed
+  const text = (res.content[0] as { text: string }).text;
+  assert.match(text, /\[sub-1\] explorer · Inspect repo · completed/);
+  assert.match(text, /All checks passed\./);
+  assert.match(text, /Session: \/tmp\/sub-1\.jsonl/);
+  assert.match(text, /Next: Done\./);
+  assert.equal(Value.Check(ctl.outputSchema, res.structuredContent), true);
+  assert.equal(
+    (res.structuredContent as { result?: string }).result,
+    "All checks passed.",
+  );
+  assert.equal((res.details as AgentSnapshot).id, "sub-1");
+});

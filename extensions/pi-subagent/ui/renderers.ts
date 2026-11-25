@@ -64,9 +64,11 @@ function snapshotSummary(
     preview:
       typeof snapshot.error === "string"
         ? snapshot.error
-        : typeof snapshot.result === "string"
+        : typeof snapshot.result === "string" && snapshot.result
           ? snapshot.result
-          : "",
+          : typeof snapshot.sessionActivity === "string"
+            ? snapshot.sessionActivity
+            : "",
     isError: hasDisplayError(snapshot),
     truncated: snapshot.truncated,
   };

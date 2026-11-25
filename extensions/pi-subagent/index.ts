@@ -3,6 +3,7 @@ import { statSync } from "node:fs";
 import { resolve } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import {
+  type AgentToolUpdateCallback,
   defineTool,
   type ExtensionAPI,
   type ExtensionContext,
@@ -26,6 +27,7 @@ import {
   createSubagentManager,
   type SubagentManager,
 } from "./manager.ts";
+import { formatProgressLine, formatSnapshotText } from "./ui/presentation.ts";
 import {
   renderSubagentNotification,
   renderSubagentResult,
@@ -46,8 +48,34 @@ const namespace = {
 const BASE_SUBAGENT_DESCRIPTION =
   "Send a task to an independent subagent session. Omit `id` to start a new session; provide `id` to steer a running session or resume a finished one (automatically restarting from its saved session file if the worker was released).";
 
+const PROGRESS_THROTTLE_MS = 300;
+
+const SubagentOutputSchema = Type.Object({
+  id: Type.String(),
+  description: Type.String(),
+  subagentType: Type.Optional(Type.String()),
+  cwd: Type.Optional(Type.String()),
+  status: Type.String(),
+  round: Type.Optional(Type.Number()),
+  sessionState: Type.Optional(Type.String()),
+  sessionActivity: Type.Optional(Type.String()),
+  error: Type.Optional(Type.String()),
+  truncated: Type.Optional(Type.Boolean()),
+  sessionPath: Type.Optional(Type.String()),
+  hint: Type.Optional(Type.String()),
+  result: Type.Optional(Type.String()),
+});
+
+function progressResult(snapshot: AgentSnapshot) {
+  const { result: _omit, ...lightDetails } = snapshot;
+  return {
+    content: [{ type: "text" as const, text: formatProgressLine(snapshot) }],
+    details: lightDetails as AgentSnapshot,
+  };
+}
+
 function toolResult(snapshot: AgentSnapshot) {
-  const payload = {
+  const structuredContent = {
     id: snapshot.id,
     description: snapshot.description,
     ...(snapshot.subagentType ? { subagentType: snapshot.subagentType } : {}),
@@ -64,19 +92,72 @@ function toolResult(snapshot: AgentSnapshot) {
     ...(snapshot.hint ? { hint: snapshot.hint } : {}),
     ...(snapshot.result !== undefined ? { result: snapshot.result } : {}),
   };
-  const text = JSON.stringify(payload, null, 2);
   return {
-    content: [
-      {
-        type: "text" as const,
-        text:
-          text.length > 24_000
-            ? `${text.slice(0, 24_000)}\n[Truncated; read the full session file at ${snapshot.sessionPath ?? "sessionPath"}.]`
-            : text,
-      },
-    ],
+    content: [{ type: "text" as const, text: formatSnapshotText(snapshot) }],
+    structuredContent,
     details: snapshot,
   };
+}
+
+async function waitWithProgress(
+  manager: SubagentManager,
+  id: string,
+  signal: AbortSignal | undefined,
+  onUpdate: AgentToolUpdateCallback<AgentSnapshot> | undefined,
+): Promise<AgentSnapshot> {
+  if (!onUpdate) return manager.result(id, true, signal);
+
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let dirty = false;
+  let lastEmitAt = 0;
+  let lastKey = "";
+
+  const clearTimer = () => {
+    if (timer) {
+      clearTimeout(timer);
+      timer = undefined;
+    }
+  };
+
+  const emit = () => {
+    dirty = false;
+    const snap = manager.list().find((agent) => agent.id === id);
+    if (!snap) return;
+    const key = [
+      snap.status,
+      snap.sessionState ?? "",
+      snap.round ?? 0,
+      snap.sessionActivity ?? "",
+      snap.error ?? "",
+    ].join("|");
+    if (key === lastKey) return;
+    lastKey = key;
+    lastEmitAt = Date.now();
+    onUpdate(progressResult(snap));
+  };
+
+  const schedule = () => {
+    dirty = true;
+    const delayMs = PROGRESS_THROTTLE_MS - (Date.now() - lastEmitAt);
+    if (delayMs <= 0) {
+      clearTimer();
+      emit();
+      return;
+    }
+    timer ??= setTimeout(() => {
+      timer = undefined;
+      if (dirty) emit();
+    }, delayMs);
+  };
+
+  emit();
+  const unsubscribe = manager.subscribe(schedule);
+  try {
+    return await manager.result(id, true, signal);
+  } finally {
+    unsubscribe();
+    clearTimer();
+  }
 }
 
 export function registerSubagents(
@@ -174,6 +255,7 @@ export function registerSubagents(
         manager?.list().find((agent) => agent.id === id),
       ),
       renderResult: renderSubagentResult,
+      outputSchema: SubagentOutputSchema,
       description: BASE_SUBAGENT_DESCRIPTION,
       prepareLoadout() {
         const currentCwd = context?.cwd ?? process.cwd();
@@ -227,7 +309,7 @@ export function registerSubagents(
           }),
         ),
       }),
-      async execute(_id, params, signal, _onUpdate, ctx) {
+      async execute(_id, params, signal, onUpdate, ctx) {
         signal?.throwIfAborted();
         const current = getManager(ctx);
         if (params.id) {
@@ -240,7 +322,9 @@ export function registerSubagents(
           if (runInBackground !== false || snapshot.status === "running") {
             return toolResult(snapshot);
           }
-          return toolResult(await current.result(snapshot.id, true, signal));
+          return toolResult(
+            await waitWithProgress(current, snapshot.id, signal, onUpdate),
+          );
         }
 
         const cwd = resolve(ctx.cwd, params.cwd ?? ".");
@@ -271,7 +355,9 @@ export function registerSubagents(
         if ((agent?.runInBackground ?? params.background) !== false) {
           return toolResult(snapshot);
         }
-        return toolResult(await current.result(snapshot.id, true, signal));
+        return toolResult(
+          await waitWithProgress(current, snapshot.id, signal, onUpdate),
+        );
       },
     }),
   );
@@ -285,6 +371,7 @@ export function registerSubagents(
         manager?.list().find((agent) => agent.id === id),
       ),
       renderResult: renderSubagentResult,
+      outputSchema: SubagentOutputSchema,
       description:
         "Control or inspect an existing subagent session by ID: 'wait' until the active round finishes, check 'status' immediately, or 'stop' the queued/running round.",
       parameters: Type.Object({
@@ -300,14 +387,17 @@ export function registerSubagents(
           },
         ),
       }),
-      async execute(_id, params, signal) {
-        const current = getManager();
+      async execute(_id, params, signal, onUpdate, ctx) {
+        const current = getManager(ctx);
         if (params.action === "stop") {
           return toolResult(current.stop(params.id));
         }
-        return toolResult(
-          await current.result(params.id, params.action === "wait", signal),
-        );
+        if (params.action === "wait") {
+          return toolResult(
+            await waitWithProgress(current, params.id, signal, onUpdate),
+          );
+        }
+        return toolResult(await current.result(params.id, false, signal));
       },
     }),
   );

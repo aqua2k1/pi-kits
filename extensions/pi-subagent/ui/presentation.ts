@@ -28,6 +28,55 @@ export function agentDisplayStatus(agent: AgentSnapshot): string {
     : agent.status;
 }
 
+const MAX_CONTENT_CHARS = 24_000;
+
+/** Plain-text single-line progress summary (ANSI-free) for onUpdate / RPC / ACP. */
+export function formatProgressLine(agent: AgentSnapshot): string {
+  return [
+    `[${oneLine(agent.id)}] ${agentName(agent)}`,
+    oneLine(agent.description),
+    agentDisplayStatus(agent),
+    ...(agent.round !== undefined ? [`round ${agent.round}`] : []),
+    ...(agent.sessionActivity ? [oneLine(agent.sessionActivity)] : []),
+  ].join(" · ");
+}
+
+/** Plain-text result summary (ANSI-free) for tool content and notifications. */
+export function formatSnapshotText(agent: AgentSnapshot): string {
+  const meta = [
+    `[${oneLine(agent.id)}] ${agentName(agent)}`,
+    oneLine(agent.description),
+    agentDisplayStatus(agent),
+    ...(agent.round !== undefined ? [`round ${agent.round}`] : []),
+    ...(agent.cwd ? [`cwd: ${oneLine(agent.cwd)}`] : []),
+  ].join(" · ");
+
+  const sections = [meta];
+  if (agent.sessionActivity && agent.status === "running") {
+    sections.push(`Activity: ${oneLine(agent.sessionActivity)}`);
+  }
+  if (agent.error) {
+    sections.push(`Error: ${agent.error}`);
+  } else if (agent.result) {
+    sections.push(agent.result);
+  }
+  if (agent.truncated) {
+    sections.push(
+      `[Result truncated; full session at ${agent.sessionPath ?? "sessionPath"}]`,
+    );
+  }
+  const footer = [
+    ...(agent.sessionPath ? [`Session: ${agent.sessionPath}`] : []),
+    ...(agent.hint ? [`Next: ${agent.hint}`] : []),
+  ];
+  if (footer.length) sections.push(footer.join("\n"));
+
+  const text = sections.join("\n\n");
+  return text.length > MAX_CONTENT_CHARS
+    ? `${text.slice(0, MAX_CONTENT_CHARS)}\n[Truncated; read the full session file at ${agent.sessionPath ?? "sessionPath"}.]`
+    : text;
+}
+
 export function agentTitle(agent: AgentSnapshot): string {
   return oneLine(`${agentName(agent)} · ${agent.description}`);
 }
