@@ -41,7 +41,7 @@ function capture(t: TestContext) {
   useAgentDir(t);
   let tool: ToolDefinition<typeof AskUserParameters, AskUserResult> | undefined;
   let handler: ((event: unknown, ctx: ExtensionContext) => void) | undefined;
-  let active = ["read", "ask_user_question"];
+  let active = ["read", "ask"];
   const events: {
     name: string;
     data: LifecycleEvent;
@@ -82,16 +82,13 @@ function capture(t: TestContext) {
 
 test("registers a sequential model-only tool and reconciles UI availability", (t) => {
   const captured = capture(t);
-  assert.equal(captured.tool?.name, "ask_user_question");
+  assert.equal(captured.tool?.name, "ask");
   assert.equal(captured.tool?.executionMode, "sequential");
   assert.equal(captured.tool?.exposure, "model-only");
   assert.equal(captured.tool?.namespace?.name, "pi-ask");
   for (const hasUI of [false, false, true, true]) {
     captured.handler?.({}, { hasUI } as ExtensionContext);
-    assert.deepEqual(
-      captured.active,
-      hasUI ? ["read", "ask_user_question"] : ["read"],
-    );
+    assert.deepEqual(captured.active, hasUI ? ["read", "ask"] : ["read"]);
   }
 });
 

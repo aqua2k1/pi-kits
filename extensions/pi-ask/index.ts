@@ -26,7 +26,7 @@ import {
 
 export default function askUserQuestionExtension(pi: ExtensionAPI): void {
   pi.registerTool({
-    name: "ask_user_question",
+    name: "ask",
     namespace: {
       name: "pi-ask",
       description: "Collect structured user choices and clarification answers.",
@@ -118,7 +118,7 @@ export default function askUserQuestionExtension(pi: ExtensionAPI): void {
 
   pi.on("before_agent_start", (_event, ctx) => {
     const active = pi.getActiveTools();
-    const name = "ask_user_question";
+    const name = "ask";
     if (!ctx.hasUI && active.includes(name)) {
       pi.setActiveTools(active.filter((tool) => tool !== name));
     } else if (ctx.hasUI && !active.includes(name)) {

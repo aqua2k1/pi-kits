@@ -27,7 +27,7 @@ const extensions: Array<{
   {
     name: "pi-ask",
     register: ask,
-    tools: ["ask_user_question"],
+    tools: ["ask"],
     commands: [],
     exposure: "model-only",
   },

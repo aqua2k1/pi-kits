@@ -36,7 +36,7 @@ sequenceDiagram
   participant Panel as 终端问卷面板
   participant State as ui/state.ts
   participant Core as core.ts
-  Model->>Entry: ask_user_question 参数
+  Model->>Entry: ask 参数
   Entry->>Panel: 开始事件后打开问卷
   Panel->>State: 键鼠动作与草稿
   State->>Core: 构造多选答案
@@ -52,7 +52,7 @@ RPC 改由 `core.ts` 逐题收集并在最后一题后返回；取消保留已�
 
 ## 约束
 
-- `ask_user_question` 声明与扩展目录同名的 `pi-ask` namespace，保持工具分组与扩展标识一致；工具名称、model-only 暴露与顺序执行保持不变。
+- `ask` 声明与扩展目录同名的 `pi-ask` namespace，保持工具分组与扩展标识一致；model-only 暴露与顺序执行保持不变。
 - 输入与输出契约、`buildMultiAnswer` 集中于 `core.ts`，两条路径共用索引排序和去重规则，以保留重复标签的独立身份。
 - `ui/state.ts` 仅将显式确认写入答案，最后一题进入审阅而非提交，防止草稿或局部回答被当作完整提交。
 - 自定义行的 Space 由组件交给输入框，避免 `ui/keys.ts` 的多选动作吞掉文字空格。

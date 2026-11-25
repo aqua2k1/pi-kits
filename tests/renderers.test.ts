@@ -127,14 +127,14 @@ test("tool summaries retain questions and errors", async (t) => {
     return tool;
   };
   assert.match(
-    rendered(get("ask_user_question"), {
+    rendered(get("ask"), {
       answers: [{ answer: "Option A" }],
       cancelled: false,
     }),
     /answered · 1 answers\nOption A/,
   );
   assert.match(
-    rendered(get("ask_user_question"), { answers: [], cancelled: true }),
+    rendered(get("ask"), { answers: [], cancelled: true }),
     /^cancelled/,
   );
   const open = get("open");
