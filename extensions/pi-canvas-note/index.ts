@@ -211,7 +211,7 @@ export default function canvasNoteExtension(pi: ExtensionAPI) {
           documentPath: docStore.path,
           version: (await docStore.read()).version,
         };
-        return toolResult("Blocks inserted.", result);
+        return toolResult(`Blocks inserted.\n${view.url}`, result);
       });
     },
   });
@@ -240,7 +240,7 @@ export default function canvasNoteExtension(pi: ExtensionAPI) {
           documentPath: docStore.path,
           version: (await docStore.read()).version,
         };
-        return toolResult("Blocks updated.", result);
+        return toolResult(`Blocks updated.\n${view.url}`, result);
       });
     },
   });

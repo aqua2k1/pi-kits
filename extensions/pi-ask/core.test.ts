@@ -100,6 +100,10 @@ test("walks questions, exposes descriptions and preserves custom text", async ()
   assert.equal(result.answers[0].optionIndex, 1);
   assert.equal(result.answers[1].answer, "Custom answer\nwith detail");
   const response = buildResponse(result);
+  assert.equal(
+    response.content[0].text,
+    "- Which approach?: B\n- Which approach?: Custom answer\nwith detail",
+  );
   assert.deepEqual(response.details, result);
   assert.deepEqual(response.structuredContent, result);
   assert.ok(Value.Check(AskUserResultSchema, response.structuredContent));

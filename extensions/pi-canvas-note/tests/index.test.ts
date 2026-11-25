@@ -93,11 +93,14 @@ test("extension registers four tools and the server command; real handlers lazil
       .get(name)
       ?.execute("test", params, undefined, undefined, ctx);
     assert.ok(result);
-    assert.deepEqual(result.content, [
-      { type: "text", text: messagesByTool[name] },
-    ]);
+    const structured = result.structuredContent as Record<string, unknown>;
+    const expectedText =
+      name === "insert_blocks" || name === "update_blocks"
+        ? `${messagesByTool[name]}\n${String(structured.url)}`
+        : messagesByTool[name];
+    assert.deepEqual(result.content, [{ type: "text", text: expectedText }]);
     assert.deepEqual(result.details, result.structuredContent);
-    return result.structuredContent as Record<string, unknown>;
+    return structured;
   };
   const page = await call("insert_page", { title: "真实工具测试" });
   assert.equal(

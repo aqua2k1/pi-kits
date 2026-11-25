@@ -248,16 +248,15 @@ export async function askQuestions(
 }
 
 export function buildResponse(result: AskUserResult) {
-  const summary = JSON.stringify(result);
+  const text = result.cancelled
+    ? "User cancelled"
+    : result.answers.length
+      ? result.answers
+          .map((item) => `- ${item.question}: ${item.answer}`)
+          .join("\n")
+      : "User answered the questionnaire.";
   return {
-    content: [
-      {
-        type: "text" as const,
-        text: result.cancelled
-          ? "User cancelled"
-          : `User answered the questionnaire: ${summary}`,
-      },
-    ],
+    content: [{ type: "text" as const, text }],
     details: result,
     structuredContent: result,
   };

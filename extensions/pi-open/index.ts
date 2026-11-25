@@ -76,10 +76,15 @@ export default function (pi: ExtensionAPI) {
         description: "The file path, URL, or directory to open",
       }),
     }),
+    outputSchema: Type.Object({
+      ok: Type.Boolean(),
+      message: Type.String(),
+    }),
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
       const result = await openTarget(params.target, ctx.cwd);
       return {
         content: [{ type: "text", text: result.message }],
+        structuredContent: result,
         details: result,
       };
     },
