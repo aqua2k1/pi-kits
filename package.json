@@ -6,6 +6,7 @@
     "pi-package"
   ],
   "extensionResources": {
+    "pi-hide-prompts": "./extensions/pi-hide-prompts/index.ts",
     "pi-canvas-note": "./extensions/pi-canvas-note/index.ts",
     "pi-open": "./extensions/pi-open/index.ts",
     "pi-output-viewer": "./extensions/pi-output-viewer/index.ts",
@@ -18,6 +19,7 @@
   },
   "pi": {
     "extensions": [
+      "./extensions/pi-hide-prompts/index.ts",
       "./extensions/pi-canvas-note/index.ts",
       "./extensions/pi-open/index.ts",
       "./extensions/pi-output-viewer/index.ts",
