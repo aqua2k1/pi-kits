@@ -48,7 +48,7 @@ sequenceDiagram
   Manager->>Exec: 取得并发槽后 start (--session-id 或 --session)
   Manager->>Exec: send(prompt) 并 wait() 等待当前轮完成
   Exec-->>Manager: read() 返回最新回复、统计与 sessionPath
-  Manager->>Exec: 无视图或 subprocess 完成时 destroy() 释放进程
+  Manager->>Exec: 未打开视图完成时 destroy() 释放进程
   Manager-->>Entry: 未被 wait 接收的完成结果
   Entry-->>Parent: followUp 后续消息
 ```
@@ -65,7 +65,7 @@ sequenceDiagram
 - `subagent` 工具通过 `prepareLoadout` 动态将当前工作目录下已启用的角色及说明附加到工具描述中，省去独立的角色列举工具调用。
 - 任务 ID 使用会话内递增短标识（`sub-1`、`sub-2`），底层 Pi 会话使用唯一 UUID（`subagent-<uuid>`）隔离磁盘文件，防止 LLM 复制长 UUID 出错或跨会话冲突。
 - 每次快照投影通过 `buildNextHint` 生成与当前状态匹配的下一步调用提示（`hint`），引导 LLM 正确使用 `subagent` 与 `subagent_ctl`。
-- 无视图执行器（`subprocess`）在单轮任务结束时自动销毁子进程释放内存，仅保留 `sessionPath`；后续 `send` 调用在检测到终端已释放时自动以 `--session <sessionPath>` 重新拉起子进程接续历史。
+- 单轮任务结束时若未打开且未正在打开视图，管理器自动销毁底层终端释放资源并保留 `sessionPath`；面板打开中或已打开的会话跳过自动关闭，关闭面板后由调和循环补回收，已释放会话在后续 `send` 时自动以 `--session <sessionPath>` 冷启动恢复历史。
 - `clone.ts` 在入队前同步冻结父分支快照，并在克隆会话的上下文投影中隐藏未决工具调用，防止修改父会话或伪造工具结果。
 - 包扩展资源名从 `extensionResources` 读取并限于启用的 Pi 清单路径，防止路径越界加载扩展。
 

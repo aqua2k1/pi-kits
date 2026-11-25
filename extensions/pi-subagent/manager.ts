@@ -213,11 +213,17 @@ interface ReplyData {
   sequence: number;
 }
 
+type WorkerView = ViewHandle | Promise<ViewHandle>;
+
+function isViewHandle(view: WorkerView | undefined): view is ViewHandle {
+  return Boolean(view && !(view instanceof Promise));
+}
+
 /** Component 1: Live Executor Handle Attachment (exists only while a terminal/process is allocated). */
 interface WorkerComponent {
   terminal?: TerminalHandle;
   promptDirectory?: string;
-  view?: ViewHandle;
+  view?: WorkerView;
   interactiveActivity?: string;
   cleanupError?: string;
   closing?: Promise<void>;
@@ -335,7 +341,7 @@ function deriveSnapshot(
         : {}),
     ...(e.sessionPath ? { sessionPath: e.sessionPath } : {}),
     terminalId: sessionState === "closed" ? undefined : e.worker?.terminal?.id,
-    viewId: e.worker?.view?.id,
+    viewId: isViewHandle(e.worker?.view) ? e.worker.view.id : undefined,
     createdAt: e.turn?.createdAt ?? e.settled?.createdAt,
     startedAt: e.turn?.startedAt ?? e.settled?.startedAt,
     completedAt: e.turn ? undefined : e.settled?.completedAt,
@@ -561,6 +567,7 @@ export function createSubagentManager(
   const destroyWorker = (
     e: SubagentEntity,
     onCleaned?: () => void,
+    destroyOpts?: { onlyIfIdle?: boolean },
   ): Promise<void> => {
     const worker = e.worker;
     if (!worker) {
@@ -576,8 +583,17 @@ export function createSubagentManager(
     }
     worker.cleanupError = undefined;
     const op = serializeView(async () => {
+      if (
+        destroyOpts?.onlyIfIdle &&
+        (e.worker !== worker ||
+          e.turn ||
+          worker.view ||
+          worker.interactiveActivity !== undefined)
+      ) {
+        return;
+      }
       let viewErr: unknown;
-      if (worker.view && executor.close_view) {
+      if (isViewHandle(worker.view) && executor.close_view) {
         try {
           await executor.close_view(worker.view);
           worker.view = undefined;
@@ -776,17 +792,16 @@ export function createSubagentManager(
 
   function reconcile(): void {
     if (disposed) return;
-    if (!supportsView) {
-      for (const e of entities.values()) {
-        if (
-          !e.turn &&
-          e.worker &&
-          !e.worker.closing &&
-          !e.worker.cleanupError &&
-          e.worker.interactiveActivity === undefined
-        ) {
-          void destroyWorker(e);
-        }
+    for (const e of entities.values()) {
+      if (
+        !e.turn &&
+        e.worker &&
+        !e.worker.closing &&
+        !e.worker.cleanupError &&
+        !e.worker.view &&
+        e.worker.interactiveActivity === undefined
+      ) {
+        void destroyWorker(e, undefined, { onlyIfIdle: true });
       }
     }
     const max = options.maxConcurrent ?? 4;
@@ -1024,44 +1039,80 @@ export function createSubagentManager(
     },
     openView(id) {
       const e = getEntity(id);
-      return serializeView(async () => {
+      if (disposed) {
+        return Promise.reject(new Error("Subagent manager is closed."));
+      }
+      if (!supportsView || !executor.open_view) {
+        return Promise.reject(
+          new Error(
+            "Current executor does not support interactive terminal views.",
+          ),
+        );
+      }
+      const worker = e.worker;
+      if (!worker || worker.closing || worker.cleanupError) {
+        return Promise.reject(
+          new Error("Subagent runtime is closed/released."),
+        );
+      }
+      if (!worker.terminal) {
+        return Promise.reject(new Error("Subagent terminal is not ready yet."));
+      }
+      if (worker.view instanceof Promise) {
+        return worker.view;
+      }
+      const op: Promise<ViewHandle> = serializeView(async () => {
         if (disposed) throw new Error("Subagent manager is closed.");
         if (!supportsView || !executor.open_view) {
           throw new Error(
             "Current executor does not support interactive terminal views.",
           );
         }
-        if (!e.worker || e.worker.closing || e.worker.cleanupError) {
+        if (e.worker !== worker || worker.closing || worker.cleanupError) {
           throw new Error("Subagent runtime is closed/released.");
         }
-        const terminal = e.worker.terminal;
+        const terminal = worker.terminal;
         if (!terminal) throw new Error("Subagent terminal is not ready yet.");
-        const view = e.worker.view;
+        let view = isViewHandle(worker.view) ? worker.view : undefined;
         if (
           view &&
           executor.inspect_view &&
           !(await executor.inspect_view(view)).alive
         ) {
-          await executor.close_view?.(view);
-          e.worker.view = undefined;
+          worker.view = op;
           changed();
+          await executor.close_view?.(view);
+          view = undefined;
         }
-        if (e.worker.view) {
-          await executor.focus_view?.(e.worker.view);
-          return e.worker.view;
+        if (view) {
+          await executor.focus_view?.(view);
+          return view;
         }
-        e.worker.view = await executor.open_view({ terminal });
+        const opened = await executor.open_view({ terminal });
+        worker.view = opened;
         changed();
-        return e.worker.view;
+        return opened;
+      }).catch((error) => {
+        if (worker.view === op) {
+          worker.view = undefined;
+          changed();
+          reconcile();
+        }
+        throw error;
       });
+      if (!worker.view) {
+        worker.view = op;
+      }
+      return op;
     },
     closeView(id) {
       const e = getEntity(id);
       return serializeView(async () => {
-        if (e.worker?.view && executor.close_view) {
+        if (isViewHandle(e.worker?.view) && executor.close_view) {
           await executor.close_view(e.worker.view);
           e.worker.view = undefined;
           changed();
+          reconcile();
         }
       });
     },

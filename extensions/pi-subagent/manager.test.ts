@@ -271,6 +271,7 @@ test("hot resume reuses live terminal session without restarting process", async
 
   const agent = manager.spawn(task);
   await until(() => exec.commands.get(agent.id)?.length === 1);
+  await manager.openView(agent.id);
   exec.complete(agent.id, "Round 1");
   await until(() => manager.get(agent.id).status === "completed");
   assert.equal(exec.destroyed.length, 0);
@@ -351,6 +352,7 @@ test("ECS data-driven entities derive status and sessionState purely from compon
   assert.equal(manager.get(first.id).status, "running");
   assert.equal(manager.get(first.id).sessionState, "running");
 
+  await manager.openView(first.id);
   exec.complete(first.id, "Done 1");
   await until(() => manager.get(first.id).status === "completed");
   assert.equal(manager.get(first.id).sessionState, "idle");
@@ -452,6 +454,7 @@ test("hot resume works from error state and cold start works before OSC status i
 
   const agent = manager.spawn(task);
   await until(() => exec.commands.get(agent.id)?.length === 1);
+  await manager.openView(agent.id);
 
   exec.complete(agent.id, "", { error: "Tool failed" });
   await until(() => manager.get(agent.id).status === "error");
@@ -501,6 +504,7 @@ test("resume rejects when native terminal is blocked for user interaction", asyn
 
   const agent = manager.spawn(task);
   await until(() => exec.commands.get(agent.id)?.length === 1);
+  await manager.openView(agent.id);
   exec.complete(agent.id, "Round 1");
   await until(() => manager.get(agent.id).status === "completed");
 
@@ -531,4 +535,91 @@ test("executeTurn keeps waiting when executor.wait returns early working check-i
   exec.complete(agent.id, "Finished after check-in");
   await until(() => manager.get(agent.id).status === "completed");
   assert.equal(manager.get(agent.id).result, "Finished after check-in");
+});
+
+test("completing without an open view releases the worker even when supportsView is true", async (t) => {
+  useAgentDir(t);
+  const exec = createTestExecutor(true);
+  const manager = createSubagentManager(exec.executor, {
+    extensionAllowlist: [],
+  });
+  t.after(() => manager.close());
+
+  const agent = manager.spawn(task);
+  await until(() => exec.commands.get(agent.id)?.length === 1);
+  exec.complete(agent.id, "Done without view");
+  await until(() => manager.get(agent.id).status === "completed");
+  await until(() => exec.destroyed.length === 1);
+  assert.equal(manager.get(agent.id).sessionState, "closed");
+});
+
+test("in-flight openView protects worker from idle auto-close and closeView triggers release", async (t) => {
+  useAgentDir(t);
+  const exec = createTestExecutor(true);
+  let resolveOpen: ((view: { id: string }) => void) | undefined;
+  let openCalls = 0;
+  exec.executor.open_view = ({ terminal }) => {
+    openCalls += 1;
+    return new Promise((resolve) => {
+      resolveOpen = () => resolve({ id: `view-${terminal.id}` });
+    });
+  };
+  const manager = createSubagentManager(exec.executor, {
+    extensionAllowlist: [],
+  });
+  t.after(() => manager.close());
+
+  const agent = manager.spawn(task);
+  await until(() => exec.commands.get(agent.id)?.length === 1);
+
+  const firstOpen = manager.openView(agent.id);
+  const secondOpen = manager.openView(agent.id);
+  assert.equal(firstOpen, secondOpen);
+  assert.equal(manager.get(agent.id).viewId, undefined);
+
+  exec.complete(agent.id, "Done while opening view");
+  await until(() => manager.get(agent.id).status === "completed");
+  await delay(15);
+  assert.equal(exec.destroyed.length, 0);
+
+  await until(() => resolveOpen !== undefined);
+  resolveOpen?.({ id: `view-${agent.id}` });
+  const view = await firstOpen;
+  assert.equal(view.id, `view-${agent.id}`);
+  assert.equal(openCalls, 1);
+  assert.equal(manager.get(agent.id).viewId, `view-${agent.id}`);
+  assert.equal(exec.destroyed.length, 0);
+
+  await manager.closeView(agent.id);
+  await until(() => exec.destroyed.length === 1);
+  assert.equal(manager.get(agent.id).sessionState, "closed");
+});
+
+test("failed openView clears pending view and releases an already-settled idle worker", async (t) => {
+  useAgentDir(t);
+  const exec = createTestExecutor(true);
+  let rejectOpen: ((error: Error) => void) | undefined;
+  exec.executor.open_view = () =>
+    new Promise((_resolve, reject) => {
+      rejectOpen = reject;
+    });
+  const manager = createSubagentManager(exec.executor, {
+    extensionAllowlist: [],
+  });
+  t.after(() => manager.close());
+
+  const agent = manager.spawn(task);
+  await until(() => exec.commands.get(agent.id)?.length === 1);
+
+  const pendingOpen = manager.openView(agent.id);
+  exec.complete(agent.id, "Done before open failed");
+  await until(() => manager.get(agent.id).status === "completed");
+  await delay(15);
+  assert.equal(exec.destroyed.length, 0);
+
+  await until(() => rejectOpen !== undefined);
+  rejectOpen?.(new Error("Tab creation failed"));
+  await assert.rejects(pendingOpen, /Tab creation failed/);
+  await until(() => exec.destroyed.length === 1);
+  assert.equal(manager.get(agent.id).sessionState, "closed");
 });
