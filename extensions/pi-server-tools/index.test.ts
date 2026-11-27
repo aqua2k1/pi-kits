@@ -83,35 +83,6 @@ test("deduplicates camelCase and snake_case Google tools", () => {
   );
 });
 
-test("injects protocol-specific server tools for DeepSeek models", () => {
-  assert.deepEqual(
-    injectServerTools(
-      { tools: [] },
-      model("deepseek", "openai-responses", "deepseek-v4-pro"),
-    ),
-    { tools: [{ type: "web_search" }] },
-  );
-  assert.deepEqual(
-    injectServerTools(
-      { tools: [] },
-      model("deepseek", "openai-completions", "deepseek-flash"),
-    ),
-    {
-      tools: [
-        { type: "deepseek_web_search", name: "deepseek_web_search" },
-        { type: "deepseek_read_url", name: "deepseek_read_url" },
-      ],
-    },
-  );
-  assert.equal(
-    injectServerTools(
-      { tools: [] },
-      model("deepseek", "openai-completions", "deepseek-v4-pro"),
-    ),
-    undefined,
-  );
-});
-
 test("passes through unsupported providers, APIs, and missing models unchanged", () => {
   assert.equal(
     injectServerTools(

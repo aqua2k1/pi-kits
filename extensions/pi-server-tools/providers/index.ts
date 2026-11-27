@@ -1,5 +1,4 @@
 import type { Api, Model } from "@earendil-works/pi-ai";
-import { deepseekProviders } from "./deepseek.ts";
 import { googleProviders } from "./google.ts";
 import { openaiProviders } from "./openai.ts";
 
@@ -11,5 +10,4 @@ export type ProviderInjector = (
 export const PROVIDERS: Readonly<Record<string, ProviderInjector>> = {
   ...openaiProviders,
   ...googleProviders,
-  ...deepseekProviders,
 };

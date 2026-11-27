@@ -20,7 +20,5 @@ pi config
 | --- | --- | --- |
 | OpenAI / Codex | Responses API | `web_search`、`image_generation` |
 | Google / Vertex | Generative AI / Vertex | `googleSearch`、`urlContext` |
-| DeepSeek | `deepseek-v4-pro`（Responses API） | `web_search` |
-| DeepSeek | `deepseek-flash`（Chat Completions API） | `deepseek_web_search`、`deepseek_read_url` |
 
 其他提供方、协议或已有同名工具的请求保持原样透传。
